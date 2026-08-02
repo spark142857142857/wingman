@@ -1,6 +1,6 @@
 # Wingman
 
-[한국어](README.ko.md)
+[Korean](README.ko.md)
 
 Wingman is a lightweight terminal MVP for Windows. It lets you switch between PowerShell and cmd while using familiar Linux commands and pipelines—without WSL.
 
