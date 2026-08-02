@@ -18,7 +18,7 @@ This MVP deliberately focuses on a fast, local terminal experience; it does not 
 
 ## Features
 
-- Switch between PowerShell and cmd sessions.
+- Enter cmd from PowerShell in the same terminal session; `exit` returns to the parent PowerShell.
 - Toggle Linux Familiar mode on or off.
 - PowerShell Linux Familiar compatibility layer:
   - `grep`, `head`, `tail`, `find`, `sort`, `uniq`, and `wc`
@@ -28,10 +28,10 @@ This MVP deliberately focuses on a fast, local terminal experience; it does not 
 - cmd Linux Familiar mappings:
   - `ls`, `pwd`, `cat`, `grep`, `head`, `tail`, `sort`, `wc -l`, `rm`, `mv`, and `cp`
   - Text pipelines and `<`, `>`, and `>>` redirection, including `cat file | grep text | head -n 10`
-- Status bar showing the shell, compatibility mode, and starting directory.
+- Status bar showing the shell, Familiar mode, and starting directory.
 - Keyboard shortcuts:
   - `Ctrl+Shift+C` to copy
-  - `Ctrl+Shift+V` to paste
+  - `Ctrl+V` or `Ctrl+Shift+V` to paste
   - `Ctrl+Shift+R` to start a new session
   - `Ctrl` + `+` / `-` to change font size
 - Acrylic/glass demo UI with UTF-8 code-page configuration.
@@ -83,7 +83,7 @@ npm install
 npm run tauri dev
 ```
 
-The app starts in PowerShell by default. Switch to `cmd` from the top controls, or enable `Linux Familiar` to use commands such as `ls`, `pwd`, and `cat` through the appropriate Windows mappings.
+The app starts in PowerShell by default. Enter `cmd` to open a nested cmd in the same terminal and `exit` to return. Enable Familiar mode to use commands such as `ls`, `pwd`, and `cat` through the appropriate Windows mappings.
 
 ## Build
 
@@ -133,4 +133,4 @@ npm run build
 - [ ] Switch to cmd
 - [ ] Run `ls` and `pwd` with `Linux Familiar` enabled
 - [ ] Confirm the status bar reflects the shell, compatibility mode, and directory
-- [ ] Confirm `Ctrl+Shift+C` and `Ctrl+Shift+V` work
+- [ ] Confirm `Ctrl+Shift+C`, `Ctrl+V`, and `Ctrl+Shift+V` work

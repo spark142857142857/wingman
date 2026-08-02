@@ -43,7 +43,7 @@ Confirms that Linux Familiar mode does not interfere with native PowerShell func
 | PS-F11 | `'3','1','1','2' \| sort -n \| uniq -c` | Counts adjacent duplicates after numeric sorting | Automated |
 | PS-F12 | `'one two','three' \| wc -l -w` | `2 3` | Automated |
 | PS-F13 | `mkdir -p path`, `touch file`, `rm -rf path` | Create, update, and delete work | Automated in temp sandbox |
-| PS-F14 | `compat on/off/status` | Changes and displays state at runtime | Parser automated, UI manual |
+| PS-F14 | `familiar on/off/status`, `fam` alias | Changes and displays state at runtime | Parser automated, UI manual |
 
 ## Native cmd regression
 
@@ -83,10 +83,11 @@ Confirms that Linux Familiar mode does not interfere with native PowerShell func
 | UI-04 | Rapid consecutive input | Preserves input order | Code-path automated, UI manual |
 | UI-05 | Arrow keys, Backspace, and Ctrl+C | Shell input and parser state remain in sync | Automated |
 | UI-06 | Multi-line paste | Runs each line in order | Parser automated, UI manual |
-| UI-07 | Entering `cmd` or `powershell` | Switches to a new shell session and updates the status bar | Parser automated, UI manual |
+| UI-07 | PowerShell: `cmd`, then cmd: `exit` | Keeps one PTY and the visible output; status changes to cmd and returns to PowerShell | Shell-state automated, UI manual |
 | UI-08 | `Ctrl+Shift+R` | Starts a new session for the current shell | Manual |
 | UI-09 | `Ctrl` + `+`/`-` | Changes and persists font size | Manual |
 | UI-10 | Window resize | Fits the PTY column/row dimensions and view | Manual |
+| UI-11 | Narrow window with a wide xterm child | Terminal stage and status bar remain within the viewport | Automated in headless Edge |
 
 ## Current compatibility boundary
 

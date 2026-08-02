@@ -10,8 +10,8 @@ npm run tauri dev
 
 - [ ] Only one Wingman window opens.
 - [ ] The terminal font is clearly rendered as `Cascadia Mono`, or its `Consolas` fallback.
-- [ ] The default 14px font size is neither too small nor too large.
-- [ ] The status bar shows `PowerShell`, the Compat state, and the starting directory.
+- [ ] The default 17px font size is neither too small nor too large.
+- [ ] The status bar shows `PowerShell`, the Familiar state, and the starting directory.
 - [ ] The first prompt is not clipped and the input cursor is immediately active.
 
 ## 2. Create a disposable fixture
@@ -47,7 +47,7 @@ Get-Content native-result.txt
 ## 4. PowerShell Familiar
 
 ```powershell
-compat status
+familiar status
 cat sample.txt | grep TODO | head -n 1
 grep -rni TODO . --include '*.ts'
 find . -iname '*.TS' -type f
@@ -57,7 +57,7 @@ cat sample.txt | sed 's/TODO/FIXME/g'
 cat sample.txt | wc -l
 ```
 
-- [ ] `compat status` prints the current state.
+- [ ] `familiar status` prints the current state on one line.
 - [ ] The first pipeline prints only `TODO first`.
 - [ ] The `grep` result includes `sample.ts` and its line number.
 - [ ] `find` locates `sample.ts`.
@@ -66,14 +66,14 @@ cat sample.txt | wc -l
 - [ ] `sed` prints `TODO` as `FIXME` without modifying the source file.
 - [ ] `wc -l` outputs `3`.
 
-## 5. Compat OFF
+## 5. Familiar OFF
 
 ```powershell
-compat off
+fam off
 Get-ChildItem
 Get-Content sample.txt
 Get-Process -Id $PID
-compat on
+fam on
 ```
 
 - [ ] The status bar reflects the OFF state.
@@ -86,11 +86,12 @@ compat on
 cmd
 ```
 
-- [ ] The view switches to a new cmd session.
+- [ ] The existing output remains visible; entering cmd does not clear or replace the view.
 - [ ] The status bar Shell value changes to `cmd`.
+- [ ] cmd starts in the same temporary directory inherited from PowerShell.
 
 ```bat
-cd /d %TEMP%\wingman-manual-test
+cd
 dir /b
 cat sample.txt | grep TODO | head -n 1
 cat sample.txt | tail -n 1
@@ -99,6 +100,7 @@ cat sample.txt | grep TODO > cmd-result.txt
 type cmd-result.txt
 ```
 
+- [ ] `cd` prints the `%TEMP%\wingman-manual-test` path.
 - [ ] `dir /b` behaves as it does in regular cmd.
 - [ ] `head` outputs `TODO first`.
 - [ ] `tail` outputs `TODO last`.
@@ -113,21 +115,23 @@ type cmd-result.txt
 - [ ] `Ctrl+C` interrupts a running command.
 - [ ] Pasting multiple commands preserves their order.
 - [ ] Selected text copies with `Ctrl+Shift+C`.
-- [ ] `Ctrl+Shift+V` pastes text.
+- [ ] Both `Ctrl+V` and `Ctrl+Shift+V` paste text through Wingman.
 - [ ] `Ctrl` + `+`/`-` changes the font, and the size persists after restarting.
 - [ ] Resizing the window does not clip the prompt or output.
 - [ ] Output from the previous session does not appear in a new session after `Ctrl+Shift+R`.
 
-## 8. Return to PowerShell and clean up
+## 8. Exit cmd back to PowerShell and clean up
 
 ```text
-powershell
+exit
 ```
 
 ```powershell
 Remove-Item -LiteralPath (Join-Path $env:TEMP 'wingman-manual-test') -Recurse -Force
 ```
 
+- [ ] `exit` returns to the existing parent PowerShell without closing Wingman.
+- [ ] The previous PowerShell and cmd output remains visible.
 - [ ] The status bar Shell value returns to `PowerShell`.
 - [ ] The temporary test folder is deleted.
 
@@ -138,7 +142,7 @@ For a failure, record the following information.
 ```text
 Test ID or section:
 Shell: PowerShell / cmd
-Compat: ON / OFF
+Familiar: ON / OFF
 Command:
 Expected:
 Actual:

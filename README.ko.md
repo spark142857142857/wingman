@@ -18,7 +18,7 @@ Wingman은 Windows 터미널에서 자주 겪는 다음 불편을 줄입니다.
 
 ## 기능
 
-- PowerShell / cmd 세션 전환
+- 같은 터미널에서 PowerShell → cmd 진입, `exit`으로 부모 PowerShell 복귀
 - Linux Familiar 모드 ON/OFF
 - PowerShell Linux Familiar 호환 계층
   - `grep`, `head`, `tail`, `find`, `sort`, `uniq`, `wc`
@@ -31,7 +31,7 @@ Wingman은 Windows 터미널에서 자주 겪는 다음 불편을 줄입니다.
 - 하단 상태바에 shell / compat / 시작 경로 표시
 - 단축키
   - `Ctrl+Shift+C` 복사
-  - `Ctrl+Shift+V` 붙여넣기
+  - `Ctrl+V` 또는 `Ctrl+Shift+V` 붙여넣기
   - `Ctrl+Shift+R` 새 세션
   - `Ctrl` + `+` / `-` 글자 크기
 - acrylic/glass 스타일 데모 UI 및 UTF-8 코드페이지 설정
@@ -83,7 +83,7 @@ npm install
 npm run tauri dev
 ```
 
-기본 세션은 PowerShell입니다. 상단 컨트롤에서 `cmd`로 전환하거나 `Linux Familiar`를 켜면 `ls`, `pwd`, `cat` 등의 명령을 각 Windows 셸에 맞게 매핑해 사용할 수 있습니다.
+기본 세션은 PowerShell입니다. `cmd`를 입력하면 같은 터미널 안에서 cmd로 진입하고, `exit`으로 부모 PowerShell에 복귀합니다. Familiar 모드를 켜면 `ls`, `pwd`, `cat` 등의 명령을 각 Windows 셸에 맞게 매핑해 사용할 수 있습니다.
 
 ## 빌드
 
@@ -133,4 +133,4 @@ npm run build
 - [ ] cmd 전환
 - [ ] `Linux Familiar` ON에서 `ls` / `pwd` 동작
 - [ ] 상태바에 shell / compat / 경로 반영
-- [ ] `Ctrl+Shift+C` / `Ctrl+Shift+V` 동작
+- [ ] `Ctrl+Shift+C` / `Ctrl+V` / `Ctrl+Shift+V` 동작
