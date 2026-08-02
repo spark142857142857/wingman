@@ -134,7 +134,3 @@ npm run build
 - [ ] Run `ls` and `pwd` with `Linux Familiar` enabled
 - [ ] Confirm the status bar reflects the shell, compatibility mode, and directory
 - [ ] Confirm `Ctrl+Shift+C` and `Ctrl+Shift+V` work
-
-## License
-
-MIT

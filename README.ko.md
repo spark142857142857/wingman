@@ -134,7 +134,3 @@ npm run build
 - [ ] `Linux Familiar` ON에서 `ls` / `pwd` 동작
 - [ ] 상태바에 shell / compat / 경로 반영
 - [ ] `Ctrl+Shift+C` / `Ctrl+Shift+V` 동작
-
-## 라이선스
-
-MIT
