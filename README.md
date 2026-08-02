@@ -1,37 +1,44 @@
 # Wingman
 
-Windows용 가벼운 터미널 MVP입니다.  
-PowerShell / cmd를 바로 전환하고, Linux에 익숙한 명령(`ls`, `pwd`, `cat` 등)을 Windows 명령으로 매핑합니다.
+[한국어](README.ko.md)
 
-스택: **Tauri 2 + Rust (portable-pty) + Vite + TypeScript + xterm.js**
+Wingman is a lightweight terminal MVP for Windows. It lets you switch between PowerShell and cmd while using familiar Linux commands and pipelines—without WSL.
+
+**Stack:** Tauri 2, Rust (`portable-pty`), Vite, TypeScript, and xterm.js.
 
 ## Why
 
-Windows 터미널에서 자주 겪는 불편을 줄이는 게 목표입니다.
+Wingman reduces a few common sources of friction in Windows terminals:
 
-- PowerShell과 cmd를 따로 켜야 하는 전환 비용
-- `ls`, `pwd`, `cat` 같은 Linux 습관이 깨지는 문제
-- 현재 shell / compat / cwd를 한눈에 보고 싶은 니즈
+- The context-switching cost of opening PowerShell and cmd separately.
+- Missing Linux command muscle memory, such as `ls`, `pwd`, and `cat`.
+- Having to infer the active shell, compatibility mode, and starting directory.
 
-이 MVP는 AI 기능 없이, **빠른 로컬 터미널 UX**에만 집중합니다.
+This MVP deliberately focuses on a fast, local terminal experience; it does not include AI features.
 
 ## Features
 
-- PowerShell / cmd 세션 전환
-- Linux Familiar 모드 ON/OFF
-- 명령 매핑
-  - `ls`, `ll`, `pwd`, `clear`, `cat`, `rm`, `mv`, `cp`
-  - PowerShell / cmd 각각에 맞는 Windows 명령으로 변환
-- 하단 상태바: `Shell` / `Compat` / `cwd`
-- 단축키
-  - `Ctrl+Shift+C` 복사
-  - `Ctrl+Shift+V` 붙여넣기
-- acrylic/glass 스타일 데모 UI
-- UTF-8 코드페이지 설정 포함
+- Switch between PowerShell and cmd sessions.
+- Toggle Linux Familiar mode on or off.
+- PowerShell Linux Familiar compatibility layer:
+  - `grep`, `head`, `tail`, `find`, `sort`, `uniq`, and `wc`
+  - `cut`, `tr`, common `sed` usage, and `xargs` with safe argument passing
+  - `ls`, `ll`, `cat`, `touch`, `which`, `mkdir -p`, and `rm -rf`
+  - Pipelines such as `cat file | grep text | head -n 10`
+- cmd Linux Familiar mappings:
+  - `ls`, `pwd`, `cat`, `grep`, `head`, `tail`, `sort`, `wc -l`, `rm`, `mv`, and `cp`
+  - Text pipelines and `<`, `>`, and `>>` redirection, including `cat file | grep text | head -n 10`
+- Status bar showing the shell, compatibility mode, and starting directory.
+- Keyboard shortcuts:
+  - `Ctrl+Shift+C` to copy
+  - `Ctrl+Shift+V` to paste
+  - `Ctrl+Shift+R` to start a new session
+  - `Ctrl` + `+` / `-` to change font size
+- Acrylic/glass demo UI with UTF-8 code-page configuration.
 
 ## Tech Stack
 
-| Layer | Tech |
+| Layer | Technology |
 | --- | --- |
 | Desktop shell | Tauri 2 |
 | PTY backend | Rust + `portable-pty` |
@@ -44,11 +51,12 @@ Windows 터미널에서 자주 겪는 불편을 줄이는 게 목표입니다.
 ```text
 wingman/
   src/
-    main.ts          # 터미널 UI, Linux Familiar 매핑, 단축키
+    main.ts          # terminal UI, Linux Familiar mappings, shortcuts
     styles.css       # glass UI
   src-tauri/
-    src/lib.rs       # PTY 세션 start/write/resize
-    tauri.conf.json  # 앱 설정
+    src/lib.rs       # PTY session start/write/resize
+    tauri.conf.json  # Tauri configuration
+  docs/              # test plan and manual smoke-test guide
   index.html
   package.json
   README.md
@@ -56,10 +64,10 @@ wingman/
 
 ## Requirements
 
-- Windows 10/11
+- Windows 10 or 11
 - Node.js 18+
-- Rust (rustc / cargo)
-- WebView2 (보통 Windows에 기본 포함)
+- Rust (`rustc` and `cargo`)
+- WebView2 (normally included with Windows)
 
 ## Setup
 
@@ -69,18 +77,13 @@ cd wingman
 npm install
 ```
 
-## Run (Dev)
+## Run in Development
 
 ```powershell
 npm run tauri dev
 ```
 
-실행되면:
-
-1. 기본 셸은 PowerShell
-2. 상단에서 `cmd`로 전환 가능
-3. `Linux Familiar`를 켠 뒤 `ls`, `pwd`, `cat` 등을 입력하면 Windows 명령으로 매핑됩니다
-4. 하단 상태바에서 shell / compat / cwd를 확인할 수 있습니다
+The app starts in PowerShell by default. Switch to `cmd` from the top controls, or enable `Linux Familiar` to use commands such as `ls`, `pwd`, and `cat` through the appropriate Windows mappings.
 
 ## Build
 
@@ -88,7 +91,20 @@ npm run tauri dev
 npm run tauri build
 ```
 
-빌드 산출물은 `src-tauri/target/release/` 아래에 생성됩니다.
+Build artifacts are generated under `src-tauri/target/release/`.
+
+## Verify
+
+```powershell
+npm run typecheck
+npm test
+npm run build
+```
+
+`npm test` covers terminal input and shell state, PowerShell Linux Familiar pipelines, standard PowerShell/cmd regressions, Rust PTY session shutdown, and PowerShell profile loading.
+
+- Full test plan: [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md)
+- Manual app checks: [docs/MANUAL_SMOKE_TEST.md](docs/MANUAL_SMOKE_TEST.md)
 
 ## Linux Familiar Mapping
 
@@ -103,22 +119,21 @@ npm run tauri build
 | `mv a b` | `Move-Item a b` | `move a b` |
 | `cp a b` | `Copy-Item a b` | `copy a b` |
 
-## Notes / Known Limitation
+## Notes and Known Limitations
 
-- 이 MVP에는 AI 기능이 없습니다.
-- Windows 전용입니다.
-- 프로젝트 경로에 한글/비ASCII 문자가 있으면 Windows `RC.EXE` 리소스 컴파일이 실패할 수 있습니다.
-  - 예: `D:\Agent프로젝트\wingman`
-  - 해결: ASCII 경로로 복사/이동 후 실행
-  - 예: `C:\dev\wingman`
+- This MVP has no AI features.
+- Windows only.
+- Non-ASCII characters in the project path can make Windows `RC.EXE` resource compilation fail.
+  - Example problem path: `D:\Agent-projects\wingman`
+  - Workaround: copy or move the project to an ASCII-only path, such as `C:\dev\wingman`.
 
 ## Demo Checklist
 
-- [ ] PowerShell 세션 시작
-- [ ] cmd 전환
-- [ ] `Linux Familiar` ON에서 `ls` / `pwd` 동작
-- [ ] 상태바 shell / compat / cwd 반영
-- [ ] `Ctrl+Shift+C` / `Ctrl+Shift+V` 동작
+- [ ] Start a PowerShell session
+- [ ] Switch to cmd
+- [ ] Run `ls` and `pwd` with `Linux Familiar` enabled
+- [ ] Confirm the status bar reflects the shell, compatibility mode, and directory
+- [ ] Confirm `Ctrl+Shift+C` and `Ctrl+Shift+V` work
 
 ## License
 

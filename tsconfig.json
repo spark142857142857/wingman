@@ -11,9 +11,10 @@
     "isolatedModules": true,
     "noEmit": true,
     "strict": true,
+    "types": ["node"],
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/main.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "vite.config.ts"]
 }

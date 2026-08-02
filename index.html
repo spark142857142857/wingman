@@ -7,32 +7,14 @@
   </head>
   <body>
     <div id="app">
-      <header class="topbar">
-        <div class="brand">
-          <span class="logo">W</span>
-          <div>
-            <strong>Wingman</strong>
-            <p>Lightweight Windows Terminal</p>
-          </div>
-        </div>
-        <div class="controls">
-          <div class="segmented" role="tablist" aria-label="Shell">
-            <button data-shell="powershell" class="active">PowerShell</button>
-            <button data-shell="cmd">cmd</button>
-          </div>
-          <label class="toggle">
-            <input id="compatToggle" type="checkbox" checked />
-            <span>Linux Familiar</span>
-          </label>
-        </div>
-      </header>
       <main class="stage">
-        <div id="terminal" class="terminal glass"></div>
+        <div id="terminal" class="terminal"></div>
       </main>
       <footer class="statusbar">
         <span>Shell: <strong id="shellLabel">PowerShell</strong></span>
         <span>Compat: <strong id="compatLabel" class="ok">ON</strong></span>
-        <span class="cwd">cwd: <strong id="cwd">-</strong></span>
+        <span class="cwd">start: <strong id="cwd">-</strong></span>
+        <span class="hint">compat on/off · cmd/powershell · Ctrl+Shift+R new session</span>
       </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

@@ -2,24 +2,39 @@
 import "./styles.css";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-
-type ShellKind = "powershell" | "cmd";
+import { TerminalInputParser } from "./terminal-input";
+import {
+  mapCmdCompatCommand,
+  parseCompatCommand,
+  parseShellCommand,
+  ShellState,
+  type ShellKind,
+} from "./shell-state";
 
 const termHost = document.getElementById("terminal")!;
 const cwdEl = document.getElementById("cwd")!;
 const shellLabel = document.getElementById("shellLabel")!;
 const compatLabel = document.getElementById("compatLabel")!;
-const compatToggle = document.getElementById("compatToggle") as HTMLInputElement;
-const shellButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-shell]"));
+
+const preferences = {
+  compat: "wingman.compat",
+  fontSize: "wingman.fontSize",
+};
+
+function savedFontSize() {
+  const value = Number(localStorage.getItem(preferences.fontSize));
+  return Number.isFinite(value) ? Math.min(22, Math.max(10, value)) : 14;
+}
 
 const term = new Terminal({
   convertEol: true,
   cursorBlink: true,
-  fontFamily: "Cascadia Code, Consolas, Courier New, monospace",
-  fontSize: 13,
-  lineHeight: 1.25,
+  fontFamily: "Cascadia Mono, Consolas, monospace",
+  fontSize: savedFontSize(),
+  lineHeight: 1.22,
   theme: {
     background: "#00000000",
     foreground: "#dceaff",
@@ -38,24 +53,21 @@ const term = new Terminal({
 
 const fitAddon = new FitAddon();
 term.loadAddon(fitAddon);
+term.loadAddon(new WebLinksAddon());
 term.open(termHost);
 fitAddon.fit();
 
-let currentShell: ShellKind = "powershell";
-let compat = true;
-let inputBuffer = "";
+let compat = localStorage.getItem(preferences.compat) !== "false";
+const inputParser = new TerminalInputParser();
+const shellState = new ShellState();
+let inputQueue = Promise.resolve();
+let activeSessionId = 0;
 
 function updateStatus(cwd?: string) {
-  shellLabel.textContent = currentShell === "powershell" ? "PowerShell" : "cmd";
+  shellLabel.textContent = shellState.current === "powershell" ? "PowerShell" : "cmd";
   compatLabel.textContent = compat ? "ON" : "OFF";
   compatLabel.className = compat ? "ok" : "off";
   if (cwd) cwdEl.textContent = cwd;
-}
-
-function setShellButtons() {
-  for (const btn of shellButtons) {
-    btn.classList.toggle("active", btn.dataset.shell === currentShell);
-  }
 }
 
 async function refreshCwd() {
@@ -67,143 +79,115 @@ async function refreshCwd() {
   }
 }
 
-function mapLinuxCommand(line: string, shell: ShellKind): string | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-
-  const parts = trimmed.split(/\s+/);
-  const cmd = parts[0];
-  const args = parts.slice(1);
-  const q = (s: string) => (/\s/.test(s) ? `"${s.replaceAll('"', '\\"')}"` : s);
-  const joined = args.map(q).join(" ");
-
-  if (shell === "powershell") {
-    switch (cmd) {
-      case "ls":
-        return args.length ? `Get-ChildItem ${joined}` : "Get-ChildItem";
-      case "ll":
-        return args.length
-          ? `Get-ChildItem ${joined} | Format-Table Mode, Length, LastWriteTime, Name`
-          : "Get-ChildItem | Format-Table Mode, Length, LastWriteTime, Name";
-      case "pwd":
-        return "Get-Location";
-      case "clear":
-        return "Clear-Host";
-      case "cat":
-        return args.length ? `Get-Content ${joined}` : "Write-Error 'cat: missing file'";
-      case "rm":
-        return args.length ? `Remove-Item -Force ${joined}` : "Write-Error 'rm: missing target'";
-      case "mv":
-        return args.length >= 2
-          ? `Move-Item ${q(args[0])} ${q(args[1])}`
-          : "Write-Error 'mv: need source and dest'";
-      case "cp":
-        return args.length >= 2
-          ? `Copy-Item ${q(args[0])} ${q(args[1])}`
-          : "Write-Error 'cp: need source and dest'";
-      default:
-        return null;
-    }
-  }
-
-  switch (cmd) {
-    case "ls":
-    case "ll":
-      return args.length ? `dir ${joined}` : "dir";
-    case "pwd":
-      return "cd";
-    case "clear":
-      return "cls";
-    case "cat":
-      return args.length ? `type ${joined}` : "echo cat: missing file";
-    case "rm":
-      return args.length ? `del /f ${joined}` : "echo rm: missing target";
-    case "mv":
-      return args.length >= 2 ? `move ${q(args[0])} ${q(args[1])}` : "echo mv: need source and dest";
-    case "cp":
-      return args.length >= 2 ? `copy ${q(args[0])} ${q(args[1])}` : "echo cp: need source and dest";
-    default:
-      return null;
-  }
-}
-
 async function startSession(shell: ShellKind) {
-  currentShell = shell;
-  setShellButtons();
-  updateStatus();
+  const sessionId = ++activeSessionId;
   term.reset();
-  inputBuffer = "";
+  inputParser.reset();
   const { cols, rows } = term;
-  await invoke("start_shell", { shell, cols, rows });
+  await invoke("start_shell", { shell, cols, rows, compat, clientSessionId: sessionId });
+  shellState.setCurrent(shell);
+  updateStatus();
   await refreshCwd();
   term.focus();
 }
 
-await listen<string>("pty-output", (event) => {
-  term.write(event.payload);
+await listen<{ session_id: number; data: string }>("pty-output", (event) => {
+  if (event.payload.session_id === activeSessionId) {
+    term.write(event.payload.data);
+  }
 });
 
 await listen<string>("cwd-changed", (event) => {
   updateStatus(event.payload);
 });
 
-term.onData(async (data) => {
-  for (const ch of data) {
-    if (ch === "\r") {
-      const line = inputBuffer;
-      inputBuffer = "";
+async function processTerminalData(data: string) {
+  for (const action of inputParser.consume(data)) {
+    if (action.type === "submit") {
+      const line = action.line;
+      const shellCommand = action.reliable ? parseShellCommand(line) : null;
+      const compatCommand = action.reliable ? parseCompatCommand(line) : null;
 
-      if (compat) {
-        const mapped = mapLinuxCommand(line, currentShell);
+      if (shellCommand !== null) {
+        await startSession(shellCommand);
+        continue;
+      }
+
+      if (compatCommand !== null) {
+        if (compatCommand !== "status") {
+          compat = compatCommand === "on";
+          localStorage.setItem(preferences.compat, String(compat));
+          await invoke("set_compat", { enabled: compat });
+          updateStatus();
+        }
+
+        const erase = "\u007f".repeat(line.length);
+        const statusCommand = `echo Compat: ${compat ? "ON" : "OFF"}`;
+        await invoke("write_shell", {
+          data: `${erase}${statusCommand}\r`,
+        });
+        inputParser.commitSubmittedLine(statusCommand);
+        continue;
+      }
+
+      if (action.reliable && compat && shellState.current === "cmd") {
+        const mapped = mapCmdCompatCommand(line);
         if (mapped !== null) {
           // Erase the raw Linux-style command the user typed, then send the mapped Windows command.
           const erase = "\u007f".repeat(line.length);
           await invoke("write_shell", { data: `${erase}${mapped}\r` });
+          inputParser.commitSubmittedLine(mapped);
           void refreshCwd();
           continue;
         }
       }
 
       await invoke("write_shell", { data: "\r" });
+      inputParser.commitSubmittedLine(action.reliable ? line : null);
       void refreshCwd();
       continue;
     }
-
-    if (ch === "\u007f") {
-      inputBuffer = inputBuffer.slice(0, -1);
-      await invoke("write_shell", { data: ch });
-      continue;
-    }
-
-    if (ch === "\u0003") {
-      inputBuffer = "";
-      await invoke("write_shell", { data: ch });
-      continue;
-    }
-
-    if (ch >= " " || ch === "\t") {
-      inputBuffer += ch;
-    }
-    await invoke("write_shell", { data: ch });
+    await invoke("write_shell", { data: action.data });
   }
-});
-
-for (const btn of shellButtons) {
-  btn.addEventListener("click", async () => {
-    const shell = btn.dataset.shell as ShellKind;
-    if (shell !== currentShell) {
-      await startSession(shell);
-    } else {
-      term.focus();
-    }
-  });
 }
 
-compatToggle.addEventListener("change", () => {
-  compat = compatToggle.checked;
-  updateStatus();
+function enqueueInputTask(task: () => Promise<void>) {
+  inputQueue = inputQueue
+    .then(task)
+    .catch((error) => {
+      console.error("Terminal input failed", error);
+    });
+}
+
+function enqueueTerminalData(data: string) {
+  enqueueInputTask(() => processTerminalData(data));
+}
+
+term.onData((data) => enqueueTerminalData(data));
+
+function resizeFont(delta: number) {
+  const currentSize = term.options.fontSize ?? 14;
+  const next = Math.min(22, Math.max(10, currentSize + delta));
+  if (next === currentSize) return;
+  term.options.fontSize = next;
+  localStorage.setItem(preferences.fontSize, String(next));
+  fitAddon.fit();
+  const { cols, rows } = term;
+  void invoke("resize_shell", { cols, rows });
   term.focus();
-});
+}
+
+async function copySelection() {
+  const selection = term.getSelection();
+  if (selection) await navigator.clipboard.writeText(selection);
+  term.focus();
+}
+
+async function pasteClipboard() {
+  const text = await navigator.clipboard.readText();
+  if (text) enqueueTerminalData(text.replace(/\r\n|\n/g, "\r"));
+  term.focus();
+}
 
 window.addEventListener("resize", () => {
   fitAddon.fit();
@@ -214,18 +198,25 @@ window.addEventListener("resize", () => {
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c") {
     e.preventDefault();
-    const sel = term.getSelection();
-    if (sel) void navigator.clipboard.writeText(sel);
+    void copySelection();
   }
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") {
     e.preventDefault();
-    void navigator.clipboard.readText().then((text) => {
-      if (text) void invoke("write_shell", { data: text });
-    });
+    void pasteClipboard();
+  }
+  if (e.ctrlKey && !e.shiftKey && (e.key === "+" || e.key === "=")) {
+    e.preventDefault();
+    resizeFont(1);
+  }
+  if (e.ctrlKey && !e.shiftKey && e.key === "-") {
+    e.preventDefault();
+    resizeFont(-1);
+  }
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
+    e.preventDefault();
+    enqueueInputTask(() => startSession(shellState.current));
   }
 });
 
 updateStatus(await invoke<string>("get_cwd").catch(() => "D:\\"));
-setShellButtons();
 await startSession("powershell");
-
