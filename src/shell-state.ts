@@ -1,15 +1,26 @@
 export type ShellKind = "powershell" | "cmd";
 export type CompatCommand = "on" | "off" | "status";
+export type ShellTransition = "enter" | "leave" | "root-exit";
 
 export class ShellState {
-  private active: ShellKind = "powershell";
+  private stack: ShellKind[] = ["powershell"];
 
   get current(): ShellKind {
-    return this.active;
+    return this.stack.at(-1)!;
   }
 
   setCurrent(shell: ShellKind) {
-    this.active = shell;
+    this.stack = [shell];
+  }
+
+  enter(shell: ShellKind) {
+    this.stack.push(shell);
+  }
+
+  leave(): ShellKind | null {
+    if (this.stack.length === 1) return null;
+    this.stack.pop();
+    return this.current;
   }
 }
 
@@ -20,9 +31,28 @@ export function parseShellCommand(line: string): ShellKind | null {
   return null;
 }
 
+export function applyShellTransition(
+  line: string,
+  state: ShellState,
+): ShellTransition | null {
+  const shell = parseShellCommand(line);
+  if (shell !== null) {
+    state.enter(shell);
+    return "enter";
+  }
+
+  if (line.trim().toLowerCase() !== "exit") return null;
+  return state.leave() === null ? "root-exit" : "leave";
+}
+
 export function parseCompatCommand(line: string): CompatCommand | null {
-  const match = line.trim().toLowerCase().match(/^(?:compat|linux)\s+(on|off|status)$/);
+  const match = line.trim().toLowerCase().match(/^(?:familiar|fam|compat)\s+(on|off|status)$/);
   return (match?.[1] as CompatCommand | undefined) ?? null;
+}
+
+export function familiarStatusCommand(shell: ShellKind, enabled: boolean): string {
+  const status = `Familiar: ${enabled ? "ON" : "OFF"}`;
+  return shell === "powershell" ? `Write-Output '${status}'` : `echo ${status}`;
 }
 
 export function mapCmdCompatCommand(line: string): string | null {

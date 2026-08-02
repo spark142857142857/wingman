@@ -1,4 +1,11 @@
-import { mapCmdCompatCommand, parseCompatCommand, parseShellCommand, ShellState } from "./shell-state.ts";
+import {
+  applyShellTransition,
+  familiarStatusCommand,
+  mapCmdCompatCommand,
+  parseCompatCommand,
+  parseShellCommand,
+  ShellState,
+} from "./shell-state.ts";
 
 function assertEqual(label: string, actual: unknown, expected: unknown) {
   if (actual !== expected) {
@@ -18,10 +25,38 @@ assertEqual("PowerShell executable switch command", parseShellCommand("pwsh.exe"
 assertEqual("shell command with arguments passes through", parseShellCommand("cmd /d"), null);
 assertEqual("ordinary exit is owned by active shell", parseShellCommand("exit"), null);
 
-assertEqual("compat on", parseCompatCommand("compat on"), "on");
-assertEqual("compat off", parseCompatCommand("compat off"), "off");
-assertEqual("linux status alias", parseCompatCommand("linux status"), "status");
+const nestedShells = new ShellState();
+nestedShells.enter("cmd");
+assertEqual("entering cmd keeps it as the active nested shell", nestedShells.current, "cmd");
+assertEqual("exiting nested cmd returns to PowerShell", nestedShells.leave(), "powershell");
+assertEqual("PowerShell is active again after cmd exit", nestedShells.current, "powershell");
+assertEqual("exiting the root shell has no parent to restore", nestedShells.leave(), null);
+assertEqual("root shell remains active until its process exits", nestedShells.current, "powershell");
+
+const routedShells = new ShellState();
+assertEqual("cmd enters a nested shell in the current PTY", applyShellTransition("cmd", routedShells), "enter");
+assertEqual("cmd is active after routing", routedShells.current, "cmd");
+assertEqual("nested exit returns to the parent shell", applyShellTransition("exit", routedShells), "leave");
+assertEqual("parent PowerShell is restored after routing exit", routedShells.current, "powershell");
+assertEqual("root exit is left for the root shell process", applyShellTransition("exit", routedShells), "root-exit");
+assertEqual("ordinary commands do not change the shell stack", applyShellTransition("git status", routedShells), null);
+
+assertEqual("familiar on", parseCompatCommand("familiar on"), "on");
+assertEqual("familiar off", parseCompatCommand("familiar off"), "off");
+assertEqual("fam status alias", parseCompatCommand("fam status"), "status");
+assertEqual("legacy compat alias", parseCompatCommand("compat status"), "status");
+assertEqual("linux is reserved for a future real Linux mode", parseCompatCommand("linux status"), null);
 assertEqual("ordinary command", parseCompatCommand("echo compat on"), null);
+assertEqual(
+  "PowerShell familiar status is one line",
+  familiarStatusCommand("powershell", true),
+  "Write-Output 'Familiar: ON'",
+);
+assertEqual(
+  "cmd familiar status is one line",
+  familiarStatusCommand("cmd", false),
+  "echo Familiar: OFF",
+);
 assertEqual("PowerShell cmdlet passes through", mapCmdCompatCommand("Get-Process"), null);
 assertEqual("cmd native dir passes through", mapCmdCompatCommand("dir /b"), null);
 assertEqual("developer command passes through", mapCmdCompatCommand("git status"), null);
