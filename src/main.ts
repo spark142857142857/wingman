@@ -6,10 +6,12 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { TerminalInputParser } from "./terminal-input";
+import { isPasteShortcut } from "./terminal-shortcuts";
 import {
+  applyShellTransition,
+  familiarStatusCommand,
   mapCmdCompatCommand,
   parseCompatCommand,
-  parseShellCommand,
   ShellState,
   type ShellKind,
 } from "./shell-state";
@@ -17,16 +19,18 @@ import {
 const termHost = document.getElementById("terminal")!;
 const cwdEl = document.getElementById("cwd")!;
 const shellLabel = document.getElementById("shellLabel")!;
-const compatLabel = document.getElementById("compatLabel")!;
+const familiarLabel = document.getElementById("familiarLabel")!;
 
 const preferences = {
   compat: "wingman.compat",
-  fontSize: "wingman.fontSize",
+  fontSize: "wingman.fontSize.v2",
 };
 
 function savedFontSize() {
-  const value = Number(localStorage.getItem(preferences.fontSize));
-  return Number.isFinite(value) ? Math.min(22, Math.max(10, value)) : 14;
+  const saved = localStorage.getItem(preferences.fontSize);
+  if (saved === null) return 17;
+  const value = Number(saved);
+  return Number.isFinite(value) ? Math.min(24, Math.max(12, value)) : 17;
 }
 
 const term = new Terminal({
@@ -34,7 +38,9 @@ const term = new Terminal({
   cursorBlink: true,
   fontFamily: "Cascadia Mono, Consolas, monospace",
   fontSize: savedFontSize(),
-  lineHeight: 1.22,
+  fontWeight: "500",
+  fontWeightBold: "700",
+  lineHeight: 1.25,
   theme: {
     background: "#00000000",
     foreground: "#dceaff",
@@ -65,8 +71,8 @@ let activeSessionId = 0;
 
 function updateStatus(cwd?: string) {
   shellLabel.textContent = shellState.current === "powershell" ? "PowerShell" : "cmd";
-  compatLabel.textContent = compat ? "ON" : "OFF";
-  compatLabel.className = compat ? "ok" : "off";
+  familiarLabel.textContent = compat ? "ON" : "OFF";
+  familiarLabel.className = compat ? "ok" : "off";
   if (cwd) cwdEl.textContent = cwd;
 }
 
@@ -102,14 +108,20 @@ await listen<string>("cwd-changed", (event) => {
 });
 
 async function processTerminalData(data: string) {
-  for (const action of inputParser.consume(data)) {
+  const actions = inputParser.consume(data);
+  for (const action of actions) {
     if (action.type === "submit") {
       const line = action.line;
-      const shellCommand = action.reliable ? parseShellCommand(line) : null;
+      const shellTransition = action.reliable
+        ? applyShellTransition(line, shellState)
+        : null;
       const compatCommand = action.reliable ? parseCompatCommand(line) : null;
 
-      if (shellCommand !== null) {
-        await startSession(shellCommand);
+      if (shellTransition === "enter" || shellTransition === "leave") {
+        await invoke("write_shell", { data: "\r" });
+        inputParser.commitSubmittedLine(line);
+        updateStatus();
+        void refreshCwd();
         continue;
       }
 
@@ -122,7 +134,7 @@ async function processTerminalData(data: string) {
         }
 
         const erase = "\u007f".repeat(line.length);
-        const statusCommand = `echo Compat: ${compat ? "ON" : "OFF"}`;
+        const statusCommand = familiarStatusCommand(shellState.current, compat);
         await invoke("write_shell", {
           data: `${erase}${statusCommand}\r`,
         });
@@ -165,15 +177,27 @@ function enqueueTerminalData(data: string) {
 
 term.onData((data) => enqueueTerminalData(data));
 
+let fitFrame: number | null = null;
+
+function scheduleTerminalFit() {
+  if (fitFrame !== null) cancelAnimationFrame(fitFrame);
+  fitFrame = requestAnimationFrame(() => {
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = null;
+      fitAddon.fit();
+      const { cols, rows } = term;
+      void invoke("resize_shell", { cols, rows });
+    });
+  });
+}
+
 function resizeFont(delta: number) {
-  const currentSize = term.options.fontSize ?? 14;
-  const next = Math.min(22, Math.max(10, currentSize + delta));
+  const currentSize = term.options.fontSize ?? 17;
+  const next = Math.min(24, Math.max(12, currentSize + delta));
   if (next === currentSize) return;
   term.options.fontSize = next;
   localStorage.setItem(preferences.fontSize, String(next));
-  fitAddon.fit();
-  const { cols, rows } = term;
-  void invoke("resize_shell", { cols, rows });
+  scheduleTerminalFit();
   term.focus();
 }
 
@@ -189,20 +213,21 @@ async function pasteClipboard() {
   term.focus();
 }
 
-window.addEventListener("resize", () => {
-  fitAddon.fit();
-  const { cols, rows } = term;
-  void invoke("resize_shell", { cols, rows });
+term.attachCustomKeyEventHandler((event) => {
+  if (event.type !== "keydown" || !isPasteShortcut(event)) return true;
+  event.preventDefault();
+  event.stopPropagation();
+  void pasteClipboard();
+  return false;
 });
+
+const terminalResizeObserver = new ResizeObserver(scheduleTerminalFit);
+terminalResizeObserver.observe(termHost);
 
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c") {
     e.preventDefault();
     void copySelection();
-  }
-  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "v") {
-    e.preventDefault();
-    void pasteClipboard();
   }
   if (e.ctrlKey && !e.shiftKey && (e.key === "+" || e.key === "=")) {
     e.preventDefault();
