@@ -23,10 +23,11 @@ body,
 
 #app {
   display: grid;
-  grid-template-rows: 1fr 27px;
+  grid-template-rows: 1fr 30px;
 }
 
 .stage {
+  min-width: 0;
   min-height: 0;
   background: var(--terminal);
 }
@@ -48,7 +49,12 @@ body,
   border-top: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.statusbar > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .statusbar strong {
@@ -60,6 +66,7 @@ body,
 .statusbar .off { color: #f49a9a; }
 
 .statusbar .cwd {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -82,6 +89,15 @@ body,
 }
 
 @media (max-width: 720px) {
-  #app { grid-template-rows: 1fr 24px; }
+  #app { grid-template-rows: 1fr 27px; }
   .hint { display: none; }
+}
+
+@media (max-width: 480px) {
+  .terminal { padding: 8px; }
+  .statusbar {
+    gap: 9px;
+    padding: 0 8px;
+  }
+  .statusbar .cwd { display: none; }
 }

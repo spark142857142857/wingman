@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Clone, Serialize)]
 struct SessionInfo {
@@ -46,6 +46,15 @@ static COMPAT_PROFILE_PATH: Lazy<PathBuf> =
     Lazy::new(|| std::env::temp_dir().join(format!("wingman-{}-compat.ps1", std::process::id())));
 
 const POWERSHELL_COMPAT_PROFILE: &str = include_str!("powershell_compat.ps1");
+
+fn terminal_pty_size(cols: u16, rows: u16) -> PtySize {
+    PtySize {
+        rows: rows.max(1),
+        cols: cols.max(1),
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
 
 #[derive(Default)]
 struct Utf8StreamDecoder {
@@ -198,12 +207,7 @@ fn start_shell(
 
     let pty_system = native_pty_system();
     let pair = pty_system
-        .openpty(PtySize {
-            rows: rows.max(10),
-            cols: cols.max(40),
-            pixel_width: 0,
-            pixel_height: 0,
-        })
+        .openpty(terminal_pty_size(cols, rows))
         .map_err(|e| e.to_string())?;
 
     let (program, args) = resolve_shell(&shell);
@@ -298,7 +302,12 @@ fn start_shell(
 
     let exit_app_handle = app.clone();
     monitor_session_exit(child, session_id, move || {
-        exit_app_handle.exit(0);
+        let closed = exit_app_handle
+            .get_webview_window("main")
+            .is_some_and(|window| window.close().is_ok());
+        if !closed {
+            exit_app_handle.exit(0);
+        }
     });
 
     let _ = app.emit("cwd-changed", cwd.clone());
@@ -335,12 +344,7 @@ fn resize_shell(cols: u16, rows: u16) -> Result<(), String> {
         .ok_or_else(|| "shell not started".to_string())?;
     session
         .master
-        .resize(PtySize {
-            rows: rows.max(10),
-            cols: cols.max(40),
-            pixel_width: 0,
-            pixel_height: 0,
-        })
+        .resize(terminal_pty_size(cols, rows))
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -405,6 +409,17 @@ mod tests {
             .recv_timeout(Duration::from_secs(3))
             .expect("current shell exit should be detected");
         APP_STATE.session.lock().take();
+    }
+
+    #[test]
+    fn pty_size_matches_small_terminal_dimensions() {
+        let size = terminal_pty_size(28, 6);
+        assert_eq!(size.cols, 28);
+        assert_eq!(size.rows, 6);
+
+        let minimum = terminal_pty_size(0, 0);
+        assert_eq!(minimum.cols, 1);
+        assert_eq!(minimum.rows, 1);
     }
 
     #[test]
