@@ -69,4 +69,64 @@ assertActions(
   [{ type: "write", data: "fi\t" }, { type: "submit", line: "fi", reliable: false }],
 );
 
+const lfSeparatedPaste = new TerminalInputParser();
+assertActions(
+  "LF-separated pasted commands are submitted one line at a time",
+  lfSeparatedPaste.consume("familiar status\ncat sample.txt | wc -l\n"),
+  [
+    { type: "write", data: "familiar status" },
+    { type: "submit", line: "familiar status", reliable: true },
+    { type: "write", data: "cat sample.txt | wc -l" },
+    { type: "submit", line: "cat sample.txt | wc -l", reliable: true },
+  ],
+);
+
+const crlfSeparatedPaste = new TerminalInputParser();
+assertActions(
+  "CRLF-separated pasted commands submit exactly once per line",
+  crlfSeparatedPaste.consume("familiar status\r\ncat sample.txt | wc -l\r\n"),
+  [
+    { type: "write", data: "familiar status" },
+    { type: "submit", line: "familiar status", reliable: true },
+    { type: "write", data: "cat sample.txt | wc -l" },
+    { type: "submit", line: "cat sample.txt | wc -l", reliable: true },
+  ],
+);
+
+const splitCrlfPaste = new TerminalInputParser();
+assertActions(
+  "CR at the end of one input chunk submits the line",
+  splitCrlfPaste.consume("familiar status\r"),
+  [
+    { type: "write", data: "familiar status" },
+    { type: "submit", line: "familiar status", reliable: true },
+  ],
+);
+assertActions(
+  "LF at the start of the next chunk does not submit twice",
+  splitCrlfPaste.consume("\ncat sample.txt | wc -l\r"),
+  [
+    { type: "write", data: "cat sample.txt | wc -l" },
+    { type: "submit", line: "cat sample.txt | wc -l", reliable: true },
+  ],
+);
+
+const bracketedPaste = new TerminalInputParser();
+assertActions(
+  "bracketed multiline paste keeps reserved commands reliable",
+  bracketedPaste.consume(
+    "\u001b[200~familiar status\ncat sample.txt | grep TODO | head -n 1\u001b[201~\r",
+  ),
+  [
+    { type: "write", data: "familiar status" },
+    { type: "submit", line: "familiar status", reliable: true },
+    { type: "write", data: "cat sample.txt | grep TODO | head -n 1" },
+    {
+      type: "submit",
+      line: "cat sample.txt | grep TODO | head -n 1",
+      reliable: true,
+    },
+  ],
+);
+
 console.log("Terminal input parser tests passed.");

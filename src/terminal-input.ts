@@ -9,6 +9,7 @@ export class TerminalInputParser {
   private cursor = 0;
   private escapeSequence = "";
   private reliable = true;
+  private ignoreNextLineFeed = false;
   private history: string[] = [];
   private historyIndex: number | null = null;
   private historyDraft = "";
@@ -18,6 +19,7 @@ export class TerminalInputParser {
     this.cursor = 0;
     this.escapeSequence = "";
     this.reliable = true;
+    this.ignoreNextLineFeed = false;
     this.history = [];
     this.historyIndex = null;
     this.historyDraft = "";
@@ -38,12 +40,23 @@ export class TerminalInputParser {
     const actions: TerminalInputAction[] = [];
 
     for (const ch of data) {
+      if (ch === "\n" && this.ignoreNextLineFeed) {
+        this.ignoreNextLineFeed = false;
+        continue;
+      }
+      this.ignoreNextLineFeed = false;
+
       if (this.escapeSequence) {
         this.escapeSequence += ch;
         if (this.escapeSequenceComplete()) {
           const sequence = this.escapeSequence;
           this.escapeSequence = "";
-          if (sequence !== `${ESC}[I` && sequence !== `${ESC}[O`) {
+          const isTerminalBoundary =
+            sequence === `${ESC}[I` ||
+            sequence === `${ESC}[O` ||
+            sequence === `${ESC}[200~` ||
+            sequence === `${ESC}[201~`;
+          if (!isTerminalBoundary) {
             if (!this.applyEditingSequence(sequence)) this.reliable = false;
             this.pushWrite(actions, sequence);
           }
@@ -56,11 +69,12 @@ export class TerminalInputParser {
         continue;
       }
 
-      if (ch === "\r") {
+      if (ch === "\r" || ch === "\n") {
         actions.push({ type: "submit", line: this.line, reliable: this.reliable });
         this.line = "";
         this.cursor = 0;
         this.reliable = true;
+        this.ignoreNextLineFeed = ch === "\r";
         this.historyIndex = null;
         this.historyDraft = "";
         continue;
