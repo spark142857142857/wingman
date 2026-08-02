@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="../../src/styles.css" />
+    <style>
+      .mock-xterm { width: 1100px; height: 200px; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <main class="stage">
+        <div id="terminal" class="terminal">
+          <div class="mock-xterm"></div>
+        </div>
+      </main>
+      <footer class="statusbar">
+        <span>Shell: <strong>PowerShell</strong></span>
+        <span>Familiar: <strong class="ok">ON</strong></span>
+        <span class="cwd">start: <strong>C:\a\very\long\starting\directory</strong></span>
+        <span class="hint">familiar/fam on/off</span>
+      </footer>
+    </div>
+    <output id="metrics"></output>
+    <script>
+      requestAnimationFrame(() => {
+        const stage = document.querySelector(".stage");
+        const terminal = document.querySelector(".terminal");
+        const statusbar = document.querySelector(".statusbar");
+        document.querySelector("#metrics").textContent = JSON.stringify({
+          viewport: document.documentElement.clientWidth,
+          stage: stage.getBoundingClientRect().width,
+          terminal: terminal.getBoundingClientRect().width,
+          statusbar: statusbar.getBoundingClientRect().width,
+        });
+      });
+    </script>
+  </body>
+</html>
