@@ -1,9 +1,9 @@
 use crate::grep_pattern::GrepPatternV1;
 use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
-use crate::runner_readonly::{
-    compare_exact_decimal, parse_exact_decimal, sort_resource_limit_exceeded,
-    MAX_TAIL_BUFFER_BYTES, MAX_TAIL_BUFFER_RECORDS,
+use crate::runner_readonly::{MAX_TAIL_BUFFER_BYTES, MAX_TAIL_BUFFER_RECORDS};
+use crate::sort_support::{
+    compare_exact_decimal, parse_exact_decimal, resource_limit_exceeded as sort_limit_exceeded,
 };
 use crate::text_stream::{RecordFrameV1, RecordStreamWriterV1, TextStreamWriteErrorV1};
 use crate::windows_path::ValidatedPathSpecV1;
@@ -408,11 +408,7 @@ impl RuntimeStageV1 {
                 })
             }
             Self::Sort(sort) => {
-                if sort_resource_limit_exceeded(
-                    sort.records.len(),
-                    sort.bytes,
-                    record.frame.text.len(),
-                ) {
+                if sort_limit_exceeded(sort.records.len(), sort.bytes, record.frame.text.len()) {
                     sort.records.clear();
                     sort.bytes = 0;
                     return Err(OrderedPipelineFaultV1::SortResource);

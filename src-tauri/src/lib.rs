@@ -29,6 +29,7 @@ pub mod runner_io;
 pub mod runner_readonly;
 pub mod session_runtime;
 pub mod shell_adapter;
+pub mod sort_support;
 pub mod terminal_session;
 pub mod text_stream;
 pub mod transport;
