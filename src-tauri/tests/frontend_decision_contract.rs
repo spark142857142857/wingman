@@ -351,6 +351,40 @@ fn reliable_familiar_cat_head_redirection_is_stored_as_one_typed_plan() {
 }
 
 #[test]
+fn reliable_familiar_uniq_is_published_as_a_typed_plan() {
+    let mut session = InterpreterSession::new(41, 34, ActiveShell::WindowsPowerShell);
+    let raw_line = "cat input.txt | uniq -c | head -n 2";
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 41,
+            command_sequence: 34,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: raw_line.to_string(),
+        })
+        .expect("classify a reliable uniq pipeline");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared uniq plan, got {other:?}"),
+    };
+
+    let request = session.consume_prepared(&request_id).unwrap();
+    let PreparedRequestKindV1::Execute { plan } = request.kind else {
+        panic!("expected executable uniq plan");
+    };
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::UniqueLines {
+            path: None,
+            count: true,
+            repeated_only: false,
+            unique_only: false,
+        }
+    ));
+}
+
+#[test]
 fn read_only_names_remain_native_when_ownership_evidence_is_missing() {
     for (sequence, familiar_enabled, evidence, raw_line) in [
         (19, false, LineEvidence::Reliable, "cat input.txt"),
@@ -360,6 +394,7 @@ fn read_only_names_remain_native_when_ownership_evidence_is_missing() {
         (26, true, LineEvidence::Reliable, "wc.exe -l input.txt"),
         (30, true, LineEvidence::Reliable, "tail.exe -n 2 input.txt"),
         (33, true, LineEvidence::Reliable, "grep.exe TODO input.txt"),
+        (35, true, LineEvidence::Reliable, "uniq.exe input.txt"),
     ] {
         let mut session = InterpreterSession::new(41, sequence, ActiveShell::WindowsPowerShell);
         let decision = session
@@ -402,6 +437,7 @@ fn claimed_read_only_syntax_and_catalog_failures_become_prepared_rejections() {
         (25, "cat -z input.txt", "wingman cat: unsupported option"),
         (27, "wc input.txt", "wingman wc: unsupported option"),
         (31, "tail -f input.txt", "wingman tail: unsupported option"),
+        (36, "uniq -du input.txt", "wingman uniq: unsupported option"),
     ] {
         let mut session = InterpreterSession::new(41, sequence, ActiveShell::WindowsPowerShell);
         let decision = session

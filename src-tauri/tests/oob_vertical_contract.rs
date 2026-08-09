@@ -234,6 +234,34 @@ fn powershell_oob_readiness_reaches_the_real_runner_and_next_editor_cycle() {
     );
     assert_eq!(fs::read(&grep_output).unwrap(), "2:둘째 줄\r\n".as_bytes());
 
+    let uniq_input = sandbox.join("uniq-input.txt");
+    let uniq_output = sandbox.join("uniq-output.txt");
+    fs::write(&uniq_input, b"same\nsame\nother\n").unwrap();
+    let line = format!(
+        "uniq -c \"{}\" > \"{}\"\r",
+        uniq_input.display(),
+        uniq_output.display()
+    );
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        &line,
+        familiar_enabled,
+    )
+    .expect("execute prepared uniq");
+    assert!(matches!(
+        outcome,
+        TerminalExecutionOutcomeV1::Prepared { .. }
+    ));
+    let eighth = receive_readiness(&readiness, 8);
+    assert!(
+        session.apply_editor_readiness(&eighth),
+        "eighth readiness frame was not accepted"
+    );
+    assert_eq!(fs::read(&uniq_output).unwrap(), b"2 same\r\n1 other\r\n");
+
     let _ = child.kill();
     drop(writer);
     requests.stop().expect("stop request broker");

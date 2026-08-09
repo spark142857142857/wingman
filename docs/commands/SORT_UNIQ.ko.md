@@ -4,6 +4,9 @@
 
 영문 원본: [SORT_UNIQ.md](SORT_UNIQ.md)
 
+구현 상태 (2026-08-09): `uniq`는 Reliable PowerShell Familiar 경로에 공개됐고,
+`sort`는 다음 migration gate로 남아 있다.
+
 모든 파일 operand는 공통
 [Windows 경로 계약](../WINDOWS_PATH_CONTRACT.ko.md)을 따른다.
 Text decoding, record termination, bounded materialization, 출력은 공통

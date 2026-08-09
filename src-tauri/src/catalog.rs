@@ -34,6 +34,8 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
             stages.push(build_wc(command, index > 0)?);
         } else if command.name.eq_ignore_ascii_case("grep") {
             stages.push(build_grep(command, index > 0)?);
+        } else if command.name.eq_ignore_ascii_case("uniq") {
+            stages.push(build_uniq(command, index > 0)?);
         } else {
             return Err(CatalogErrorV1::UnsupportedCommand);
         }
@@ -59,6 +61,68 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
         _ => CatalogErrorV1::InvalidSourceShape,
     })?;
     Ok(plan)
+}
+
+fn build_uniq(
+    command: &ParsedCommandV1,
+    has_pipeline_input: bool,
+) -> Result<StagePlanV1, CatalogErrorV1> {
+    let mut count = false;
+    let mut repeated_only = false;
+    let mut unique_only = false;
+    let mut parse_options = true;
+    let mut paths = Vec::new();
+    for argument in &command.arguments {
+        if parse_options && argument == "--" {
+            parse_options = false;
+        } else if parse_options {
+            if let Some(long) = argument.strip_prefix("--") {
+                match long {
+                    "count" => count = true,
+                    "repeated" => repeated_only = true,
+                    "unique" => unique_only = true,
+                    _ => return Err(CatalogErrorV1::UnsupportedOption),
+                }
+            } else if let Some(shorts) = argument.strip_prefix('-') {
+                if shorts.is_empty() {
+                    paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+                    continue;
+                }
+                for short in shorts.chars() {
+                    match short {
+                        'c' => count = true,
+                        'd' => repeated_only = true,
+                        'u' => unique_only = true,
+                        _ => return Err(CatalogErrorV1::UnsupportedOption),
+                    }
+                }
+            } else {
+                paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+            }
+        } else {
+            paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+        }
+    }
+    if repeated_only && unique_only {
+        return Err(CatalogErrorV1::UnsupportedOption);
+    }
+    let path = if has_pipeline_input {
+        if !paths.is_empty() {
+            return Err(CatalogErrorV1::InvalidSourceShape);
+        }
+        None
+    } else {
+        if paths.len() != 1 {
+            return Err(CatalogErrorV1::InvalidSourceShape);
+        }
+        paths.pop()
+    };
+    Ok(StagePlanV1::UniqueLines {
+        path,
+        count,
+        repeated_only,
+        unique_only,
+    })
 }
 
 fn build_grep(

@@ -89,7 +89,7 @@ fatal, and diagnostic ordering follows the text stream contract.
 
 ## Implemented read-only and redirection vertical slice (2026-08-09)
 
-The production sidecar now executes validated `cat`, `head`, finite `tail -n N`, `wc -l`, and `grep` plans through a
+The production sidecar now executes validated `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, and `uniq` plans through a
 writer-based streaming entry point, either to normal stdout or to a final `>` or
 `>>` file sink. It opens every explicit input before the output, resolves and
 opens redirected output through the pinned-parent/reparse-safe primitive,
@@ -109,6 +109,12 @@ text. Exceeding either bound emits no tail data and exits `1`. `tail -n 0`
 opens its explicit input but does not decode the payload. Follow mode remains
 unpublished and `-f`/`--follow` is rejected by the claimed finite-tail slice.
 
+`uniq` keeps one bounded adjacent group in memory and compares complete lines
+case-sensitively. It supports `-c`, `-d`, and `-u`, preserves the final member's
+termination state, and composes with downstream `head`, finite `tail`, `wc -l`,
+and safe redirection. Recursive `grep -r | uniq` remains rejected until the
+recursive runner supports the same stage.
+
 `head` stops the upstream reader after the required prefix. An invalid UTF-8
 suffix already buffered by the OS but not requested by the record reader is not
 decoded and does not fail the command. Runtime failure in one `cat` source keeps
@@ -118,13 +124,13 @@ no BOM or separator, diagnostics remain on stderr, and a runtime failure or
 cancellation can leave an empty or partial target as specified above.
 
 This slice is reachable through typed runner requests and the actual
-`wingman-runner` process. `cat`, `head`, finite `tail -n N`, `wc -l`, and `grep` are now classified and published when
+`wingman-runner` process. `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, and `uniq` are now classified and published when
 Familiar is on and the production PowerShell editor cycle is Reliable at a
 FileSystem location. The shared lexer, parser, and catalog either build one
 typed plan or prepare a deterministic exit-`2` rejection; explicit `.exe`
 names, native-first pipelines, Familiar off, and uncertain input remain native
 pass-through. A real PowerShell/ConPTY test covers Familiar activation, OOB
-readiness, Unicode paths, `cat | head >`, `wc -l >`, `tail -n 1 >`, Unicode `grep -n >`, the request broker, the sidecar, and
+readiness, Unicode paths, `cat | head >`, `wc -l >`, `tail -n 1 >`, Unicode `grep -n >`, `uniq -c >`, the request broker, the sidecar, and
 the next readiness cycle. `cmd` remains native pass-through because it has no
 proved editor-readiness adapter.
 

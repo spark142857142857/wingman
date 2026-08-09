@@ -240,3 +240,51 @@ fn grep_rejects_unsupported_options_patterns_and_source_shapes() {
         assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
     }
 }
+
+#[test]
+fn uniq_builds_typed_file_and_pipeline_stages() {
+    let parsed = parse_p0_tokens(&lex_p0_line("uniq -cd input.txt").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("build file uniq plan");
+    assert_eq!(
+        plan.stages,
+        vec![StagePlanV1::UniqueLines {
+            path: Some(validate_path_value("input.txt").unwrap()),
+            count: true,
+            repeated_only: true,
+            unique_only: false,
+        }]
+    );
+
+    let parsed = parse_p0_tokens(
+        &lex_p0_line("cat input.txt | grep ERROR | uniq --unique | head -n 2 | wc -l").unwrap(),
+    )
+    .unwrap();
+    let plan = build_readonly_plan(&parsed).expect("build pipeline uniq plan");
+    assert!(matches!(
+        plan.stages[2],
+        StagePlanV1::UniqueLines {
+            path: None,
+            count: false,
+            repeated_only: false,
+            unique_only: true,
+        }
+    ));
+}
+
+#[test]
+fn uniq_rejects_conflicts_and_invalid_source_shapes() {
+    for line in [
+        "uniq",
+        "uniq -du input.txt",
+        "uniq one.txt two.txt",
+        "uniq -z input.txt",
+        "cat input.txt | uniq other.txt",
+        "cat input.txt | head | uniq",
+        "uniq input.txt | grep value",
+        "uniq input.txt | uniq",
+        "grep -r value src | uniq",
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+    }
+}

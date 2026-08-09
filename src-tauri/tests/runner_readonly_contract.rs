@@ -842,6 +842,122 @@ fn head_after_multi_file_grep_stops_after_promoting_the_first_unterminated_match
     cleanup(&sandbox);
 }
 
+#[test]
+fn uniq_collapses_only_adjacent_groups_and_preserves_final_termination() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"alpha\nalpha\nbeta\nalpha").unwrap();
+
+    let outcome = execute_prepared(request(vec![uniq_stage(
+        Some(path_spec(&input)),
+        false,
+        false,
+        false,
+    )]))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"alpha\r\nbeta\r\nalpha");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn uniq_count_repeated_and_singleton_filters_apply_per_adjacent_group() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"a\na\nb\nc\nc\nc\n").unwrap();
+
+    let repeated = execute_prepared(request(vec![uniq_stage(
+        Some(path_spec(&input)),
+        true,
+        true,
+        false,
+    )]))
+    .unwrap();
+    assert_eq!(repeated.exit_code, 0);
+    assert_eq!(repeated.stdout, b"2 a\r\n3 c\r\n");
+
+    let singletons = execute_prepared(request(vec![uniq_stage(
+        Some(path_spec(&input)),
+        true,
+        false,
+        true,
+    )]))
+    .unwrap();
+    assert_eq!(singletons.exit_code, 0);
+    assert_eq!(singletons.stdout, b"1 b\r\n");
+    cleanup(&sandbox);
+}
+
+#[test]
+fn pipeline_uniq_composes_with_wc_and_safe_redirection() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    let output = sandbox.join("output.txt");
+    fs::write(&input, b"one\none\ntwo\ntwo\n").unwrap();
+
+    let stages = vec![
+        StagePlanV1::ReadTextFiles {
+            paths: vec![path_spec(&input)],
+            number_lines: false,
+        },
+        uniq_stage(None, false, false, false),
+        StagePlanV1::CountLines { path: None },
+    ];
+    let outcome = execute_prepared(request_with_redirect(
+        stages,
+        &output,
+        RedirectModeV1::Overwrite,
+    ))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert!(outcome.stdout.is_empty());
+    assert!(outcome.stderr.is_empty());
+    assert_eq!(fs::read(&output).unwrap(), b"2\r\n");
+    cleanup(&sandbox);
+}
+
+#[test]
+fn head_after_uniq_stops_before_decoding_an_invalid_suffix() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(
+        &input,
+        [b"first\nfirst\nsecond\n".as_slice(), &[0xff, 0xfe]].concat(),
+    )
+    .unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        uniq_stage(Some(path_spec(&input)), false, false, false),
+        StagePlanV1::HeadLines {
+            count: 1,
+            path: None,
+        },
+    ]))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"first\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+fn uniq_stage(
+    path: Option<wingman_lib::windows_path::ValidatedPathSpecV1>,
+    count: bool,
+    repeated_only: bool,
+    unique_only: bool,
+) -> StagePlanV1 {
+    StagePlanV1::UniqueLines {
+        path,
+        count,
+        repeated_only,
+        unique_only,
+    }
+}
+
 fn grep_stage(
     pattern: &str,
     paths: Vec<wingman_lib::windows_path::ValidatedPathSpecV1>,

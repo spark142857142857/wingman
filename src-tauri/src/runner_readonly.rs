@@ -34,12 +34,25 @@ struct ReadonlySourceV1<'a> {
     grep: Option<GrepFilterV1>,
     grep_is_final: bool,
     grep_direct: bool,
+    uniq: Option<UniqFilterV1>,
 }
 
 struct GrepFilterV1 {
     pattern: GrepPatternV1,
     line_numbers: bool,
     invert_match: bool,
+}
+
+#[derive(Clone, Copy)]
+struct UniqFilterV1 {
+    count: bool,
+    repeated_only: bool,
+    unique_only: bool,
+}
+
+struct UniqGroupV1 {
+    frame: RecordFrameV1,
+    occurrences: u64,
 }
 
 pub fn execute_readonly_plan_to<W: Write, E: Write>(
@@ -277,37 +290,64 @@ fn readonly_source(
     let Some(first) = plan.stages.first() else {
         return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
     };
-    let (command_name, paths, number_lines, mut record_limit, mut tail_limit, mut count_lines) =
-        match first {
-            StagePlanV1::ReadTextFiles {
-                paths,
-                number_lines,
-            } => (
-                "cat",
-                paths.iter().collect::<Vec<_>>(),
-                *number_lines,
-                None,
-                None,
-                false,
-            ),
-            StagePlanV1::HeadLines {
-                count,
-                path: Some(path),
-            } => ("head", vec![path], false, Some(*count), None, false),
-            StagePlanV1::TailLines {
-                count,
-                path: Some(path),
-            } => ("tail", vec![path], false, None, Some(*count), false),
-            StagePlanV1::CountLines { path: Some(path) } => {
-                ("wc", vec![path], false, None, None, true)
-            }
-            StagePlanV1::SearchText {
-                paths, recursive, ..
-            } if !*recursive && !paths.is_empty() => {
-                ("grep", paths.iter().collect(), false, None, None, false)
-            }
-            _ => return Err(ReadonlyExecutionErrorV1::UnsupportedPlan),
-        };
+    let (
+        command_name,
+        paths,
+        number_lines,
+        mut record_limit,
+        mut tail_limit,
+        mut count_lines,
+        mut uniq,
+    ) = match first {
+        StagePlanV1::ReadTextFiles {
+            paths,
+            number_lines,
+        } => (
+            "cat",
+            paths.iter().collect::<Vec<_>>(),
+            *number_lines,
+            None,
+            None,
+            false,
+            None,
+        ),
+        StagePlanV1::HeadLines {
+            count,
+            path: Some(path),
+        } => ("head", vec![path], false, Some(*count), None, false, None),
+        StagePlanV1::TailLines {
+            count,
+            path: Some(path),
+        } => ("tail", vec![path], false, None, Some(*count), false, None),
+        StagePlanV1::CountLines { path: Some(path) } => {
+            ("wc", vec![path], false, None, None, true, None)
+        }
+        StagePlanV1::SearchText {
+            paths, recursive, ..
+        } if !*recursive && !paths.is_empty() => (
+            "grep",
+            paths.iter().collect(),
+            false,
+            None,
+            None,
+            false,
+            None,
+        ),
+        StagePlanV1::UniqueLines {
+            path: Some(path),
+            count,
+            repeated_only,
+            unique_only,
+        } => {
+            let filter = UniqFilterV1 {
+                count: *count,
+                repeated_only: *repeated_only,
+                unique_only: *unique_only,
+            };
+            ("uniq", vec![path], false, None, None, false, Some(filter))
+        }
+        _ => return Err(ReadonlyExecutionErrorV1::UnsupportedPlan),
+    };
     let mut grep = grep_filter(first)?;
     let mut grep_stage_index = grep.as_ref().map(|_| 0usize);
     let grep_direct = grep.is_some();
@@ -322,6 +362,22 @@ fn readonly_source(
             {
                 grep = grep_filter(stage)?;
                 grep_stage_index = Some(index);
+            }
+            StagePlanV1::UniqueLines {
+                path: None,
+                count,
+                repeated_only,
+                unique_only,
+            } if uniq.is_none()
+                && record_limit.is_none()
+                && tail_limit.is_none()
+                && !count_lines =>
+            {
+                uniq = Some(UniqFilterV1 {
+                    count: *count,
+                    repeated_only: *repeated_only,
+                    unique_only: *unique_only,
+                });
             }
             StagePlanV1::HeadLines { count, path: None }
                 if tail_limit.is_none() && !count_lines =>
@@ -351,6 +407,7 @@ fn readonly_source(
         grep,
         grep_is_final: grep_stage_index.is_some_and(|index| index + 1 == plan.stages.len()),
         grep_direct,
+        uniq,
     })
 }
 
@@ -404,6 +461,7 @@ fn stream_inputs<W: Write>(
     let mut grep_line_number = 1u64;
     let mut grep_matched = false;
     let mut grep_pending_output: Option<RecordFrameV1> = None;
+    let mut uniq_pending: Option<UniqGroupV1> = None;
 
     if source.record_limit == Some(0) || source.tail_limit == Some(0) {
         if source.count_lines {
@@ -509,9 +567,10 @@ fn stream_inputs<W: Write>(
                 };
                 if let Some(mut previous) = grep_pending_output.take() {
                     previous.terminated = true;
-                    match process_selected_record(
+                    match process_after_unique(
                         previous,
                         source,
+                        &mut uniq_pending,
                         &mut tail_records,
                         &mut tail_bytes,
                         &mut terminated_count,
@@ -529,9 +588,10 @@ fn stream_inputs<W: Write>(
                         }
                     }
                 }
-                match process_selected_record(
+                match process_after_unique(
                     candidate,
                     source,
+                    &mut uniq_pending,
                     &mut tail_records,
                     &mut tail_bytes,
                     &mut terminated_count,
@@ -574,9 +634,10 @@ fn stream_inputs<W: Write>(
                 )? {
                     if let Some(mut previous) = grep_pending_output.replace(selected) {
                         previous.terminated = true;
-                        match process_selected_record(
+                        match process_after_unique(
                             previous,
                             source,
+                            &mut uniq_pending,
                             &mut tail_records,
                             &mut tail_bytes,
                             &mut terminated_count,
@@ -636,9 +697,30 @@ fn stream_inputs<W: Write>(
     }
 
     if let Some(pending) = grep_pending_output {
-        match process_selected_record(
+        match process_after_unique(
             pending,
             source,
+            &mut uniq_pending,
+            &mut tail_records,
+            &mut tail_bytes,
+            &mut terminated_count,
+            &mut emitted,
+            sink,
+        )? {
+            SelectedRecordResultV1::Continue | SelectedRecordResultV1::Stop => {}
+            SelectedRecordResultV1::ResourceFailure => {
+                tail_resource_failure = true;
+                had_operational_failure = true;
+                diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+            }
+        }
+    }
+
+    if let Some(group) = uniq_pending.take() {
+        match emit_unique_group(
+            group,
+            source,
+            false,
             &mut tail_records,
             &mut tail_bytes,
             &mut terminated_count,
@@ -777,6 +859,104 @@ enum SelectedRecordResultV1 {
     Continue,
     Stop,
     ResourceFailure,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_after_unique<W: Write>(
+    frame: RecordFrameV1,
+    source: &ReadonlySourceV1<'_>,
+    pending: &mut Option<UniqGroupV1>,
+    tail_records: &mut VecDeque<RecordFrameV1>,
+    tail_bytes: &mut usize,
+    terminated_count: &mut u64,
+    emitted: &mut usize,
+    sink: &mut RecordStreamWriterV1<W>,
+) -> Result<SelectedRecordResultV1, ReadonlyExecutionErrorV1> {
+    if source.uniq.is_none() {
+        return process_selected_record(
+            frame,
+            source,
+            tail_records,
+            tail_bytes,
+            terminated_count,
+            emitted,
+            sink,
+        );
+    }
+
+    let Some(mut previous) = pending.take() else {
+        *pending = Some(UniqGroupV1 {
+            frame,
+            occurrences: 1,
+        });
+        return Ok(SelectedRecordResultV1::Continue);
+    };
+    if previous.frame.text == frame.text {
+        previous.occurrences =
+            previous
+                .occurrences
+                .checked_add(1)
+                .ok_or(ReadonlyExecutionErrorV1::Output {
+                    kind: io::ErrorKind::OutOfMemory,
+                })?;
+        previous.frame.terminated = frame.terminated;
+        *pending = Some(previous);
+        return Ok(SelectedRecordResultV1::Continue);
+    }
+
+    let result = emit_unique_group(
+        previous,
+        source,
+        true,
+        tail_records,
+        tail_bytes,
+        terminated_count,
+        emitted,
+        sink,
+    )?;
+    if result == SelectedRecordResultV1::Continue {
+        *pending = Some(UniqGroupV1 {
+            frame,
+            occurrences: 1,
+        });
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_unique_group<W: Write>(
+    mut group: UniqGroupV1,
+    source: &ReadonlySourceV1<'_>,
+    force_terminated: bool,
+    tail_records: &mut VecDeque<RecordFrameV1>,
+    tail_bytes: &mut usize,
+    terminated_count: &mut u64,
+    emitted: &mut usize,
+    sink: &mut RecordStreamWriterV1<W>,
+) -> Result<SelectedRecordResultV1, ReadonlyExecutionErrorV1> {
+    let Some(filter) = source.uniq else {
+        return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
+    };
+    if (filter.repeated_only && group.occurrences < 2)
+        || (filter.unique_only && group.occurrences != 1)
+    {
+        return Ok(SelectedRecordResultV1::Continue);
+    }
+    if filter.count {
+        group.frame.text = format!("{} {}", group.occurrences, group.frame.text);
+    }
+    if force_terminated {
+        group.frame.terminated = true;
+    }
+    process_selected_record(
+        group.frame,
+        source,
+        tail_records,
+        tail_bytes,
+        terminated_count,
+        emitted,
+        sink,
+    )
 }
 
 fn process_selected_record<W: Write>(

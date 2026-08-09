@@ -4,6 +4,9 @@ Status: accepted MVP scope.
 
 Korean version: [SORT_UNIQ.ko.md](SORT_UNIQ.ko.md)
 
+Implementation status (2026-08-09): `uniq` is published in the Reliable
+PowerShell Familiar path; `sort` remains the next migration gate.
+
 Every file operand follows the shared
 [Windows path contract](../WINDOWS_PATH_CONTRACT.md).
 Text decoding, record termination, bounded materialization, and output follow
