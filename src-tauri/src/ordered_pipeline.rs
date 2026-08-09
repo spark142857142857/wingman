@@ -28,6 +28,13 @@ pub(crate) enum OrderedFlowV1 {
     StopUpstream,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OrderedFinishCauseV1 {
+    Complete,
+    UpstreamStopped,
+    SourceFailed,
+}
+
 #[derive(Clone, Debug)]
 struct PipelineRecordV1 {
     frame: RecordFrameV1,
@@ -160,15 +167,16 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
         self.route_from(0, PipelineRecordV1 { frame, input_index })
     }
 
-    pub(crate) fn finish(&mut self, source_failed: bool) -> Result<(), OrderedPipelineFaultV1> {
+    pub(crate) fn finish(
+        &mut self,
+        cause: OrderedFinishCauseV1,
+    ) -> Result<(), OrderedPipelineFaultV1> {
         for index in 0..self.stages.len() {
             if self.cancellation.is_cancelled() {
                 self.abort();
                 return Err(OrderedPipelineFaultV1::Cancelled);
             }
-            let output = self.stages[index]
-                .stage
-                .finish(source_failed, self.cancellation)?;
+            let output = self.stages[index].stage.finish(cause, self.cancellation)?;
             for record in output {
                 if self.emit_from_slot(index, record)? == OrderedFlowV1::StopUpstream {
                     break;
@@ -436,7 +444,7 @@ impl RuntimeStageV1 {
 
     fn finish(
         &mut self,
-        source_failed: bool,
+        cause: OrderedFinishCauseV1,
         cancellation: &RunnerCancellationV1,
     ) -> Result<VecDeque<PipelineRecordV1>, OrderedPipelineFaultV1> {
         match self {
@@ -450,7 +458,7 @@ impl RuntimeStageV1 {
                 input_index: 0,
             }])),
             Self::Sort(sort) => {
-                if source_failed {
+                if cause == OrderedFinishCauseV1::SourceFailed {
                     sort.records.clear();
                     return Ok(VecDeque::new());
                 }

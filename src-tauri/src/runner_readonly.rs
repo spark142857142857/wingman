@@ -2,7 +2,9 @@ use crate::interpreter::{
     ExecutionPlanV1, RedirectModeV1 as PlanRedirectModeV1, StagePlanV1,
     MAX_PREPARED_DIAGNOSTIC_BYTES,
 };
-use crate::ordered_pipeline::{OrderedFlowV1, OrderedPipelineFaultV1, OrderedPipelineV1};
+use crate::ordered_pipeline::{
+    OrderedFinishCauseV1, OrderedFlowV1, OrderedPipelineFaultV1, OrderedPipelineV1,
+};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     prepare_file_io, IoPreparationErrorV1, PreparedInputV1, RedirectModeV1, RedirectSpecV1,
@@ -438,7 +440,14 @@ fn stream_inputs_ordered<W: Write>(
     }
 
     if stage_fault.is_none() && !cancellation.is_cancelled() {
-        if let Err(fault) = pipeline.finish(had_operational_failure) {
+        let finish_cause = if had_operational_failure {
+            OrderedFinishCauseV1::SourceFailed
+        } else if stopped {
+            OrderedFinishCauseV1::UpstreamStopped
+        } else {
+            OrderedFinishCauseV1::Complete
+        };
+        if let Err(fault) = pipeline.finish(finish_cause) {
             stage_fault = Some(fault);
         }
     }
