@@ -4554,14 +4554,18 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 name = "wingman"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "once_cell",
  "parking_lot",
  "portable-pty",
+ "regex",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
