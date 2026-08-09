@@ -234,7 +234,6 @@ fn grep_rejects_unsupported_options_patterns_and_source_shapes() {
         "grep TODO *.txt",
         "cat app.log | grep -r TODO",
         "cat app.log | grep TODO other.log",
-        "cat app.log | head | grep TODO",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
         assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
@@ -379,6 +378,22 @@ fn uniq_output_can_feed_a_later_text_filter() {
     let plan = build_readonly_plan(&parsed).expect("connect uniq output to grep input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::UniqueLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SearchText {
+            ref paths,
+            recursive: false,
+            ..
+        } if paths.is_empty()
+    ));
+}
+
+#[test]
+fn head_output_can_feed_a_later_text_filter() {
+    let parsed = parse_p0_tokens(&lex_p0_line("head -n 2 input.txt | grep keep").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect head output to grep input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::HeadLines { .. }));
     assert!(matches!(
         plan.stages[1],
         StagePlanV1::SearchText {

@@ -355,7 +355,6 @@ pub fn validate_execution_plan(
                 ..
             } => {
                 if saw_recursive_search
-                    || saw_selection_boundary
                     || pattern.len() > MAX_GREP_PATTERN_BYTES
                     || pattern.contains(['\0', '\r', '\n'])
                     || GrepPatternV1::compile(pattern, *fixed_strings, *ignore_case).is_err()

@@ -1295,6 +1295,27 @@ fn head_output_reaches_later_sort_without_reading_the_unrequested_suffix() {
 }
 
 #[test]
+fn head_output_reaches_later_grep_without_reading_the_unrequested_suffix() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, [b"keep\ndrop\n".as_slice(), &[0xff, 0xfe]].concat()).unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::HeadLines {
+            count: 2,
+            path: Some(path_spec(&input)),
+        },
+        grep_stage("keep", vec![], false, false, false, true),
+    ]))
+    .expect("execute head before grep");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"keep\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn tail_output_reaches_later_sort_in_declared_stage_order() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");

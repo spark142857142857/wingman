@@ -306,9 +306,14 @@ fn execute_stream_to<W: Write, E: Write>(
 fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
     if plan.stages.iter().enumerate().any(|(index, stage)| {
         matches!(stage, StagePlanV1::SearchText { .. })
-            && plan.stages[..index]
-                .iter()
-                .any(|earlier| matches!(earlier, StagePlanV1::UniqueLines { .. }))
+            && plan.stages[..index].iter().any(|earlier| {
+                matches!(
+                    earlier,
+                    StagePlanV1::UniqueLines { .. }
+                        | StagePlanV1::HeadLines { .. }
+                        | StagePlanV1::TailLines { .. }
+                )
+            })
     }) {
         return true;
     }
@@ -486,12 +491,7 @@ fn readonly_source(
     let grep_direct = grep.is_some();
     for (index, stage) in plan.stages.iter().enumerate().skip(1) {
         match stage {
-            StagePlanV1::SearchText { paths, .. }
-                if paths.is_empty()
-                    && record_limit.is_none()
-                    && tail_limit.is_none()
-                    && !count_lines =>
-            {
+            StagePlanV1::SearchText { paths, .. } if paths.is_empty() && !count_lines => {
                 let next_grep = grep_filter(stage)?;
                 if grep.is_none() {
                     grep = next_grep;
