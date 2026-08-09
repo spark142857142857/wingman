@@ -2,12 +2,13 @@ use crate::grep_pattern::GrepPatternV1;
 use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_readonly::{
-    compare_exact_decimal, parse_exact_decimal, retain_first_identical, MAX_SORT_BYTES,
-    MAX_SORT_RECORDS, MAX_TAIL_BUFFER_BYTES, MAX_TAIL_BUFFER_RECORDS,
+    compare_exact_decimal, parse_exact_decimal, MAX_SORT_BYTES, MAX_SORT_RECORDS,
+    MAX_TAIL_BUFFER_BYTES, MAX_TAIL_BUFFER_RECORDS,
 };
 use crate::text_stream::{RecordFrameV1, RecordStreamWriterV1, TextStreamWriteErrorV1};
 use crate::windows_path::ValidatedPathSpecV1;
-use std::collections::VecDeque;
+use std::cmp::Ordering;
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, Write};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -82,6 +83,9 @@ struct UniqueStateV1 {
     unique_only: bool,
     pending: Option<(PipelineRecordV1, u64)>,
 }
+
+const SORT_RUN_RECORDS: usize = 2_048;
+const CANCELLATION_CHECK_INTERVAL: usize = 1_024;
 
 pub(crate) struct OrderedPipelineV1<'a, W: Write> {
     stages: Vec<StageSlotV1>,
@@ -518,29 +522,47 @@ impl SortStateV1 {
                 keyed.push((record, key));
             }
             if self.unique {
-                keyed = retain_first_identical(keyed, |entry| entry.0.frame.text.as_str());
+                keyed = retain_first_identical_cancellable(
+                    keyed,
+                    |entry| entry.0.frame.text.as_str(),
+                    || cancellation.is_cancelled(),
+                )?;
             }
-            keyed.sort_by(|left, right| {
-                let ordering = compare_exact_decimal(&left.1, &right.1);
-                if self.reverse {
-                    ordering.reverse()
-                } else {
-                    ordering
-                }
-            });
+            let reverse = self.reverse;
+            keyed = stable_sort_cancellable(
+                keyed,
+                |left, right| {
+                    let ordering = compare_exact_decimal(&left.1, &right.1);
+                    if reverse {
+                        ordering.reverse()
+                    } else {
+                        ordering
+                    }
+                },
+                || cancellation.is_cancelled(),
+            )?;
             records = keyed.into_iter().map(|(record, _)| record).collect();
         } else {
             if self.unique {
-                records = retain_first_identical(records, |record| record.frame.text.as_str());
+                records = retain_first_identical_cancellable(
+                    records,
+                    |record| record.frame.text.as_str(),
+                    || cancellation.is_cancelled(),
+                )?;
             }
-            records.sort_by(|left, right| {
-                let ordering = left.frame.text.cmp(&right.frame.text);
-                if self.reverse {
-                    ordering.reverse()
-                } else {
-                    ordering
-                }
-            });
+            let reverse = self.reverse;
+            records = stable_sort_cancellable(
+                records,
+                |left, right| {
+                    let ordering = left.frame.text.cmp(&right.frame.text);
+                    if reverse {
+                        ordering.reverse()
+                    } else {
+                        ordering
+                    }
+                },
+                || cancellation.is_cancelled(),
+            )?;
         }
         let last = records.len().saturating_sub(1);
         for (index, record) in records.iter_mut().enumerate() {
@@ -548,6 +570,92 @@ impl SortStateV1 {
         }
         Ok(records)
     }
+}
+
+fn retain_first_identical_cancellable<T>(
+    records: Vec<T>,
+    text: impl Fn(&T) -> &str,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Vec<T>, OrderedPipelineFaultV1> {
+    let mut seen = HashSet::with_capacity(records.len());
+    let mut retained = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        if index % CANCELLATION_CHECK_INTERVAL == 0 && cancelled() {
+            return Err(OrderedPipelineFaultV1::Cancelled);
+        }
+        retained.push(seen.insert(text(record)));
+    }
+    drop(seen);
+    Ok(records
+        .into_iter()
+        .zip(retained)
+        .filter_map(|(record, keep)| keep.then_some(record))
+        .collect())
+}
+
+fn stable_sort_cancellable<T>(
+    records: Vec<T>,
+    mut compare: impl FnMut(&T, &T) -> Ordering,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Vec<T>, OrderedPipelineFaultV1> {
+    if cancelled() {
+        return Err(OrderedPipelineFaultV1::Cancelled);
+    }
+    let mut input = records.into_iter();
+    let mut runs = VecDeque::new();
+    loop {
+        let mut run = Vec::with_capacity(SORT_RUN_RECORDS);
+        for _ in 0..SORT_RUN_RECORDS {
+            let Some(record) = input.next() else {
+                break;
+            };
+            run.push(record);
+        }
+        if run.is_empty() {
+            break;
+        }
+        run.sort_by(|left, right| compare(left, right));
+        if cancelled() {
+            return Err(OrderedPipelineFaultV1::Cancelled);
+        }
+        runs.push_back(run);
+    }
+
+    while runs.len() > 1 {
+        let mut merged_runs = VecDeque::with_capacity(runs.len().div_ceil(2));
+        while let Some(left) = runs.pop_front() {
+            let Some(right) = runs.pop_front() else {
+                merged_runs.push_back(left);
+                break;
+            };
+            let mut left = left.into_iter().peekable();
+            let mut right = right.into_iter().peekable();
+            let mut merged = Vec::with_capacity(left.len().saturating_add(right.len()));
+            while left.peek().is_some() || right.peek().is_some() {
+                let take_left = match (left.peek(), right.peek()) {
+                    (Some(left), Some(right)) => compare(left, right) != Ordering::Greater,
+                    (Some(_), None) => true,
+                    (None, Some(_)) => false,
+                    (None, None) => break,
+                };
+                merged.push(if take_left {
+                    left.next().expect("peeked left sort record")
+                } else {
+                    right.next().expect("peeked right sort record")
+                });
+                if merged.len() % CANCELLATION_CHECK_INTERVAL == 0 && cancelled() {
+                    return Err(OrderedPipelineFaultV1::Cancelled);
+                }
+            }
+            merged_runs.push_back(merged);
+        }
+        if cancelled() {
+            return Err(OrderedPipelineFaultV1::Cancelled);
+        }
+        runs = merged_runs;
+    }
+
+    Ok(runs.pop_front().unwrap_or_default())
 }
 
 impl UniqueStateV1 {
@@ -572,5 +680,46 @@ fn map_sink_fault(error: TextStreamWriteErrorV1) -> OrderedPipelineFaultV1 {
             kind: io::ErrorKind::InvalidData,
         },
         TextStreamWriteErrorV1::Io { kind } => OrderedPipelineFaultV1::Output { kind },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{retain_first_identical_cancellable, stable_sort_cancellable};
+    use crate::ordered_pipeline::OrderedPipelineFaultV1;
+    use std::cell::Cell;
+
+    #[test]
+    fn stable_sort_observes_cancellation_between_bounded_runs() {
+        let checks = Cell::new(0usize);
+        let result = stable_sort_cancellable(
+            (0..5_000).rev().collect::<Vec<_>>(),
+            |left, right| left.cmp(right),
+            || {
+                let next = checks.get() + 1;
+                checks.set(next);
+                next >= 3
+            },
+        );
+
+        assert_eq!(result, Err(OrderedPipelineFaultV1::Cancelled));
+        assert!(checks.get() >= 3);
+    }
+
+    #[test]
+    fn identical_retention_observes_cancellation_during_the_scan() {
+        let checks = Cell::new(0usize);
+        let result = retain_first_identical_cancellable(
+            (0..5_000).map(|value| value.to_string()).collect(),
+            |value| value.as_str(),
+            || {
+                let next = checks.get() + 1;
+                checks.set(next);
+                next >= 3
+            },
+        );
+
+        assert_eq!(result, Err(OrderedPipelineFaultV1::Cancelled));
+        assert!(checks.get() >= 3);
     }
 }
