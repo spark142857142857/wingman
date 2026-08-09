@@ -408,8 +408,7 @@ pub fn validate_execution_plan(
                 unique_only,
                 ..
             } => {
-                if saw_unique
-                    || saw_recursive_search
+                if saw_recursive_search
                     || saw_selection_boundary
                     || (*repeated_only && *unique_only)
                 {

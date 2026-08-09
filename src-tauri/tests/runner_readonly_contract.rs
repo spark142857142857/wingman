@@ -1238,6 +1238,24 @@ fn uniq_output_reaches_later_sort_in_declared_stage_order() {
 }
 
 #[test]
+fn repeated_uniq_stages_process_each_adjacent_group_in_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"a\na\nb\nb\nb\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        uniq_stage(Some(path_spec(&input)), false, false, false),
+        uniq_stage(None, true, false, false),
+    ]))
+    .expect("execute repeated uniq stages");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"1 a\r\n1 b\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn head_output_reaches_later_sort_without_reading_the_unrequested_suffix() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");

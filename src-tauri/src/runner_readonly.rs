@@ -322,6 +322,15 @@ fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
     {
         return true;
     }
+    if plan
+        .stages
+        .iter()
+        .filter(|stage| matches!(stage, StagePlanV1::UniqueLines { .. }))
+        .count()
+        > 1
+    {
+        return true;
+    }
     let sort_index = plan
         .stages
         .iter()
@@ -501,16 +510,14 @@ fn readonly_source(
                 count,
                 repeated_only,
                 unique_only,
-            } if uniq.is_none()
-                && record_limit.is_none()
-                && tail_limit.is_none()
-                && !count_lines =>
-            {
-                uniq = Some(UniqFilterV1 {
-                    count: *count,
-                    repeated_only: *repeated_only,
-                    unique_only: *unique_only,
-                });
+            } if record_limit.is_none() && tail_limit.is_none() && !count_lines => {
+                if uniq.is_none() {
+                    uniq = Some(UniqFilterV1 {
+                        count: *count,
+                        repeated_only: *repeated_only,
+                        unique_only: *unique_only,
+                    });
+                }
                 uniq_stage_index = Some(index);
             }
             StagePlanV1::HeadLines { count, path: None }
