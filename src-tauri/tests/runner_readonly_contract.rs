@@ -1274,6 +1274,32 @@ fn repeated_uniq_stages_process_each_adjacent_group_in_order() {
 }
 
 #[test]
+fn repeated_ordered_stages_preserve_a_final_unterminated_record() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"b\nb\na").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::ReadTextFiles {
+            paths: vec![path_spec(&input)],
+            number_lines: false,
+        },
+        sort_stage(None, false, false, false),
+        sort_stage(None, false, false, false),
+        uniq_stage(None, false, false, false),
+        uniq_stage(None, false, false, false),
+        grep_stage("b", vec![], false, false, false, true),
+        grep_stage("b", vec![], false, false, false, true),
+    ]))
+    .expect("execute repeated ordered stages with an unterminated suffix");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"b");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn head_output_reaches_later_sort_without_reading_the_unrequested_suffix() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");
