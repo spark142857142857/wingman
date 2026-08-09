@@ -22,6 +22,15 @@ pub const MAX_TAIL_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_SORT_RECORDS: usize = 262_144;
 pub const MAX_SORT_BYTES: usize = 64 * 1024 * 1024;
 
+pub(crate) fn sort_resource_limit_exceeded(
+    record_count: usize,
+    retained_bytes: usize,
+    next_record_bytes: usize,
+) -> bool {
+    record_count >= MAX_SORT_RECORDS
+        || retained_bytes.saturating_add(next_record_bytes) > MAX_SORT_BYTES
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadonlyExecutionErrorV1 {
     UnsupportedPlan,
@@ -1414,12 +1423,12 @@ fn collect_sort_record(
     records: &mut Vec<RecordFrameV1>,
     retained_bytes: &mut usize,
 ) -> SelectedRecordResultV1 {
-    let next_bytes = retained_bytes.saturating_add(frame.text.len());
-    if records.len() >= MAX_SORT_RECORDS || next_bytes > MAX_SORT_BYTES {
+    if sort_resource_limit_exceeded(records.len(), *retained_bytes, frame.text.len()) {
         records.clear();
         *retained_bytes = 0;
         return SelectedRecordResultV1::SortResourceFailure;
     }
+    let next_bytes = retained_bytes.saturating_add(frame.text.len());
     records.push(frame);
     *retained_bytes = next_bytes;
     SelectedRecordResultV1::Continue
@@ -1843,5 +1852,17 @@ fn map_sink_error(error: TextStreamWriteErrorV1) -> ReadonlyExecutionErrorV1 {
             kind: io::ErrorKind::InvalidData,
         },
         TextStreamWriteErrorV1::Io { kind } => ReadonlyExecutionErrorV1::Output { kind },
+    }
+}
+
+#[cfg(test)]
+mod sort_capacity_tests {
+    use super::{sort_resource_limit_exceeded, MAX_SORT_BYTES};
+
+    #[test]
+    fn exact_sort_byte_limit_is_allowed_and_one_more_byte_is_rejected() {
+        assert!(!sort_resource_limit_exceeded(64, MAX_SORT_BYTES, 0));
+        assert!(!sort_resource_limit_exceeded(63, MAX_SORT_BYTES - 1, 1));
+        assert!(sort_resource_limit_exceeded(64, MAX_SORT_BYTES, 1));
     }
 }

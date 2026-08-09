@@ -2,7 +2,7 @@ use crate::grep_pattern::GrepPatternV1;
 use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_readonly::{
-    compare_exact_decimal, parse_exact_decimal, MAX_SORT_BYTES, MAX_SORT_RECORDS,
+    compare_exact_decimal, parse_exact_decimal, sort_resource_limit_exceeded,
     MAX_TAIL_BUFFER_BYTES, MAX_TAIL_BUFFER_RECORDS,
 };
 use crate::text_stream::{RecordFrameV1, RecordStreamWriterV1, TextStreamWriteErrorV1};
@@ -408,12 +408,16 @@ impl RuntimeStageV1 {
                 })
             }
             Self::Sort(sort) => {
-                let next_bytes = sort.bytes.saturating_add(record.frame.text.len());
-                if sort.records.len() >= MAX_SORT_RECORDS || next_bytes > MAX_SORT_BYTES {
+                if sort_resource_limit_exceeded(
+                    sort.records.len(),
+                    sort.bytes,
+                    record.frame.text.len(),
+                ) {
                     sort.records.clear();
                     sort.bytes = 0;
                     return Err(OrderedPipelineFaultV1::SortResource);
                 }
+                let next_bytes = sort.bytes.saturating_add(record.frame.text.len());
                 sort.records.push(record);
                 sort.bytes = next_bytes;
                 Ok(StageActionV1 {
