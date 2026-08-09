@@ -304,6 +304,15 @@ fn execute_stream_to<W: Write, E: Write>(
 }
 
 fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
+    if plan
+        .stages
+        .iter()
+        .filter(|stage| matches!(stage, StagePlanV1::SearchText { .. }))
+        .count()
+        > 1
+    {
+        return true;
+    }
     let sort_index = plan
         .stages
         .iter()
@@ -453,12 +462,14 @@ fn readonly_source(
         match stage {
             StagePlanV1::SearchText { paths, .. }
                 if paths.is_empty()
-                    && grep.is_none()
                     && record_limit.is_none()
                     && tail_limit.is_none()
                     && !count_lines =>
             {
-                grep = grep_filter(stage)?;
+                let next_grep = grep_filter(stage)?;
+                if grep.is_none() {
+                    grep = next_grep;
+                }
                 grep_stage_index = Some(index);
             }
             StagePlanV1::SortLines {

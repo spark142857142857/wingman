@@ -1176,6 +1176,32 @@ fn sort_output_reaches_later_grep_in_declared_stage_order() {
 }
 
 #[test]
+fn repeated_grep_stages_filter_in_declared_order_and_use_the_final_status() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"alpha beta\nalpha only\nbeta only\n").unwrap();
+
+    let matched = execute_prepared(request(vec![
+        grep_stage("alpha", vec![path_spec(&input)], false, false, false, true),
+        grep_stage("beta", vec![], false, false, false, true),
+    ]))
+    .expect("execute repeated grep stages");
+    assert_eq!(matched.exit_code, 0);
+    assert_eq!(matched.stdout, b"alpha beta\r\n");
+    assert!(matched.stderr.is_empty());
+
+    let final_miss = execute_prepared(request(vec![
+        grep_stage("alpha", vec![path_spec(&input)], false, false, false, true),
+        grep_stage("missing", vec![], false, false, false, true),
+    ]))
+    .expect("execute repeated grep stages with a final miss");
+    assert_eq!(final_miss.exit_code, 1);
+    assert!(final_miss.stdout.is_empty());
+    assert!(final_miss.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn uniq_output_reaches_later_sort_in_declared_stage_order() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");

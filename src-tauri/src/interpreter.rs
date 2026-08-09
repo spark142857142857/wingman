@@ -282,7 +282,6 @@ pub fn validate_execution_plan(
     }
 
     let mut saw_tail = false;
-    let mut saw_search = false;
     let mut saw_recursive_search = false;
     let mut saw_sort = false;
     let mut saw_unique = false;
@@ -357,7 +356,7 @@ pub fn validate_execution_plan(
                 recursive,
                 ..
             } => {
-                if saw_search
+                if saw_recursive_search
                     || saw_unique
                     || saw_selection_boundary
                     || pattern.len() > MAX_GREP_PATTERN_BYTES
@@ -366,8 +365,7 @@ pub fn validate_execution_plan(
                 {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
-                saw_search = true;
-                saw_recursive_search = *recursive;
+                saw_recursive_search |= *recursive;
                 match index {
                     0 if !paths.is_empty() => {
                         path_count = path_count

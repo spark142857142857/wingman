@@ -336,6 +336,22 @@ fn sort_output_can_feed_a_later_text_filter() {
 }
 
 #[test]
+fn grep_output_can_feed_a_second_text_filter() {
+    let parsed =
+        parse_p0_tokens(&lex_p0_line("grep alpha input.txt | grep beta").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect grep output to a second grep input");
+
+    assert_eq!(plan.stages.len(), 2);
+    assert!(plan.stages.iter().all(|stage| matches!(
+        stage,
+        StagePlanV1::SearchText {
+            recursive: false,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn uniq_output_can_feed_a_later_sort() {
     let parsed = parse_p0_tokens(&lex_p0_line("uniq input.txt | sort").unwrap()).unwrap();
     let plan = build_readonly_plan(&parsed).expect("connect uniq output to sort input");
