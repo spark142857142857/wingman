@@ -3,6 +3,7 @@ use crate::interpreter::{
     ExecutionPlanV1, RedirectModeV1 as PlanRedirectModeV1, StagePlanV1,
     MAX_PREPARED_DIAGNOSTIC_BYTES,
 };
+use crate::ordered_pipeline::{OrderedFlowV1, OrderedPipelineFaultV1, OrderedPipelineV1};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     prepare_file_io, IoPreparationErrorV1, PreparedInputV1, RedirectModeV1, RedirectSpecV1,
@@ -59,7 +60,7 @@ struct SortFilterV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ExactDecimalV1 {
+pub(crate) struct ExactDecimalV1 {
     negative: bool,
     digits: Vec<u8>,
     scale: usize,
@@ -241,8 +242,8 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
     let redirected = plan.redirect.is_some();
     let (inputs, output) = prepared.stream_parts_mut();
     let execution = match output {
-        Some(output) => execute_stream_to(inputs, &source, output, stderr, cancellation),
-        None => execute_stream_to(inputs, &source, stdout, stderr, cancellation),
+        Some(output) => execute_stream_to(inputs, plan, &source, output, stderr, cancellation),
+        None => execute_stream_to(inputs, plan, &source, stdout, stderr, cancellation),
     };
     if cancellation.is_cancelled() {
         return Ok(130);
@@ -265,13 +266,18 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
 
 fn execute_stream_to<W: Write, E: Write>(
     inputs: &mut [PreparedInputV1],
+    plan: &ExecutionPlanV1,
     source: &ReadonlySourceV1<'_>,
     writer: &mut W,
     stderr: &mut E,
     cancellation: &RunnerCancellationV1,
 ) -> Result<u8, ReadonlyExecutionErrorV1> {
     let mut sink = RecordStreamWriterV1::new(&mut *writer);
-    let stream = stream_inputs(inputs, source, &mut sink, cancellation)?;
+    let stream = if source.head_before_sort {
+        stream_inputs_ordered(inputs, plan, source, &mut sink, cancellation)?
+    } else {
+        stream_inputs(inputs, source, &mut sink, cancellation)?
+    };
     if stream.cancelled || cancellation.is_cancelled() {
         drop(sink);
         let _ = writer.flush();
@@ -547,6 +553,172 @@ struct StreamResultV1 {
     diagnostics: Vec<String>,
     cancelled: bool,
     grep_matched: bool,
+}
+
+fn stream_inputs_ordered<W: Write>(
+    inputs: &mut [PreparedInputV1],
+    plan: &ExecutionPlanV1,
+    source: &ReadonlySourceV1<'_>,
+    sink: &mut RecordStreamWriterV1<W>,
+    cancellation: &RunnerCancellationV1,
+) -> Result<StreamResultV1, ReadonlyExecutionErrorV1> {
+    let mut pipeline = OrderedPipelineV1::new(plan, sink, cancellation, &source.paths)
+        .map_err(map_ordered_setup_fault)?;
+    let mut next_line_number = 1u64;
+    let mut pending: Option<RecordFrameV1> = None;
+    let mut had_operational_failure = false;
+    let mut diagnostics = Vec::new();
+    let mut stopped = pipeline.starts_stopped();
+    let mut stage_fault = None;
+
+    'inputs: for (index, input) in inputs.iter_mut().enumerate() {
+        if stopped || cancellation.is_cancelled() {
+            break;
+        }
+        pipeline.start_input();
+        let mut reader = Utf8RecordReaderV1::new(input.file_mut());
+        loop {
+            if cancellation.is_cancelled() {
+                break 'inputs;
+            }
+            let frame = match reader.next_record() {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(error) => {
+                    if cancellation.is_cancelled() {
+                        break 'inputs;
+                    }
+                    had_operational_failure = true;
+                    pending = None;
+                    let message = match error {
+                        TextReadErrorV1::Decode(_) => "input is not valid bounded UTF-8 text",
+                        TextReadErrorV1::Io { .. } => "input read failed",
+                    };
+                    diagnostics.push(operand_diagnostic(
+                        source.command_name,
+                        index,
+                        source.paths[index],
+                        message,
+                    ));
+                    break;
+                }
+            };
+
+            let candidate = if let Some(mut previous) = pending.take() {
+                let combined_length = previous.text.len().saturating_add(frame.text.len());
+                if combined_length > MAX_RECORD_BYTES {
+                    had_operational_failure = true;
+                    diagnostics.push(operand_diagnostic(
+                        source.command_name,
+                        index,
+                        source.paths[index],
+                        "joined record exceeds the text limit",
+                    ));
+                    break;
+                }
+                previous.text.push_str(&frame.text);
+                previous.terminated = frame.terminated;
+                previous
+            } else {
+                frame
+            };
+
+            if candidate.terminated {
+                let candidate =
+                    number_record(candidate, source.number_lines, &mut next_line_number)?;
+                match pipeline.push(candidate, index) {
+                    Ok(OrderedFlowV1::Continue) => {}
+                    Ok(OrderedFlowV1::StopUpstream) => {
+                        stopped = true;
+                        break 'inputs;
+                    }
+                    Err(fault) => {
+                        stage_fault = Some(fault);
+                        break 'inputs;
+                    }
+                }
+            } else {
+                pending = Some(candidate);
+            }
+        }
+
+        if source.grep_direct {
+            if let Some(frame) = pending.take() {
+                let frame = number_record(frame, source.number_lines, &mut next_line_number)?;
+                match pipeline.push(frame, index) {
+                    Ok(OrderedFlowV1::Continue) => {}
+                    Ok(OrderedFlowV1::StopUpstream) => {
+                        stopped = true;
+                        break 'inputs;
+                    }
+                    Err(fault) => {
+                        stage_fault = Some(fault);
+                        break 'inputs;
+                    }
+                }
+            }
+        }
+    }
+
+    if !stopped && stage_fault.is_none() && !cancellation.is_cancelled() {
+        if let Some(frame) = pending.take() {
+            let frame = number_record(frame, source.number_lines, &mut next_line_number)?;
+            if let Err(fault) = pipeline.push(frame, inputs.len().saturating_sub(1)) {
+                stage_fault = Some(fault);
+            }
+        }
+    }
+
+    if stage_fault.is_none() && !cancellation.is_cancelled() {
+        if let Err(fault) = pipeline.finish(had_operational_failure) {
+            stage_fault = Some(fault);
+        }
+    }
+
+    if let Some(fault) = stage_fault {
+        match fault {
+            OrderedPipelineFaultV1::Unsupported => {
+                return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
+            }
+            OrderedPipelineFaultV1::Output { kind } => {
+                return Err(ReadonlyExecutionErrorV1::Output { kind });
+            }
+            OrderedPipelineFaultV1::Cancelled => {}
+            OrderedPipelineFaultV1::TailResource => {
+                had_operational_failure = true;
+                diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+            }
+            OrderedPipelineFaultV1::SortResource => {
+                had_operational_failure = true;
+                diagnostics
+                    .push("wingman sort: materialization resource limit exceeded".to_string());
+            }
+            OrderedPipelineFaultV1::InvalidNumeric => {
+                had_operational_failure = true;
+                diagnostics.push("wingman sort: invalid numeric data".to_string());
+            }
+            OrderedPipelineFaultV1::Overflow => {
+                return Err(ReadonlyExecutionErrorV1::Output {
+                    kind: io::ErrorKind::OutOfMemory,
+                });
+            }
+        }
+    }
+
+    Ok(StreamResultV1 {
+        had_operational_failure,
+        diagnostics,
+        cancelled: cancellation.is_cancelled()
+            || matches!(stage_fault, Some(OrderedPipelineFaultV1::Cancelled)),
+        grep_matched: pipeline.final_search_matched().unwrap_or(false),
+    })
+}
+
+fn map_ordered_setup_fault(fault: OrderedPipelineFaultV1) -> ReadonlyExecutionErrorV1 {
+    match fault {
+        OrderedPipelineFaultV1::Output { kind } => ReadonlyExecutionErrorV1::Output { kind },
+        _ => ReadonlyExecutionErrorV1::UnsupportedPlan,
+    }
 }
 
 fn stream_inputs<W: Write>(
@@ -1299,7 +1471,7 @@ fn emit_sorted_records<W: Write>(
     Ok(SortOutputResultV1::Complete)
 }
 
-fn retain_first_identical<T>(records: Vec<T>, text: impl Fn(&T) -> &str) -> Vec<T> {
+pub(crate) fn retain_first_identical<T>(records: Vec<T>, text: impl Fn(&T) -> &str) -> Vec<T> {
     let mut seen = HashSet::with_capacity(records.len());
     let retained = records
         .iter()
@@ -1313,7 +1485,7 @@ fn retain_first_identical<T>(records: Vec<T>, text: impl Fn(&T) -> &str) -> Vec<
         .collect()
 }
 
-fn parse_exact_decimal(text: &str) -> Option<ExactDecimalV1> {
+pub(crate) fn parse_exact_decimal(text: &str) -> Option<ExactDecimalV1> {
     let trimmed = text.trim_matches([' ', '\t']);
     if trimmed.is_empty() {
         return Some(ExactDecimalV1 {
@@ -1371,7 +1543,7 @@ fn parse_exact_decimal(text: &str) -> Option<ExactDecimalV1> {
     })
 }
 
-fn compare_exact_decimal(left: &ExactDecimalV1, right: &ExactDecimalV1) -> Ordering {
+pub(crate) fn compare_exact_decimal(left: &ExactDecimalV1, right: &ExactDecimalV1) -> Ordering {
     if left.negative != right.negative {
         return if left.negative {
             Ordering::Less

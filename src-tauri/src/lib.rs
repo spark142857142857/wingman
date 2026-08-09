@@ -19,6 +19,7 @@ pub mod catalog;
 pub mod grep_pattern;
 pub mod interpreter;
 pub mod lexer;
+pub mod ordered_pipeline;
 pub mod parser;
 pub mod pipeline;
 pub mod runner;
