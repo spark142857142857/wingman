@@ -336,6 +336,18 @@ fn sort_output_can_feed_a_later_text_filter() {
 }
 
 #[test]
+fn sort_output_can_feed_a_second_sort() {
+    let parsed = parse_p0_tokens(&lex_p0_line("sort -r input.txt | sort -n").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect sort output to a second sort input");
+
+    assert_eq!(plan.stages.len(), 2);
+    assert!(plan
+        .stages
+        .iter()
+        .all(|stage| matches!(stage, StagePlanV1::SortLines { .. })));
+}
+
+#[test]
 fn grep_output_can_feed_a_second_text_filter() {
     let parsed =
         parse_p0_tokens(&lex_p0_line("grep alpha input.txt | grep beta").unwrap()).unwrap();
@@ -394,7 +406,6 @@ fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
         "sort one.txt two.txt",
         "sort -f input.txt",
         "cat input.txt | sort other.txt",
-        "sort input.txt | sort",
         "grep -r value src | sort",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();

@@ -283,7 +283,6 @@ pub fn validate_execution_plan(
 
     let mut saw_tail = false;
     let mut saw_recursive_search = false;
-    let mut saw_sort = false;
     let mut saw_unique = false;
     let mut saw_selection_boundary = false;
     for (index, stage) in plan.stages.iter().enumerate() {
@@ -384,10 +383,9 @@ pub fn validate_execution_plan(
                 }
             }
             StagePlanV1::SortLines { path, .. } => {
-                if saw_sort || saw_recursive_search {
+                if saw_recursive_search {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
-                saw_sort = true;
                 match (index, path) {
                     (0, Some(path)) => {
                         path_count = path_count

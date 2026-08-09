@@ -1176,6 +1176,24 @@ fn sort_output_reaches_later_grep_in_declared_stage_order() {
 }
 
 #[test]
+fn repeated_sort_stages_preserve_stable_order_between_stages() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"01\n1\n2\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        sort_stage(Some(path_spec(&input)), true, false, false),
+        sort_stage(None, false, true, false),
+    ]))
+    .expect("execute repeated sort stages");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"1\r\n01\r\n2\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn repeated_grep_stages_filter_in_declared_order_and_use_the_final_status() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");

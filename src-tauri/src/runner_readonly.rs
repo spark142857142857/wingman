@@ -313,6 +313,15 @@ fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
     {
         return true;
     }
+    if plan
+        .stages
+        .iter()
+        .filter(|stage| matches!(stage, StagePlanV1::SortLines { .. }))
+        .count()
+        > 1
+    {
+        return true;
+    }
     let sort_index = plan
         .stages
         .iter()
@@ -477,12 +486,14 @@ fn readonly_source(
                 reverse,
                 numeric,
                 unique,
-            } if sort.is_none() && !count_lines => {
-                sort = Some(SortFilterV1 {
-                    reverse: *reverse,
-                    numeric: *numeric,
-                    unique: *unique,
-                });
+            } if !count_lines => {
+                if sort.is_none() {
+                    sort = Some(SortFilterV1 {
+                        reverse: *reverse,
+                        numeric: *numeric,
+                        unique: *unique,
+                    });
+                }
                 sort_stage_index = Some(index);
             }
             StagePlanV1::UniqueLines {
