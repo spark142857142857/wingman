@@ -42,6 +42,7 @@ struct ReadonlySourceV1<'a> {
     uniq: Option<UniqFilterV1>,
     uniq_before_sort: bool,
     uniq_after_sort: bool,
+    head_before_sort: bool,
 }
 
 struct GrepFilterV1 {
@@ -425,6 +426,7 @@ fn readonly_source(
     let mut grep_stage_index = grep.as_ref().map(|_| 0usize);
     let mut sort_stage_index = sort.as_ref().map(|_| 0usize);
     let mut uniq_stage_index = uniq.as_ref().map(|_| 0usize);
+    let mut head_stage_index = matches!(first, StagePlanV1::HeadLines { .. }).then_some(0usize);
     let grep_direct = grep.is_some();
     for (index, stage) in plan.stages.iter().enumerate().skip(1) {
         match stage {
@@ -443,11 +445,7 @@ fn readonly_source(
                 reverse,
                 numeric,
                 unique,
-            } if sort.is_none()
-                && record_limit.is_none()
-                && tail_limit.is_none()
-                && !count_lines =>
-            {
+            } if sort.is_none() && tail_limit.is_none() && !count_lines => {
                 sort = Some(SortFilterV1 {
                     reverse: *reverse,
                     numeric: *numeric,
@@ -476,6 +474,7 @@ fn readonly_source(
                 if tail_limit.is_none() && !count_lines =>
             {
                 record_limit = Some(record_limit.map_or(*count, |current| current.min(*count)));
+                head_stage_index.get_or_insert(index);
             }
             StagePlanV1::TailLines { count, path: None }
                 if tail_limit.is_none() && !count_lines =>
@@ -494,6 +493,9 @@ fn readonly_source(
         .zip(sort_stage_index)
         .is_some_and(|(uniq, sort)| uniq < sort);
     let uniq_after_sort = uniq.is_some() && !uniq_before_sort;
+    let head_before_sort = head_stage_index
+        .zip(sort_stage_index)
+        .is_some_and(|(head, sort)| head < sort);
     Ok(ReadonlySourceV1 {
         command_name,
         paths,
@@ -511,6 +513,7 @@ fn readonly_source(
         uniq,
         uniq_before_sort,
         uniq_after_sort,
+        head_before_sort,
     })
 }
 
@@ -567,6 +570,7 @@ fn stream_inputs<W: Write>(
     let mut sort_records = Vec::new();
     let mut sort_bytes = 0usize;
     let mut uniq_pending: Option<UniqGroupV1> = None;
+    let mut pre_sort_head_emitted = 0usize;
 
     if source.record_limit == Some(0) || source.tail_limit == Some(0) {
         if source.count_lines {
@@ -678,6 +682,7 @@ fn stream_inputs<W: Write>(
                         &mut sort_records,
                         &mut sort_bytes,
                         &mut uniq_pending,
+                        &mut pre_sort_head_emitted,
                         &mut tail_records,
                         &mut tail_bytes,
                         &mut terminated_count,
@@ -708,6 +713,7 @@ fn stream_inputs<W: Write>(
                     &mut sort_records,
                     &mut sort_bytes,
                     &mut uniq_pending,
+                    &mut pre_sort_head_emitted,
                     &mut tail_records,
                     &mut tail_bytes,
                     &mut terminated_count,
@@ -763,6 +769,7 @@ fn stream_inputs<W: Write>(
                             &mut sort_records,
                             &mut sort_bytes,
                             &mut uniq_pending,
+                            &mut pre_sort_head_emitted,
                             &mut tail_records,
                             &mut tail_bytes,
                             &mut terminated_count,
@@ -837,6 +844,7 @@ fn stream_inputs<W: Write>(
             &mut sort_records,
             &mut sort_bytes,
             &mut uniq_pending,
+            &mut pre_sort_head_emitted,
             &mut tail_records,
             &mut tail_bytes,
             &mut terminated_count,
@@ -1090,6 +1098,7 @@ fn process_after_sort<W: Write>(
     records: &mut Vec<RecordFrameV1>,
     retained_bytes: &mut usize,
     uniq_pending: &mut Option<UniqGroupV1>,
+    pre_sort_head_emitted: &mut usize,
     tail_records: &mut VecDeque<RecordFrameV1>,
     tail_bytes: &mut usize,
     terminated_count: &mut u64,
@@ -1108,13 +1117,29 @@ fn process_after_sort<W: Write>(
             sink,
         );
     }
+    let stop_after_record = if source.head_before_sort {
+        let limit = source
+            .record_limit
+            .ok_or(ReadonlyExecutionErrorV1::UnsupportedPlan)?;
+        if *pre_sort_head_emitted >= limit {
+            return Ok(SelectedRecordResultV1::Stop);
+        }
+        *pre_sort_head_emitted = pre_sort_head_emitted.saturating_add(1);
+        *pre_sort_head_emitted >= limit
+    } else {
+        false
+    };
     if source.uniq_before_sort {
         let Some(mut previous) = uniq_pending.take() else {
             *uniq_pending = Some(UniqGroupV1 {
                 frame,
                 occurrences: 1,
             });
-            return Ok(SelectedRecordResultV1::Continue);
+            return Ok(if stop_after_record {
+                SelectedRecordResultV1::Stop
+            } else {
+                SelectedRecordResultV1::Continue
+            });
         };
         if previous.frame.text == frame.text {
             previous.occurrences =
@@ -1126,7 +1151,11 @@ fn process_after_sort<W: Write>(
                     })?;
             previous.frame.terminated = frame.terminated;
             *uniq_pending = Some(previous);
-            return Ok(SelectedRecordResultV1::Continue);
+            return Ok(if stop_after_record {
+                SelectedRecordResultV1::Stop
+            } else {
+                SelectedRecordResultV1::Continue
+            });
         }
         let result = match prepare_unique_group(previous, source, true)? {
             Some(output) => collect_sort_record(output, records, retained_bytes),
@@ -1138,9 +1167,22 @@ fn process_after_sort<W: Write>(
                 occurrences: 1,
             });
         }
-        return Ok(result);
+        return Ok(
+            if result == SelectedRecordResultV1::Continue && stop_after_record {
+                SelectedRecordResultV1::Stop
+            } else {
+                result
+            },
+        );
     }
-    Ok(collect_sort_record(frame, records, retained_bytes))
+    let result = collect_sort_record(frame, records, retained_bytes);
+    Ok(
+        if result == SelectedRecordResultV1::Continue && stop_after_record {
+            SelectedRecordResultV1::Stop
+        } else {
+            result
+        },
+    )
 }
 
 fn collect_sort_record(
@@ -1501,7 +1543,7 @@ fn process_selected_record<W: Write>(
         return Ok(SelectedRecordResultV1::ResourceFailure);
     }
     *emitted = emitted.saturating_add(1);
-    if source.record_limit.is_some_and(|limit| *emitted >= limit) {
+    if !source.head_before_sort && source.record_limit.is_some_and(|limit| *emitted >= limit) {
         Ok(SelectedRecordResultV1::Stop)
     } else {
         Ok(SelectedRecordResultV1::Continue)

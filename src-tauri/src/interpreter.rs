@@ -386,7 +386,7 @@ pub fn validate_execution_plan(
                 }
             }
             StagePlanV1::SortLines { path, .. } => {
-                if saw_sort || saw_selection_boundary || saw_recursive_search {
+                if saw_sort || saw_recursive_search {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
                 saw_sort = true;

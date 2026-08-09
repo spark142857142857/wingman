@@ -348,13 +348,24 @@ fn uniq_output_can_feed_a_later_sort() {
 }
 
 #[test]
+fn head_output_can_feed_a_later_sort() {
+    let parsed = parse_p0_tokens(&lex_p0_line("head -n 2 input.txt | sort").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect head output to sort input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::HeadLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SortLines { path: None, .. }
+    ));
+}
+
+#[test]
 fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
     for line in [
         "sort",
         "sort one.txt two.txt",
         "sort -f input.txt",
         "cat input.txt | sort other.txt",
-        "cat input.txt | head | sort",
         "sort input.txt | sort",
         "grep -r value src | sort",
     ] {
