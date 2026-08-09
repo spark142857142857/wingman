@@ -320,6 +320,34 @@ fn sort_builds_typed_file_and_pipeline_stages() {
 }
 
 #[test]
+fn sort_output_can_feed_a_later_text_filter() {
+    let parsed = parse_p0_tokens(&lex_p0_line("sort input.txt | grep value").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect sort output to grep input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::SortLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SearchText {
+            ref paths,
+            recursive: false,
+            ..
+        } if paths.is_empty()
+    ));
+}
+
+#[test]
+fn uniq_output_can_feed_a_later_sort() {
+    let parsed = parse_p0_tokens(&lex_p0_line("uniq input.txt | sort").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect uniq output to sort input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::UniqueLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SortLines { path: None, .. }
+    ));
+}
+
+#[test]
 fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
     for line in [
         "sort",
@@ -327,7 +355,6 @@ fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
         "sort -f input.txt",
         "cat input.txt | sort other.txt",
         "cat input.txt | head | sort",
-        "sort input.txt | grep value",
         "sort input.txt | sort",
         "grep -r value src | sort",
     ] {

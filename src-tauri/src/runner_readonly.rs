@@ -37,8 +37,11 @@ struct ReadonlySourceV1<'a> {
     grep: Option<GrepFilterV1>,
     grep_is_final: bool,
     grep_direct: bool,
+    grep_after_sort: bool,
     sort: Option<SortFilterV1>,
     uniq: Option<UniqFilterV1>,
+    uniq_before_sort: bool,
+    uniq_after_sort: bool,
 }
 
 struct GrepFilterV1 {
@@ -420,6 +423,8 @@ fn readonly_source(
     };
     let mut grep = grep_filter(first)?;
     let mut grep_stage_index = grep.as_ref().map(|_| 0usize);
+    let mut sort_stage_index = sort.as_ref().map(|_| 0usize);
+    let mut uniq_stage_index = uniq.as_ref().map(|_| 0usize);
     let grep_direct = grep.is_some();
     for (index, stage) in plan.stages.iter().enumerate().skip(1) {
         match stage {
@@ -439,7 +444,6 @@ fn readonly_source(
                 numeric,
                 unique,
             } if sort.is_none()
-                && uniq.is_none()
                 && record_limit.is_none()
                 && tail_limit.is_none()
                 && !count_lines =>
@@ -449,6 +453,7 @@ fn readonly_source(
                     numeric: *numeric,
                     unique: *unique,
                 });
+                sort_stage_index = Some(index);
             }
             StagePlanV1::UniqueLines {
                 path: None,
@@ -465,6 +470,7 @@ fn readonly_source(
                     repeated_only: *repeated_only,
                     unique_only: *unique_only,
                 });
+                uniq_stage_index = Some(index);
             }
             StagePlanV1::HeadLines { count, path: None }
                 if tail_limit.is_none() && !count_lines =>
@@ -484,6 +490,10 @@ fn readonly_source(
             _ => return Err(ReadonlyExecutionErrorV1::UnsupportedPlan),
         }
     }
+    let uniq_before_sort = uniq_stage_index
+        .zip(sort_stage_index)
+        .is_some_and(|(uniq, sort)| uniq < sort);
+    let uniq_after_sort = uniq.is_some() && !uniq_before_sort;
     Ok(ReadonlySourceV1 {
         command_name,
         paths,
@@ -494,8 +504,13 @@ fn readonly_source(
         grep,
         grep_is_final: grep_stage_index.is_some_and(|index| index + 1 == plan.stages.len()),
         grep_direct,
+        grep_after_sort: grep_stage_index
+            .zip(sort_stage_index)
+            .is_some_and(|(grep, sort)| grep > sort),
         sort,
         uniq,
+        uniq_before_sort,
+        uniq_after_sort,
     })
 }
 
@@ -645,7 +660,7 @@ fn stream_inputs<W: Write>(
             if candidate.terminated {
                 let candidate =
                     number_record(candidate, source.number_lines, &mut next_line_number)?;
-                let Some(candidate) = select_grep_record(
+                let Some(candidate) = select_input_grep_record(
                     candidate,
                     source,
                     index,
@@ -733,7 +748,7 @@ fn stream_inputs<W: Write>(
             if let Some(pending_record) = pending.take() {
                 let pending_record =
                     number_record(pending_record, source.number_lines, &mut next_line_number)?;
-                if let Some(selected) = select_grep_record(
+                if let Some(selected) = select_input_grep_record(
                     pending_record,
                     source,
                     index,
@@ -795,7 +810,7 @@ fn stream_inputs<W: Write>(
                 });
             }
             let pending = number_record(pending, source.number_lines, &mut next_line_number)?;
-            if let Some(pending) = select_grep_record(
+            if let Some(pending) = select_input_grep_record(
                 pending,
                 source,
                 inputs.len().saturating_sub(1),
@@ -843,6 +858,23 @@ fn stream_inputs<W: Write>(
     }
 
     if source.sort.is_some() {
+        if source.uniq_before_sort && had_operational_failure {
+            uniq_pending = None;
+        }
+        if source.uniq_before_sort && !had_operational_failure {
+            if let Some(group) = uniq_pending.take() {
+                if let Some(frame) = prepare_unique_group(group, source, false)? {
+                    if collect_sort_record(frame, &mut sort_records, &mut sort_bytes)
+                        == SelectedRecordResultV1::SortResourceFailure
+                    {
+                        had_operational_failure = true;
+                        diagnostics.push(
+                            "wingman sort: materialization resource limit exceeded".to_string(),
+                        );
+                    }
+                }
+            }
+        }
         if had_operational_failure {
             sort_records.clear();
         } else {
@@ -854,6 +886,7 @@ fn stream_inputs<W: Write>(
                 &mut tail_bytes,
                 &mut terminated_count,
                 &mut emitted,
+                &mut grep_matched,
                 sink,
                 cancellation,
             )? {
@@ -1020,6 +1053,20 @@ fn select_grep_record(
     Ok(Some(frame))
 }
 
+fn select_input_grep_record(
+    frame: RecordFrameV1,
+    source: &ReadonlySourceV1<'_>,
+    input_index: usize,
+    line_number: &mut u64,
+    matched_any: &mut bool,
+) -> Result<Option<RecordFrameV1>, ReadonlyExecutionErrorV1> {
+    if source.grep_after_sort {
+        Ok(Some(frame))
+    } else {
+        select_grep_record(frame, source, input_index, line_number, matched_any)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectedRecordResultV1 {
     Continue,
@@ -1061,15 +1108,55 @@ fn process_after_sort<W: Write>(
             sink,
         );
     }
+    if source.uniq_before_sort {
+        let Some(mut previous) = uniq_pending.take() else {
+            *uniq_pending = Some(UniqGroupV1 {
+                frame,
+                occurrences: 1,
+            });
+            return Ok(SelectedRecordResultV1::Continue);
+        };
+        if previous.frame.text == frame.text {
+            previous.occurrences =
+                previous
+                    .occurrences
+                    .checked_add(1)
+                    .ok_or(ReadonlyExecutionErrorV1::Output {
+                        kind: io::ErrorKind::OutOfMemory,
+                    })?;
+            previous.frame.terminated = frame.terminated;
+            *uniq_pending = Some(previous);
+            return Ok(SelectedRecordResultV1::Continue);
+        }
+        let result = match prepare_unique_group(previous, source, true)? {
+            Some(output) => collect_sort_record(output, records, retained_bytes),
+            None => SelectedRecordResultV1::Continue,
+        };
+        if result == SelectedRecordResultV1::Continue {
+            *uniq_pending = Some(UniqGroupV1 {
+                frame,
+                occurrences: 1,
+            });
+        }
+        return Ok(result);
+    }
+    Ok(collect_sort_record(frame, records, retained_bytes))
+}
+
+fn collect_sort_record(
+    frame: RecordFrameV1,
+    records: &mut Vec<RecordFrameV1>,
+    retained_bytes: &mut usize,
+) -> SelectedRecordResultV1 {
     let next_bytes = retained_bytes.saturating_add(frame.text.len());
     if records.len() >= MAX_SORT_RECORDS || next_bytes > MAX_SORT_BYTES {
         records.clear();
         *retained_bytes = 0;
-        return Ok(SelectedRecordResultV1::SortResourceFailure);
+        return SelectedRecordResultV1::SortResourceFailure;
     }
     records.push(frame);
     *retained_bytes = next_bytes;
-    Ok(SelectedRecordResultV1::Continue)
+    SelectedRecordResultV1::Continue
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1081,6 +1168,7 @@ fn emit_sorted_records<W: Write>(
     tail_bytes: &mut usize,
     terminated_count: &mut u64,
     emitted: &mut usize,
+    grep_matched: &mut bool,
     sink: &mut RecordStreamWriterV1<W>,
     cancellation: &RunnerCancellationV1,
 ) -> Result<SortOutputResultV1, ReadonlyExecutionErrorV1> {
@@ -1132,11 +1220,20 @@ fn emit_sorted_records<W: Write>(
     };
 
     let last_index = records.len().saturating_sub(1);
+    let mut grep_line_number = 1u64;
     for (index, mut frame) in records.drain(..).enumerate() {
         if cancellation.is_cancelled() {
             return Ok(SortOutputResultV1::Cancelled);
         }
         frame.terminated = index != last_index || final_terminated;
+        if source.grep_after_sort {
+            let Some(selected) =
+                select_grep_record(frame, source, 0, &mut grep_line_number, grep_matched)?
+            else {
+                continue;
+            };
+            frame = selected;
+        }
         match process_after_unique(
             frame,
             source,
@@ -1286,7 +1383,7 @@ fn process_after_unique<W: Write>(
     emitted: &mut usize,
     sink: &mut RecordStreamWriterV1<W>,
 ) -> Result<SelectedRecordResultV1, ReadonlyExecutionErrorV1> {
-    if source.uniq.is_none() {
+    if source.uniq.is_none() || !source.uniq_after_sort {
         return process_selected_record(
             frame,
             source,
@@ -1339,7 +1436,7 @@ fn process_after_unique<W: Write>(
 
 #[allow(clippy::too_many_arguments)]
 fn emit_unique_group<W: Write>(
-    mut group: UniqGroupV1,
+    group: UniqGroupV1,
     source: &ReadonlySourceV1<'_>,
     force_terminated: bool,
     tail_records: &mut VecDeque<RecordFrameV1>,
@@ -1348,22 +1445,11 @@ fn emit_unique_group<W: Write>(
     emitted: &mut usize,
     sink: &mut RecordStreamWriterV1<W>,
 ) -> Result<SelectedRecordResultV1, ReadonlyExecutionErrorV1> {
-    let Some(filter) = source.uniq else {
-        return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
-    };
-    if (filter.repeated_only && group.occurrences < 2)
-        || (filter.unique_only && group.occurrences != 1)
-    {
+    let Some(frame) = prepare_unique_group(group, source, force_terminated)? else {
         return Ok(SelectedRecordResultV1::Continue);
-    }
-    if filter.count {
-        group.frame.text = format!("{} {}", group.occurrences, group.frame.text);
-    }
-    if force_terminated {
-        group.frame.terminated = true;
-    }
+    };
     process_selected_record(
-        group.frame,
+        frame,
         source,
         tail_records,
         tail_bytes,
@@ -1371,6 +1457,28 @@ fn emit_unique_group<W: Write>(
         emitted,
         sink,
     )
+}
+
+fn prepare_unique_group(
+    mut group: UniqGroupV1,
+    source: &ReadonlySourceV1<'_>,
+    force_terminated: bool,
+) -> Result<Option<RecordFrameV1>, ReadonlyExecutionErrorV1> {
+    let Some(filter) = source.uniq else {
+        return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
+    };
+    if (filter.repeated_only && group.occurrences < 2)
+        || (filter.unique_only && group.occurrences != 1)
+    {
+        return Ok(None);
+    }
+    if filter.count {
+        group.frame.text = format!("{} {}", group.occurrences, group.frame.text);
+    }
+    if force_terminated {
+        group.frame.terminated = true;
+    }
+    Ok(Some(group.frame))
 }
 
 fn process_selected_record<W: Write>(

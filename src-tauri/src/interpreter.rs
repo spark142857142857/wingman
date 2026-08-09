@@ -358,7 +358,6 @@ pub fn validate_execution_plan(
                 ..
             } => {
                 if saw_search
-                    || saw_sort
                     || saw_unique
                     || saw_selection_boundary
                     || pattern.len() > MAX_GREP_PATTERN_BYTES
@@ -387,7 +386,7 @@ pub fn validate_execution_plan(
                 }
             }
             StagePlanV1::SortLines { path, .. } => {
-                if saw_sort || saw_unique || saw_selection_boundary || saw_recursive_search {
+                if saw_sort || saw_selection_boundary || saw_recursive_search {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
                 saw_sort = true;

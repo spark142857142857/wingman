@@ -1157,6 +1157,42 @@ fn sort_and_uniq_compose_before_safe_redirection() {
     cleanup(&sandbox);
 }
 
+#[test]
+fn sort_output_reaches_later_grep_in_declared_stage_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"x2\nx1\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        sort_stage(Some(path_spec(&input)), false, false, false),
+        grep_stage("x", vec![], false, true, false, true),
+    ]))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"1:x1\r\n2:x2\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn uniq_output_reaches_later_sort_in_declared_stage_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"b\nb\na\nb\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        uniq_stage(Some(path_spec(&input)), false, false, false),
+        sort_stage(None, false, false, false),
+    ]))
+    .expect("execute uniq before sort");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"a\r\nb\r\nb\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
 fn sort_stage(
     path: Option<wingman_lib::windows_path::ValidatedPathSpecV1>,
     reverse: bool,
