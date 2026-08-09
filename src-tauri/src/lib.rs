@@ -3,11 +3,35 @@ use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::io::{Read, Write};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+use uuid::Uuid;
+
+use interpreter::ActiveShell;
+use session_runtime::{apply_familiar_effect, execute_terminal_input, write_session_input};
+use terminal_session::TerminalSessionV1;
+use transport::{EditorReadinessBrokerV1, SessionBrokerV1};
+
+pub mod app_launch;
+pub mod catalog;
+pub mod grep_pattern;
+pub mod interpreter;
+pub mod lexer;
+pub mod parser;
+pub mod pipeline;
+pub mod runner;
+pub mod runner_cancel;
+pub mod runner_grep;
+pub mod runner_io;
+pub mod runner_readonly;
+pub mod session_runtime;
+pub mod shell_adapter;
+pub mod terminal_session;
+pub mod text_stream;
+pub mod transport;
+pub mod windows_path;
 
 #[derive(Clone, Serialize)]
 struct SessionInfo {
@@ -21,6 +45,13 @@ struct PtyOutput {
     data: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalInputResult {
+    accepted: bool,
+    familiar_enabled: bool,
+}
+
 struct PtySession {
     id: u64,
     writer: Box<dyn Write + Send>,
@@ -29,6 +60,13 @@ struct PtySession {
     #[allow(dead_code)]
     shell: String,
     cwd: String,
+    compat_enabled: bool,
+    terminal: TerminalSessionV1,
+    readiness: EditorReadinessBrokerV1,
+    #[allow(dead_code)]
+    broker_pipe_name: String,
+    #[allow(dead_code)]
+    broker: SessionBrokerV1,
 }
 
 struct AppState {
@@ -38,14 +76,6 @@ struct AppState {
 static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
     session: Mutex::new(None),
 });
-
-static COMPAT_FLAG_PATH: Lazy<PathBuf> =
-    Lazy::new(|| std::env::temp_dir().join(format!("wingman-{}-compat.flag", std::process::id())));
-
-static COMPAT_PROFILE_PATH: Lazy<PathBuf> =
-    Lazy::new(|| std::env::temp_dir().join(format!("wingman-{}-compat.ps1", std::process::id())));
-
-const POWERSHELL_COMPAT_PROFILE: &str = include_str!("powershell_compat.ps1");
 
 fn terminal_pty_size(cols: u16, rows: u16) -> PtySize {
     PtySize {
@@ -124,7 +154,7 @@ fn resolve_shell(shell: &str) -> (String, Vec<String>) {
         "-ExecutionPolicy".into(),
         "Bypass".into(),
         "-Command".into(),
-        "chcp 65001 | Out-Null; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; . $env:WINGMAN_COMPAT_PROFILE".into(),
+        "chcp 65001 | Out-Null; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; if ($env:WINGMAN_INTEGRATION_SCRIPT) { . $env:WINGMAN_INTEGRATION_SCRIPT }".into(),
       ],
     ),
   }
@@ -179,6 +209,12 @@ fn monitor_session_exit<F>(
     });
 }
 
+fn filter_session_output(session_id: u64, data: &str) -> Option<String> {
+    let mut guard = APP_STATE.session.lock();
+    let session = guard.as_mut().filter(|session| session.id == session_id)?;
+    Some(session.terminal.ingest_pty_output(data))
+}
+
 #[tauri::command]
 fn get_cwd() -> Result<String, String> {
     let guard = APP_STATE.session.lock();
@@ -198,6 +234,7 @@ fn start_shell(
     compat: bool,
     client_session_id: u64,
 ) -> Result<SessionInfo, String> {
+    let _ = compat;
     {
         let mut guard = APP_STATE.session.lock();
         if let Some(previous) = guard.take() {
@@ -212,14 +249,42 @@ fn start_shell(
 
     let (program, args) = resolve_shell(&shell);
     let mut cmd = CommandBuilder::new(program);
-    std::fs::write(&*COMPAT_FLAG_PATH, if compat { "1" } else { "0" })
-        .map_err(|e| e.to_string())?;
-    if shell != "cmd" {
-        std::fs::write(&*COMPAT_PROFILE_PATH, POWERSHELL_COMPAT_PROFILE)
-            .map_err(|e| e.to_string())?;
-    }
-    cmd.env("WINGMAN_COMPAT_FLAG", COMPAT_FLAG_PATH.as_os_str());
-    cmd.env("WINGMAN_COMPAT_PROFILE", COMPAT_PROFILE_PATH.as_os_str());
+    let active_shell = if shell == "cmd" {
+        ActiveShell::Cmd
+    } else {
+        ActiveShell::WindowsPowerShell
+    };
+    let mut terminal = TerminalSessionV1::new(client_session_id, active_shell);
+    terminal.disable_pty_readiness();
+    let integration_nonce = terminal.integration_nonce().to_string();
+    let runner_path = std::env::current_exe()
+        .map_err(|error| error.to_string())?
+        .with_file_name("wingman-runner.exe");
+    let integration_path = app
+        .path()
+        .resource_dir()
+        .map_err(|error| error.to_string())?
+        .join("src")
+        .join("powershell_runner_transport.ps1");
+    let broker_pipe_name = format!(
+        r"\\.\pipe\wingman-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let readiness_pipe_id = format!(
+        "wingman-readiness-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let readiness_pipe_name = format!(r"\\.\pipe\{readiness_pipe_id}");
+    let readiness = EditorReadinessBrokerV1::start(&readiness_pipe_name, integration_nonce.clone())
+        .map_err(|error| error.to_string())?;
+    let broker = SessionBrokerV1::start(&broker_pipe_name).map_err(|error| error.to_string())?;
+    cmd.env("WINGMAN_INTEGRATION_SCRIPT", integration_path.as_os_str());
+    cmd.env("WINGMAN_SESSION_NONCE", integration_nonce);
+    cmd.env("WINGMAN_READINESS_PIPE", readiness_pipe_id);
+    cmd.env("WINGMAN_RUNNER_PATH", runner_path.as_os_str());
+    cmd.env("WINGMAN_BROKER_PIPE", &broker_pipe_name);
     for arg in args {
         cmd.arg(arg);
     }
@@ -249,6 +314,11 @@ fn start_shell(
             child: child.clone(),
             shell: shell_name.clone(),
             cwd: cwd.clone(),
+            compat_enabled: false,
+            terminal,
+            readiness,
+            broker_pipe_name,
+            broker,
         });
     }
 
@@ -260,12 +330,13 @@ fn start_shell(
             match reader.read(&mut buf) {
                 Ok(0) => {
                     let trailing = decoder.finish();
-                    if !trailing.is_empty() {
+                    let visible = filter_session_output(session_id, &trailing).unwrap_or_default();
+                    if !visible.is_empty() {
                         let _ = app_handle.emit(
                             "pty-output",
                             PtyOutput {
                                 session_id,
-                                data: trailing,
+                                data: visible,
                             },
                         );
                     }
@@ -273,24 +344,26 @@ fn start_shell(
                 }
                 Ok(n) => {
                     let chunk = decoder.push(&buf[..n]);
-                    if !chunk.is_empty() {
+                    let visible = filter_session_output(session_id, &chunk).unwrap_or_default();
+                    if !visible.is_empty() {
                         let _ = app_handle.emit(
                             "pty-output",
                             PtyOutput {
                                 session_id,
-                                data: chunk,
+                                data: visible,
                             },
                         );
                     }
                 }
                 Err(_) => {
                     let trailing = decoder.finish();
-                    if !trailing.is_empty() {
+                    let visible = filter_session_output(session_id, &trailing).unwrap_or_default();
+                    if !visible.is_empty() {
                         let _ = app_handle.emit(
                             "pty-output",
                             PtyOutput {
                                 session_id,
-                                data: trailing,
+                                data: visible,
                             },
                         );
                     }
@@ -318,30 +391,94 @@ fn start_shell(
 }
 
 #[tauri::command]
-fn set_compat(enabled: bool) -> Result<(), String> {
-    std::fs::write(&*COMPAT_FLAG_PATH, if enabled { "1" } else { "0" }).map_err(|e| e.to_string())
-}
+fn write_native_paste(client_session_id: u64, data: String) -> Result<(), String> {
+    if !data.contains(['\r', '\n']) {
+        return Err("native paste requires a line break".to_string());
+    }
 
-#[tauri::command]
-fn write_shell(data: String) -> Result<(), String> {
     let mut guard = APP_STATE.session.lock();
     let session = guard
         .as_mut()
         .ok_or_else(|| "shell not started".to_string())?;
-    session
-        .writer
-        .write_all(data.as_bytes())
-        .map_err(|e| e.to_string())?;
-    session.writer.flush().map_err(|e| e.to_string())?;
+    if session.id != client_session_id {
+        return Ok(());
+    }
+
+    session.terminal.suspend_for_native_paste(&data);
+    write_session_input(
+        session.id,
+        client_session_id,
+        session.writer.as_mut(),
+        &data,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-fn resize_shell(cols: u16, rows: u16) -> Result<(), String> {
+fn handle_terminal_input(
+    client_session_id: u64,
+    data: String,
+) -> Result<TerminalInputResult, String> {
+    let mut guard = APP_STATE.session.lock();
+    let session = guard
+        .as_mut()
+        .ok_or_else(|| "shell not started".to_string())?;
+    if session.id != client_session_id {
+        return Ok(TerminalInputResult {
+            accepted: false,
+            familiar_enabled: session.compat_enabled,
+        });
+    }
+    let active_shell = if session.shell == "cmd" {
+        ActiveShell::Cmd
+    } else {
+        ActiveShell::WindowsPowerShell
+    };
+    match session.readiness.drain() {
+        Ok(frames) => {
+            for frame in frames {
+                if !session.terminal.apply_editor_readiness(&frame) {
+                    session.terminal.suspend_after_transport_failure();
+                    break;
+                }
+            }
+        }
+        Err(_) => session.terminal.suspend_after_transport_failure(),
+    }
+
+    let outcome = execute_terminal_input(
+        &mut session.terminal,
+        active_shell,
+        &session.broker,
+        session.writer.as_mut(),
+        &data,
+        session.compat_enabled,
+    )
+    .map_err(|error| error.to_string())?;
+    if let session_runtime::TerminalExecutionOutcomeV1::Prepared {
+        familiar_effect: Some(effect),
+        ..
+    } = outcome
+    {
+        apply_familiar_effect(effect, &mut session.compat_enabled, |_| Ok(()))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(TerminalInputResult {
+        accepted: true,
+        familiar_enabled: session.compat_enabled,
+    })
+}
+
+#[tauri::command]
+fn resize_shell(client_session_id: u64, cols: u16, rows: u16) -> Result<(), String> {
     let guard = APP_STATE.session.lock();
     let session = guard
         .as_ref()
         .ok_or_else(|| "shell not started".to_string())?;
+    if session.id != client_session_id {
+        return Ok(());
+    }
     session
         .master
         .resize(terminal_pty_size(cols, rows))
@@ -356,20 +493,19 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_cwd,
             start_shell,
-            set_compat,
-            write_shell,
+            write_native_paste,
+            handle_terminal_input,
             resize_shell
         ])
         .run(tauri::generate_context!());
 
-    let _ = std::fs::remove_file(&*COMPAT_FLAG_PATH);
-    let _ = std::fs::remove_file(&*COMPAT_PROFILE_PATH);
     result.expect("error while running tauri application");
 }
 
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::mpsc;
 
     #[test]
@@ -398,6 +534,28 @@ mod tests {
             child: child.clone(),
             shell: "cmd".into(),
             cwd: "C:\\".into(),
+            compat_enabled: true,
+            terminal: TerminalSessionV1::new(session_id, ActiveShell::Cmd),
+            readiness: EditorReadinessBrokerV1::start(
+                &format!(
+                    r"\\.\pipe\wingman-test-readiness-{}-{}",
+                    session_id,
+                    Uuid::new_v4().as_simple()
+                ),
+                "abcdef0123456789abcdef0123456789".to_string(),
+            )
+            .expect("start test readiness broker"),
+            broker_pipe_name: format!(
+                r"\\.\pipe\wingman-test-{}-{}",
+                session_id,
+                Uuid::new_v4().as_simple()
+            ),
+            broker: SessionBrokerV1::start(&format!(
+                r"\\.\pipe\wingman-test-broker-{}-{}",
+                session_id,
+                Uuid::new_v4().as_simple()
+            ))
+            .expect("start test session broker"),
         });
 
         let (sender, receiver) = mpsc::channel();
@@ -423,27 +581,39 @@ mod tests {
     }
 
     #[test]
-    fn powershell_bootstrap_loads_compat_profile() {
-        std::fs::write(&*COMPAT_FLAG_PATH, "1").expect("write compat flag");
-        std::fs::write(&*COMPAT_PROFILE_PATH, POWERSHELL_COMPAT_PROFILE)
-            .expect("write compat profile");
+    fn powershell_bootstrap_does_not_source_the_legacy_compat_profile() {
+        let (_, arguments) = resolve_shell("powershell");
+        let command = arguments.last().expect("PowerShell command argument");
+
+        assert!(!command.contains("WINGMAN_COMPAT_PROFILE"));
+        assert!(!command.contains("powershell_compat"));
+    }
+
+    #[test]
+    fn powershell_bootstrap_loads_the_runner_transport_without_prompt_markers() {
+        let integration_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("powershell_runner_transport.ps1");
+        let nonce = "abcdef0123456789abcdef0123456789";
 
         let (program, mut arguments) = resolve_shell("powershell");
         arguments.retain(|argument| argument != "-NoExit");
         let command = arguments.last_mut().expect("PowerShell command argument");
-        command.push_str("; 'alpha beta' | cut -d ' ' -f 2");
+        command.push_str(
+            "; [Console]::Out.Write([bool](Get-Command Invoke-WingmanPrepared -ErrorAction SilentlyContinue)); [Console]::Out.Write((prompt))",
+        );
 
         let output = std::process::Command::new(program)
             .args(arguments)
-            .env("WINGMAN_COMPAT_FLAG", &*COMPAT_FLAG_PATH)
-            .env("WINGMAN_COMPAT_PROFILE", &*COMPAT_PROFILE_PATH)
+            .env("WINGMAN_INTEGRATION_SCRIPT", integration_path)
+            .env("WINGMAN_SESSION_NONCE", nonce)
             .output()
             .expect("run PowerShell bootstrap");
 
         assert!(output.status.success());
-        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "beta");
-        let _ = std::fs::remove_file(&*COMPAT_FLAG_PATH);
-        let _ = std::fs::remove_file(&*COMPAT_PROFILE_PATH);
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 bootstrap output");
+        assert!(stdout.starts_with("True"));
+        assert!(!stdout.contains("wingman-prompt"));
     }
 
     #[test]

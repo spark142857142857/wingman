@@ -28,6 +28,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "src/powershell_runner_transport.ps1"
+    ],
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"

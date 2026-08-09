@@ -26,6 +26,7 @@ dist-ssr
 # Tauri / Rust
 src-tauri/target
 src-tauri/gen/schemas
+src-tauri/binaries/
 
 # Local temp / process artifacts
 cargo-*.txt
