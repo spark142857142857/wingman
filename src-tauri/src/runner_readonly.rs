@@ -273,7 +273,7 @@ fn execute_stream_to<W: Write, E: Write>(
     cancellation: &RunnerCancellationV1,
 ) -> Result<u8, ReadonlyExecutionErrorV1> {
     let mut sink = RecordStreamWriterV1::new(&mut *writer);
-    let stream = if source.head_before_sort {
+    let stream = if requires_ordered_execution(plan) {
         stream_inputs_ordered(inputs, plan, source, &mut sink, cancellation)?
     } else {
         stream_inputs(inputs, source, &mut sink, cancellation)?
@@ -301,6 +301,21 @@ fn execute_stream_to<W: Write, E: Write>(
             0
         },
     )
+}
+
+fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
+    let sort_index = plan
+        .stages
+        .iter()
+        .position(|stage| matches!(stage, StagePlanV1::SortLines { .. }));
+    sort_index.is_some_and(|sort_index| {
+        plan.stages[..sort_index].iter().any(|stage| {
+            matches!(
+                stage,
+                StagePlanV1::HeadLines { .. } | StagePlanV1::TailLines { .. }
+            )
+        })
+    })
 }
 
 fn path_resolution_exit(error: PathResolutionErrorV1) -> u8 {
@@ -451,7 +466,7 @@ fn readonly_source(
                 reverse,
                 numeric,
                 unique,
-            } if sort.is_none() && tail_limit.is_none() && !count_lines => {
+            } if sort.is_none() && !count_lines => {
                 sort = Some(SortFilterV1 {
                     reverse: *reverse,
                     numeric: *numeric,

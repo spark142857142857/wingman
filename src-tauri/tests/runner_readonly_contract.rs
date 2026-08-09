@@ -1214,6 +1214,27 @@ fn head_output_reaches_later_sort_without_reading_the_unrequested_suffix() {
     cleanup(&sandbox);
 }
 
+#[test]
+fn tail_output_reaches_later_sort_in_declared_stage_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"z\nb\na\nc\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::TailLines {
+            count: 3,
+            path: Some(path_spec(&input)),
+        },
+        sort_stage(None, false, false, false),
+    ]))
+    .expect("execute tail before sort");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"a\r\nb\r\nc\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
 fn sort_stage(
     path: Option<wingman_lib::windows_path::ValidatedPathSpecV1>,
     reverse: bool,

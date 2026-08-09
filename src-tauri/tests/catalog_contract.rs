@@ -360,6 +360,18 @@ fn head_output_can_feed_a_later_sort() {
 }
 
 #[test]
+fn tail_output_can_feed_a_later_sort() {
+    let parsed = parse_p0_tokens(&lex_p0_line("tail -n 3 input.txt | sort").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect tail output to sort input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::TailLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SortLines { path: None, .. }
+    ));
+}
+
+#[test]
 fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
     for line in [
         "sort",
