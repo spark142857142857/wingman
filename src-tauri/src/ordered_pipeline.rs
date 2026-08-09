@@ -34,9 +34,11 @@ struct PipelineRecordV1 {
     input_index: usize,
 }
 
-struct StageActionV1 {
-    output: Option<PipelineRecordV1>,
-    stop_upstream: bool,
+enum StageActionV1 {
+    Drop,
+    Emit(PipelineRecordV1),
+    EmitAndStop(PipelineRecordV1),
+    Stop,
 }
 
 struct StageSlotV1 {
@@ -203,10 +205,17 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
                 continue;
             }
             let action = self.stages[index].stage.push(record, self.source_paths)?;
-            if let Some(output) = action.output {
-                self.enqueue_output(index, output, &mut queue);
+            match action {
+                StageActionV1::Drop => {}
+                StageActionV1::Emit(output) => {
+                    self.enqueue_output(index, output, &mut queue);
+                }
+                StageActionV1::EmitAndStop(output) => {
+                    self.enqueue_output(index, output, &mut queue);
+                    stop = true;
+                }
+                StageActionV1::Stop => stop = true,
             }
-            stop |= action.stop_upstream;
         }
         Ok(if stop {
             OrderedFlowV1::StopUpstream
@@ -331,10 +340,7 @@ impl RuntimeStageV1 {
                     .ok_or(OrderedPipelineFaultV1::Overflow)?;
                 let selected = search.pattern.is_match(&record.frame.text) != search.invert_match;
                 if !selected {
-                    return Ok(StageActionV1 {
-                        output: None,
-                        stop_upstream: false,
-                    });
+                    return Ok(StageActionV1::Drop);
                 }
                 search.matched_any = true;
                 if search.direct && search.multiple_paths {
@@ -351,30 +357,22 @@ impl RuntimeStageV1 {
                 } else if search.line_numbers {
                     record.frame.text = format!("{current_line}:{}", record.frame.text);
                 }
-                Ok(StageActionV1 {
-                    output: Some(record),
-                    stop_upstream: false,
-                })
+                Ok(StageActionV1::Emit(record))
             }
             Self::Head { remaining } => {
                 if *remaining == 0 {
-                    return Ok(StageActionV1 {
-                        output: None,
-                        stop_upstream: true,
-                    });
+                    return Ok(StageActionV1::Stop);
                 }
                 *remaining -= 1;
-                Ok(StageActionV1 {
-                    output: Some(record),
-                    stop_upstream: *remaining == 0,
+                Ok(if *remaining == 0 {
+                    StageActionV1::EmitAndStop(record)
+                } else {
+                    StageActionV1::Emit(record)
                 })
             }
             Self::Tail(tail) => {
                 if tail.limit == 0 {
-                    return Ok(StageActionV1 {
-                        output: None,
-                        stop_upstream: true,
-                    });
+                    return Ok(StageActionV1::Stop);
                 }
                 while tail.records.len() >= tail.limit {
                     if let Some(discarded) = tail.records.pop_front() {
@@ -391,10 +389,7 @@ impl RuntimeStageV1 {
                 }
                 tail.records.push_back(record);
                 tail.bytes = next_bytes;
-                Ok(StageActionV1 {
-                    output: None,
-                    stop_upstream: false,
-                })
+                Ok(StageActionV1::Drop)
             }
             Self::Count { terminated } => {
                 if record.frame.terminated {
@@ -402,10 +397,7 @@ impl RuntimeStageV1 {
                         .checked_add(1)
                         .ok_or(OrderedPipelineFaultV1::Overflow)?;
                 }
-                Ok(StageActionV1 {
-                    output: None,
-                    stop_upstream: false,
-                })
+                Ok(StageActionV1::Drop)
             }
             Self::Sort(sort) => {
                 if sort_limit_exceeded(sort.records.len(), sort.bytes, record.frame.text.len()) {
@@ -416,18 +408,12 @@ impl RuntimeStageV1 {
                 let next_bytes = sort.bytes.saturating_add(record.frame.text.len());
                 sort.records.push(record);
                 sort.bytes = next_bytes;
-                Ok(StageActionV1 {
-                    output: None,
-                    stop_upstream: false,
-                })
+                Ok(StageActionV1::Drop)
             }
             Self::Unique(unique) => {
                 let Some((mut pending, mut occurrences)) = unique.pending.take() else {
                     unique.pending = Some((record, 1));
-                    return Ok(StageActionV1 {
-                        output: None,
-                        stop_upstream: false,
-                    });
+                    return Ok(StageActionV1::Drop);
                 };
                 if pending.frame.text == record.frame.text {
                     occurrences = occurrences
@@ -435,17 +421,14 @@ impl RuntimeStageV1 {
                         .ok_or(OrderedPipelineFaultV1::Overflow)?;
                     pending.frame.terminated = record.frame.terminated;
                     unique.pending = Some((pending, occurrences));
-                    return Ok(StageActionV1 {
-                        output: None,
-                        stop_upstream: false,
-                    });
+                    return Ok(StageActionV1::Drop);
                 }
                 pending.frame.terminated = true;
                 let output = unique.prepare_group(pending, occurrences);
                 unique.pending = Some((record, 1));
-                Ok(StageActionV1 {
-                    output,
-                    stop_upstream: false,
+                Ok(match output {
+                    Some(output) => StageActionV1::Emit(output),
+                    None => StageActionV1::Drop,
                 })
             }
         }
