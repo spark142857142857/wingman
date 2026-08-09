@@ -2,6 +2,18 @@
 
 [English](README.md)
 
+> **프로토타입 snapshot — 최종 P0 호환성 약속이 아닙니다.** 아래 기능은 현재
+> repository의 prototype을 설명하며 target 밖 동작도 포함합니다.
+> [프로토타입·목표 경계](docs/PROTOTYPE_TARGET_BOUNDARY.ko.md)와
+> [목표 호환성 계약](docs/COMPATIBILITY_CONTRACT.ko.md)을 참고하세요.
+>
+> **현재 안전 cutover 상태(2026-08-09): Familiar는 `PAUSED`로 시작합니다.**
+> `familiar on`을 입력하면 현재 Rust runner에 연결된 제한적 PowerShell preview
+> (`pwd`, `cat`, `head`, 유한 `tail -n N`, `wc -l`, `grep`, 지원 pipeline과 최종 `>`/`>>` redirection, Familiar control,
+> 소유한 잘못된 줄의 결정적 거부)를 켤 수 있습니다. 아래
+> 나머지 호환 함수는 legacy prototype·참고 코드로만 남아 있으며 앱이 source하지
+> 않습니다.
+
 Windows용 가벼운 터미널 MVP입니다. PowerShell과 cmd를 바로 전환하고, WSL 없이도 Linux Familiar 명령과 파이프를 사용할 수 있습니다.
 
 **스택:** Tauri 2, Rust (`portable-pty`), Vite, TypeScript, xterm.js

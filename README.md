@@ -2,6 +2,18 @@
 
 [Korean](README.ko.md)
 
+> **Prototype snapshot — not the final P0 compatibility promise.** The features
+> below describe the checked-in prototype and include behavior outside the target.
+> See the [prototype/target boundary](docs/PROTOTYPE_TARGET_BOUNDARY.md) and
+> [target compatibility contract](docs/COMPATIBILITY_CONTRACT.md).
+>
+> **Current safe-cutover status (2026-08-09): Familiar starts `PAUSED`.**
+> `familiar on` enables the limited PowerShell preview currently wired through
+> the Rust runner (`pwd`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, their supported pipelines and final
+> `>`/`>>` redirection, Familiar controls, and deterministic claimed-line
+> rejection). Other compatibility functions listed below remain legacy
+> prototype/reference code and are not sourced by the app.
+
 Wingman is a lightweight terminal MVP for Windows. It lets you switch between PowerShell and cmd while using familiar Linux commands and pipelines—without WSL.
 
 **Stack:** Tauri 2, Rust (`portable-pty`), Vite, TypeScript, and xterm.js.
