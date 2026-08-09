@@ -304,6 +304,14 @@ fn execute_stream_to<W: Write, E: Write>(
 }
 
 fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
+    if plan.stages.iter().enumerate().any(|(index, stage)| {
+        matches!(stage, StagePlanV1::SearchText { .. })
+            && plan.stages[..index]
+                .iter()
+                .any(|earlier| matches!(earlier, StagePlanV1::UniqueLines { .. }))
+    }) {
+        return true;
+    }
     if plan
         .stages
         .iter()

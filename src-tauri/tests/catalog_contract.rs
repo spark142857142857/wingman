@@ -292,7 +292,6 @@ fn uniq_rejects_conflicts_and_invalid_source_shapes() {
         "uniq -z input.txt",
         "cat input.txt | uniq other.txt",
         "cat input.txt | head | uniq",
-        "uniq input.txt | grep value",
         "grep -r value src | uniq",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
@@ -372,6 +371,22 @@ fn grep_output_can_feed_a_second_text_filter() {
             ..
         }
     )));
+}
+
+#[test]
+fn uniq_output_can_feed_a_later_text_filter() {
+    let parsed = parse_p0_tokens(&lex_p0_line("uniq input.txt | grep beta").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect uniq output to grep input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::UniqueLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SearchText {
+            ref paths,
+            recursive: false,
+            ..
+        } if paths.is_empty()
+    ));
 }
 
 #[test]

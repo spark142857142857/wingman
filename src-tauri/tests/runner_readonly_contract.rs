@@ -1220,6 +1220,24 @@ fn repeated_grep_stages_filter_in_declared_order_and_use_the_final_status() {
 }
 
 #[test]
+fn uniq_output_reaches_later_grep_in_declared_stage_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"alpha\nalpha\nbeta\nbeta\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        uniq_stage(Some(path_spec(&input)), true, false, false),
+        grep_stage("beta", vec![], false, false, false, true),
+    ]))
+    .expect("execute uniq before grep");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"2 beta\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn uniq_output_reaches_later_sort_in_declared_stage_order() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");

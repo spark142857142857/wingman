@@ -283,7 +283,6 @@ pub fn validate_execution_plan(
 
     let mut saw_tail = false;
     let mut saw_recursive_search = false;
-    let mut saw_unique = false;
     let mut saw_selection_boundary = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
@@ -356,7 +355,6 @@ pub fn validate_execution_plan(
                 ..
             } => {
                 if saw_recursive_search
-                    || saw_unique
                     || saw_selection_boundary
                     || pattern.len() > MAX_GREP_PATTERN_BYTES
                     || pattern.contains(['\0', '\r', '\n'])
@@ -414,7 +412,6 @@ pub fn validate_execution_plan(
                 {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
-                saw_unique = true;
                 match (index, path) {
                     (0, Some(path)) => {
                         path_count = path_count
