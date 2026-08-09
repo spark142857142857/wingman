@@ -69,6 +69,19 @@ assertActions(
   [{ type: "write", data: "fi\t" }, { type: "submit", line: "fi", reliable: false }],
 );
 
+const nativePasteSuspension = new TerminalInputParser();
+assertActions(
+  "text before a confirmed native paste is mirrored",
+  nativePasteSuspension.consume("partial"),
+  [{ type: "write", data: "partial" }],
+);
+nativePasteSuspension.suspendAfterNativePaste();
+assertActions(
+  "the next submission remains native after a confirmed line-breaking paste",
+  nativePasteSuspension.consume("pwd\r"),
+  [{ type: "write", data: "pwd" }, { type: "submit", line: "pwd", reliable: false }],
+);
+
 const lfSeparatedPaste = new TerminalInputParser();
 assertActions(
   "LF-separated pasted commands are submitted one line at a time",

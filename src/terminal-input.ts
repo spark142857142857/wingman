@@ -36,6 +36,16 @@ export class TerminalInputParser {
     }
   }
 
+  suspendAfterNativePaste() {
+    this.line = "";
+    this.cursor = 0;
+    this.escapeSequence = "";
+    this.reliable = false;
+    this.ignoreNextLineFeed = false;
+    this.historyIndex = null;
+    this.historyDraft = "";
+  }
+
   consume(data: string): TerminalInputAction[] {
     const actions: TerminalInputAction[] = [];
 

@@ -5,16 +5,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { TerminalInputParser } from "./terminal-input";
+import { classifyTerminalPaste } from "./terminal-paste";
 import { isPasteShortcut } from "./terminal-shortcuts";
-import {
-  applyShellTransition,
-  familiarStatusCommand,
-  mapCmdCompatCommand,
-  parseCompatCommand,
-  ShellState,
-  type ShellKind,
-} from "./shell-state";
+import type { ShellKind } from "./shell-state";
 
 const termHost = document.getElementById("terminal")!;
 const cwdEl = document.getElementById("cwd")!;
@@ -22,7 +15,6 @@ const shellLabel = document.getElementById("shellLabel")!;
 const familiarLabel = document.getElementById("familiarLabel")!;
 
 const preferences = {
-  compat: "wingman.compat",
   fontSize: "wingman.fontSize.v2",
 };
 
@@ -63,15 +55,14 @@ term.loadAddon(new WebLinksAddon());
 term.open(termHost);
 fitAddon.fit();
 
-let compat = localStorage.getItem(preferences.compat) !== "false";
-const inputParser = new TerminalInputParser();
-const shellState = new ShellState();
+let compat = false;
+let activeShell: ShellKind = "powershell";
 let inputQueue = Promise.resolve();
 let activeSessionId = 0;
 
 function updateStatus(cwd?: string) {
-  shellLabel.textContent = shellState.current === "powershell" ? "PowerShell" : "cmd";
-  familiarLabel.textContent = compat ? "ON" : "OFF";
+  shellLabel.textContent = activeShell === "powershell" ? "PowerShell" : "cmd";
+  familiarLabel.textContent = compat ? "ON" : "PAUSED";
   familiarLabel.className = compat ? "ok" : "off";
   if (cwd) cwdEl.textContent = cwd;
 }
@@ -88,10 +79,9 @@ async function refreshCwd() {
 async function startSession(shell: ShellKind) {
   const sessionId = ++activeSessionId;
   term.reset();
-  inputParser.reset();
   const { cols, rows } = term;
   await invoke("start_shell", { shell, cols, rows, compat, clientSessionId: sessionId });
-  shellState.setCurrent(shell);
+  activeShell = shell;
   updateStatus();
   await refreshCwd();
   term.focus();
@@ -107,60 +97,17 @@ await listen<string>("cwd-changed", (event) => {
   updateStatus(event.payload);
 });
 
-async function processTerminalData(data: string) {
-  const actions = inputParser.consume(data);
-  for (const action of actions) {
-    if (action.type === "submit") {
-      const line = action.line;
-      const shellTransition = action.reliable
-        ? applyShellTransition(line, shellState)
-        : null;
-      const compatCommand = action.reliable ? parseCompatCommand(line) : null;
-
-      if (shellTransition === "enter" || shellTransition === "leave") {
-        await invoke("write_shell", { data: "\r" });
-        inputParser.commitSubmittedLine(line);
-        updateStatus();
-        void refreshCwd();
-        continue;
-      }
-
-      if (compatCommand !== null) {
-        if (compatCommand !== "status") {
-          compat = compatCommand === "on";
-          localStorage.setItem(preferences.compat, String(compat));
-          await invoke("set_compat", { enabled: compat });
-          updateStatus();
-        }
-
-        const erase = "\u007f".repeat(line.length);
-        const statusCommand = familiarStatusCommand(shellState.current, compat);
-        await invoke("write_shell", {
-          data: `${erase}${statusCommand}\r`,
-        });
-        inputParser.commitSubmittedLine(statusCommand);
-        continue;
-      }
-
-      if (action.reliable && compat && shellState.current === "cmd") {
-        const mapped = mapCmdCompatCommand(line);
-        if (mapped !== null) {
-          // Erase the raw Linux-style command the user typed, then send the mapped Windows command.
-          const erase = "\u007f".repeat(line.length);
-          await invoke("write_shell", { data: `${erase}${mapped}\r` });
-          inputParser.commitSubmittedLine(mapped);
-          void refreshCwd();
-          continue;
-        }
-      }
-
-      await invoke("write_shell", { data: "\r" });
-      inputParser.commitSubmittedLine(action.reliable ? line : null);
-      void refreshCwd();
-      continue;
-    }
-    await invoke("write_shell", { data: action.data });
+async function processTerminalData(data: string, clientSessionId: number) {
+  const result = await invoke<{ accepted: boolean; familiarEnabled: boolean }>(
+    "handle_terminal_input",
+    { clientSessionId, data },
+  );
+  if (!result.accepted || clientSessionId !== activeSessionId) return;
+  if (compat !== result.familiarEnabled) {
+    compat = result.familiarEnabled;
+    updateStatus();
   }
+  if (/[\r\n]/.test(data)) void refreshCwd();
 }
 
 function enqueueInputTask(task: () => Promise<void>) {
@@ -172,7 +119,8 @@ function enqueueInputTask(task: () => Promise<void>) {
 }
 
 function enqueueTerminalData(data: string) {
-  enqueueInputTask(() => processTerminalData(data));
+  const clientSessionId = activeSessionId;
+  enqueueInputTask(() => processTerminalData(data, clientSessionId));
 }
 
 term.onData((data) => enqueueTerminalData(data));
@@ -186,7 +134,7 @@ function scheduleTerminalFit() {
       fitFrame = null;
       fitAddon.fit();
       const { cols, rows } = term;
-      void invoke("resize_shell", { cols, rows });
+      void invoke("resize_shell", { clientSessionId: activeSessionId, cols, rows });
     });
   });
 }
@@ -208,8 +156,24 @@ async function copySelection() {
 }
 
 async function pasteClipboard() {
+  const clientSessionId = activeSessionId;
   const text = await navigator.clipboard.readText();
-  if (text) enqueueTerminalData(text.replace(/\r\n|\n/g, "\r"));
+  if (!text || clientSessionId !== activeSessionId) {
+    term.focus();
+    return;
+  }
+
+  const paste = classifyTerminalPaste(text);
+  if (paste.kind === "line-breaking") {
+    const shouldSend = window.confirm(
+      "여러 줄을 터미널에 그대로 보낼까요? 포함된 명령이 실행될 수 있습니다.",
+    );
+    if (shouldSend && clientSessionId === activeSessionId) {
+      await invoke("write_native_paste", { clientSessionId, data: paste.data });
+    }
+  } else {
+    enqueueTerminalData(paste.data);
+  }
   term.focus();
 }
 
@@ -239,7 +203,7 @@ document.addEventListener("keydown", (e) => {
   }
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
     e.preventDefault();
-    enqueueInputTask(() => startSession(shellState.current));
+    enqueueInputTask(() => startSession(activeShell));
   }
 });
 
