@@ -191,6 +191,18 @@ fn tail_output_can_feed_a_later_head() {
 }
 
 #[test]
+fn tail_output_can_feed_a_second_tail() {
+    let parsed = parse_p0_tokens(&lex_p0_line("tail -n 4 input.txt | tail -n 2").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect tail output to a second tail input");
+
+    assert_eq!(plan.stages.len(), 2);
+    assert!(plan
+        .stages
+        .iter()
+        .all(|stage| matches!(stage, StagePlanV1::TailLines { .. })));
+}
+
+#[test]
 fn grep_builds_typed_file_and_pipeline_search_stages() {
     let parsed = parse_p0_tokens(&lex_p0_line("grep -inv TODO one.txt two.txt").unwrap()).unwrap();
     let plan = build_readonly_plan(&parsed).expect("build multi-file grep plan");

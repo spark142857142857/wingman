@@ -372,6 +372,15 @@ fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
     {
         return true;
     }
+    if plan
+        .stages
+        .iter()
+        .filter(|stage| matches!(stage, StagePlanV1::TailLines { .. }))
+        .count()
+        > 1
+    {
+        return true;
+    }
     let sort_index = plan
         .stages
         .iter()
@@ -566,9 +575,11 @@ fn readonly_source(
                 head_stage_index.get_or_insert(index);
             }
             StagePlanV1::TailLines { count, path: None }
-                if tail_limit.is_none() && !count_lines =>
+                if (tail_limit.is_none() || ordered_execution) && !count_lines =>
             {
-                tail_limit = Some(*count);
+                if tail_limit.is_none() {
+                    tail_limit = Some(*count);
+                }
             }
             StagePlanV1::CountLines { path: None }
                 if !count_lines && index + 1 == plan.stages.len() =>

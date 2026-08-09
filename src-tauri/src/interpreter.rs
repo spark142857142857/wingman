@@ -281,7 +281,6 @@ pub fn validate_execution_plan(
         };
     }
 
-    let mut saw_tail = false;
     let mut saw_recursive_search = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
@@ -323,10 +322,9 @@ pub fn validate_execution_plan(
                 }
             }
             StagePlanV1::TailLines { count, path } => {
-                if *count > MAX_HEAD_LINE_COUNT || saw_tail {
+                if *count > MAX_HEAD_LINE_COUNT {
                     return Err(RunnerRequestValidationErrorV1::InvalidRange);
                 }
-                saw_tail = true;
                 match (index, path) {
                     (0, Some(path)) => {
                         path_count = path_count

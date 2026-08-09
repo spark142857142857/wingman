@@ -1382,6 +1382,30 @@ fn tail_output_reaches_later_head_in_declared_stage_order() {
 }
 
 #[test]
+fn repeated_tail_stages_retain_each_suffix_in_declared_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"a\nb\nc\nd\ne\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::TailLines {
+            count: 4,
+            path: Some(path_spec(&input)),
+        },
+        StagePlanV1::TailLines {
+            count: 2,
+            path: None,
+        },
+    ]))
+    .expect("execute repeated tail stages");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"d\r\ne\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn tail_output_reaches_later_uniq_in_declared_stage_order() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");
