@@ -313,6 +313,22 @@ fn head_output_can_feed_a_later_uniq() {
 }
 
 #[test]
+fn tail_output_can_feed_a_later_uniq() {
+    let parsed = parse_p0_tokens(&lex_p0_line("tail -n 4 input.txt | uniq -c").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect tail output to uniq input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::TailLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::UniqueLines {
+            path: None,
+            count: true,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn uniq_rejects_conflicts_and_invalid_source_shapes() {
     for line in [
         "uniq",

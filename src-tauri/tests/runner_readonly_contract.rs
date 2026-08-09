@@ -1381,6 +1381,27 @@ fn tail_output_reaches_later_head_in_declared_stage_order() {
     cleanup(&sandbox);
 }
 
+#[test]
+fn tail_output_reaches_later_uniq_in_declared_stage_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"a\nz\nz\nb\nb\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::TailLines {
+            count: 4,
+            path: Some(path_spec(&input)),
+        },
+        uniq_stage(None, true, false, false),
+    ]))
+    .expect("execute tail before uniq");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"2 z\r\n2 b\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
 fn sort_stage(
     path: Option<wingman_lib::windows_path::ValidatedPathSpecV1>,
     reverse: bool,
