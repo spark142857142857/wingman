@@ -4,8 +4,8 @@
 
 영문 원본: [SORT_UNIQ.md](SORT_UNIQ.md)
 
-구현 상태 (2026-08-09): `uniq`는 Reliable PowerShell Familiar 경로에 공개됐고,
-`sort`는 다음 migration gate로 남아 있다.
+구현 상태 (2026-08-09): `sort`와 `uniq`는 Reliable PowerShell Familiar 경로에
+공개됐다.
 
 모든 파일 operand는 공통
 [Windows 경로 계약](../WINDOWS_PATH_CONTRACT.ko.md)을 따른다.
@@ -26,6 +26,8 @@ sort [OPTIONS] <pipeline input>
 | `-u`, `--unique` | 완전히 같은 줄을 하나만 남김 |
 
 - 파일 하나 또는 파이프 입력 하나만 허용합니다.
+- Materialization은 최대 262,144개 record와 64 MiB의 record text로 제한합니다.
+  어느 상한이든 넘으면 sorted stdout 없이 종료 `1`입니다.
 - 기본 비교는 전체 텍스트 줄의 대소문자를 구분한 Unicode ordinal 비교입니다.
   현재 셸의 locale 기본값에 따라 결과가 바뀌지 않습니다.
 - `-n`은 parsing할 때만 ASCII space와 tab을 양끝에서 제거합니다. Trim 뒤 빈 줄은

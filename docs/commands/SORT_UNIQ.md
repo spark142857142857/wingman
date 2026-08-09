@@ -4,8 +4,8 @@ Status: accepted MVP scope.
 
 Korean version: [SORT_UNIQ.ko.md](SORT_UNIQ.ko.md)
 
-Implementation status (2026-08-09): `uniq` is published in the Reliable
-PowerShell Familiar path; `sort` remains the next migration gate.
+Implementation status (2026-08-09): `sort` and `uniq` are published in the
+Reliable PowerShell Familiar path.
 
 Every file operand follows the shared
 [Windows path contract](../WINDOWS_PATH_CONTRACT.md).
@@ -26,6 +26,8 @@ sort [OPTIONS] <pipeline input>
 | `-u`, `--unique` | Keep one occurrence of each identical line. |
 
 - Exactly one file or one pipeline input is accepted.
+- Materialization is capped at 262,144 records and 64 MiB of record text.
+  Exceeding either bound exits `1` without sorted stdout.
 - Default comparison is case-sensitive Unicode ordinal comparison of the entire
   text line, independent of the active shell's locale defaults.
 - With `-n`, ASCII space and tab are trimmed only for parsing. A blank trimmed

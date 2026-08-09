@@ -208,6 +208,9 @@ contract.
 - Finite `tail` uses a non-preallocated ring capped at 65,536 records and
   16 MiB of retained record text. Bound failure clears the ring and emits no
   tail records.
+- `sort` materialization is capped at 262,144 records and 64 MiB of retained
+  record text. Bound failure clears the materialized input and emits no sorted
+  records.
 - Exceeding an input-data or materialization bound is an operational failure
   with exit `1`; it is never truncation or partial reinterpretation.
 - Blocking reads, writes, traversal, waits, and channel operations observe the

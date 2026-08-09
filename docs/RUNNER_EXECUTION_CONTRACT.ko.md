@@ -81,7 +81,7 @@ P0는 `grep`의 미일치 같은 결과 상태와 실제 실행 실패를 구분
 
 ## 구현된 read-only·redirection vertical slice (2026-08-09)
 
-Production sidecar는 이제 검증된 `cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`uniq` plan을 writer 기반 streaming entry point로
+Production sidecar는 이제 검증된 `cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
 실행하고, normal stdout 또는 최종 `>`·`>>` file sink로 출력한다. 모든 명시적 input을
 output보다 먼저 열고, pinned-parent/reparse-safe primitive로 redirection output을 열며,
 overwrite truncate 전에 file identity를 검사한다. 공통 bounded UTF-8 reader로 각 파일을
@@ -103,6 +103,13 @@ payload는 decode하지 않는다. Follow mode는 아직 공개하지 않으며,
 `head`·유한 `tail`·`wc -l`·안전한 redirection과 조합된다. 재귀 runner가 같은 stage를
 지원하기 전까지 `grep -r | uniq`는 거부한다.
 
+`sort`는 출력 전에 전체 logical input을 검증하고 materialize한다. 최대 262,144개
+record와 64 MiB의 record text로 제한하며, 기본 Unicode ordinal 순서와 floating point가
+아닌 정확한 decimal sign·coefficient·scale 비교를 구현한다. 숫자 tie는 `-r`에서도
+stable하고 `-u`는 text가 완전히 같은 record만 제거한다. Decode·numeric data·상한
+실패는 sorted stdout을 내지 않는다. 재귀 runner가 같은 stage를 지원하기 전까지
+`grep -r | sort`는 거부한다.
+
 `head`는 필요한 prefix를 받은 직후 upstream reader를 멈춘다. OS read buffer에 들어왔더라도
 record reader가 요청하지 않은 invalid UTF-8 suffix는 decode하지 않으므로 명령을 실패시키지
 않는다. `cat` source 하나의 runtime 실패는 완료된 출력을 보존하고 exit `1`을 기록한 뒤
@@ -112,11 +119,11 @@ separator를 추가하지 않고 diagnostic은 stderr에 남는다. Runtime 실�
 계약대로 비어 있거나 부분적으로 작성된 target이 남을 수 있다.
 
 이 slice는 typed runner request와 실제 `wingman-runner` process로 접근할 수 있다.
-`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
+`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
 Reliable일 때 이제 분류·공개된다. 공통 lexer·parser·catalog는 하나의 typed plan을 만들거나
 결정적인 exit `2` rejection을 준비한다. 명시적 `.exe`, native-first pipeline, Familiar OFF,
 Uncertain 입력은 native pass-through를 유지한다. 실제 PowerShell/ConPTY test는 Familiar
-활성화, OOB readiness, Unicode 경로, `cat | head >`, `wc -l >`, `tail -n 1 >`, Unicode `grep -n >`, `uniq -c >`, request broker, sidecar, 다음 readiness
+활성화, OOB readiness, Unicode 경로, `cat | head >`, `wc -l >`, `tail -n 1 >`, Unicode `grep -n >`, `uniq -c >`, `sort -n >`, request broker, sidecar, 다음 readiness
 cycle까지 검증한다. `cmd`는 입증된 editor-readiness adapter가 없으므로 native
 pass-through를 유지한다.
 

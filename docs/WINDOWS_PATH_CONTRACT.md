@@ -234,11 +234,11 @@ are rejected before truncation, and a missing leaf below a reparse ancestor is
 not created.
 
 The production sidecar now connects this primitive to the validated `cat`,
-`head`, finite `tail -n N`, `wc -l`, `grep`, and `uniq` record stream for `>` and `>>`. Integration tests cover input-before-
+`head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` record stream for `>` and `>>`. Integration tests cover input-before-
 output ordering, overwrite and append, hard-link same-file rejection, reparse
 rejection, output-open failure, partial runtime output, and cancellation during
 an actual redirected runner process. A production PowerShell/ConPTY vertical
-test now also exercises Unicode-path `cat | head >`, `wc -l >`, `tail -n 1 >`, Unicode `grep -n >`, and `uniq -c >` submissions through this
+test now also exercises Unicode-path `cat | head >`, `wc -l >`, `tail -n 1 >`, Unicode `grep -n >`, `uniq -c >`, and `sort -n >` submissions through this
 primitive. Familiar-off, uncertain, explicit-native, and `cmd` input remain
 outside this interception path.
 

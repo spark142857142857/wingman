@@ -190,6 +190,8 @@ normal stop 뒤에는 새 source를 시작하지 않는다.
   `sort` materialization에는 모두 명시적 상한이 있다.
 - 유한 `tail`은 선할당하지 않는 ring을 사용하며 최대 65,536개 record와 16 MiB의
   보관 record text로 제한한다. 상한 실패 시 ring을 비우고 tail record를 출력하지 않는다.
+- `sort` materialization은 최대 262,144개 record와 64 MiB의 record text로 제한한다.
+  상한 실패는 materialized input을 비우고 sorted record를 출력하지 않는다.
 - 입력 data·materialization 상한 초과는 종료 `1`의 실행 실패다. 자르거나 일부를
   재해석하지 않는다.
 - Blocking read·write·traversal·wait·channel operation은 공통 cancellation token을
