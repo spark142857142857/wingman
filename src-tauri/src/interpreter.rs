@@ -304,7 +304,7 @@ pub fn validate_execution_plan(
                 }
             }
             StagePlanV1::HeadLines { count, path } => {
-                if *count > MAX_HEAD_LINE_COUNT || saw_tail {
+                if *count > MAX_HEAD_LINE_COUNT {
                     return Err(RunnerRequestValidationErrorV1::InvalidRange);
                 }
                 match (index, path) {

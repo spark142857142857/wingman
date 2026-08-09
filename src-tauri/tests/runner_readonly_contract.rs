@@ -1336,6 +1336,30 @@ fn tail_output_reaches_later_sort_in_declared_stage_order() {
     cleanup(&sandbox);
 }
 
+#[test]
+fn tail_output_reaches_later_head_in_declared_stage_order() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, b"z\na\nb\nc\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::TailLines {
+            count: 3,
+            path: Some(path_spec(&input)),
+        },
+        StagePlanV1::HeadLines {
+            count: 2,
+            path: None,
+        },
+    ]))
+    .expect("execute tail before head");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"a\r\nb\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
 fn sort_stage(
     path: Option<wingman_lib::windows_path::ValidatedPathSpecV1>,
     reverse: bool,

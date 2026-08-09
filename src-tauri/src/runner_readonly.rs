@@ -314,6 +314,14 @@ fn execute_stream_to<W: Write, E: Write>(
 
 fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
     if plan.stages.iter().enumerate().any(|(index, stage)| {
+        matches!(stage, StagePlanV1::HeadLines { .. })
+            && plan.stages[..index]
+                .iter()
+                .any(|earlier| matches!(earlier, StagePlanV1::TailLines { .. }))
+    }) {
+        return true;
+    }
+    if plan.stages.iter().enumerate().any(|(index, stage)| {
         matches!(stage, StagePlanV1::SearchText { .. })
             && plan.stages[..index].iter().any(|earlier| {
                 matches!(
@@ -498,6 +506,7 @@ fn readonly_source(
     let mut uniq_stage_index = uniq.as_ref().map(|_| 0usize);
     let mut head_stage_index = matches!(first, StagePlanV1::HeadLines { .. }).then_some(0usize);
     let grep_direct = grep.is_some();
+    let ordered_execution = requires_ordered_execution(plan);
     for (index, stage) in plan.stages.iter().enumerate().skip(1) {
         match stage {
             StagePlanV1::SearchText { paths, .. } if paths.is_empty() && !count_lines => {
@@ -538,7 +547,7 @@ fn readonly_source(
                 uniq_stage_index = Some(index);
             }
             StagePlanV1::HeadLines { count, path: None }
-                if tail_limit.is_none() && !count_lines =>
+                if (tail_limit.is_none() || ordered_execution) && !count_lines =>
             {
                 record_limit = Some(record_limit.map_or(*count, |current| current.min(*count)));
                 head_stage_index.get_or_insert(index);

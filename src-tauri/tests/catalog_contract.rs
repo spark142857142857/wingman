@@ -169,11 +169,25 @@ fn finite_tail_accepts_one_file_or_pipeline_input_and_rejects_follow_mode() {
         "tail -n nope input.txt",
         "tail one.txt two.txt",
         "cat input.txt | tail other.txt",
-        "tail input.txt | head",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
         assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
     }
+}
+
+#[test]
+fn tail_output_can_feed_a_later_head() {
+    let parsed = parse_p0_tokens(&lex_p0_line("tail -n 3 input.txt | head -n 2").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect tail output to head input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::TailLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::HeadLines {
+            count: 2,
+            path: None
+        }
+    ));
 }
 
 #[test]
