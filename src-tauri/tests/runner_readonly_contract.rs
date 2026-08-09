@@ -1316,6 +1316,27 @@ fn head_output_reaches_later_grep_without_reading_the_unrequested_suffix() {
 }
 
 #[test]
+fn head_output_reaches_later_uniq_without_reading_the_unrequested_suffix() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, [b"a\na\nb\n".as_slice(), &[0xff, 0xfe]].concat()).unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::HeadLines {
+            count: 3,
+            path: Some(path_spec(&input)),
+        },
+        uniq_stage(None, true, false, false),
+    ]))
+    .expect("execute head before uniq");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"2 a\r\n1 b\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
 fn tail_output_reaches_later_sort_in_declared_stage_order() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");

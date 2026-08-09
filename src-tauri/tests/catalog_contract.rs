@@ -297,6 +297,22 @@ fn uniq_output_can_feed_a_second_uniq() {
 }
 
 #[test]
+fn head_output_can_feed_a_later_uniq() {
+    let parsed = parse_p0_tokens(&lex_p0_line("head -n 3 input.txt | uniq -c").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("connect head output to uniq input");
+
+    assert!(matches!(plan.stages[0], StagePlanV1::HeadLines { .. }));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::UniqueLines {
+            path: None,
+            count: true,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn uniq_rejects_conflicts_and_invalid_source_shapes() {
     for line in [
         "uniq",
@@ -304,7 +320,6 @@ fn uniq_rejects_conflicts_and_invalid_source_shapes() {
         "uniq one.txt two.txt",
         "uniq -z input.txt",
         "cat input.txt | uniq other.txt",
-        "cat input.txt | head | uniq",
         "grep -r value src | uniq",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();

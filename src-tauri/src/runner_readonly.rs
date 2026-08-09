@@ -314,6 +314,17 @@ fn execute_stream_to<W: Write, E: Write>(
 
 fn requires_ordered_execution(plan: &ExecutionPlanV1) -> bool {
     if plan.stages.iter().enumerate().any(|(index, stage)| {
+        matches!(stage, StagePlanV1::UniqueLines { .. })
+            && plan.stages[..index].iter().any(|earlier| {
+                matches!(
+                    earlier,
+                    StagePlanV1::HeadLines { .. } | StagePlanV1::TailLines { .. }
+                )
+            })
+    }) {
+        return true;
+    }
+    if plan.stages.iter().enumerate().any(|(index, stage)| {
         matches!(stage, StagePlanV1::HeadLines { .. })
             && plan.stages[..index]
                 .iter()
@@ -536,7 +547,9 @@ fn readonly_source(
                 count,
                 repeated_only,
                 unique_only,
-            } if record_limit.is_none() && tail_limit.is_none() && !count_lines => {
+            } if ((record_limit.is_none() && tail_limit.is_none()) || ordered_execution)
+                && !count_lines =>
+            {
                 if uniq.is_none() {
                     uniq = Some(UniqFilterV1 {
                         count: *count,

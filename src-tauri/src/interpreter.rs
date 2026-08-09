@@ -283,7 +283,6 @@ pub fn validate_execution_plan(
 
     let mut saw_tail = false;
     let mut saw_recursive_search = false;
-    let mut saw_selection_boundary = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
             StagePlanV1::PrintWorkingDirectory => {
@@ -322,7 +321,6 @@ pub fn validate_execution_plan(
                     }
                     (_, None) => {}
                 }
-                saw_selection_boundary = true;
             }
             StagePlanV1::TailLines { count, path } => {
                 if *count > MAX_HEAD_LINE_COUNT || saw_tail {
@@ -344,7 +342,6 @@ pub fn validate_execution_plan(
                     }
                     (_, None) => {}
                 }
-                saw_selection_boundary = true;
             }
             StagePlanV1::SearchText {
                 pattern,
@@ -405,10 +402,7 @@ pub fn validate_execution_plan(
                 unique_only,
                 ..
             } => {
-                if saw_recursive_search
-                    || saw_selection_boundary
-                    || (*repeated_only && *unique_only)
-                {
+                if saw_recursive_search || (*repeated_only && *unique_only) {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
                 match (index, path) {
