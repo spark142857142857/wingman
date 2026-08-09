@@ -81,6 +81,13 @@ P0는 `grep`의 미일치 같은 결과 상태와 실제 실행 실패를 구분
 
 ## 구현된 read-only·redirection vertical slice (2026-08-09)
 
+비재귀 text stage는 plan에 선언된 왼쪽에서 오른쪽 순서 그대로 실행된다. 지원 stage는
+반복하거나 다시 조합할 수 있으며, 반복 `grep`·`sort`·`uniq`·유한 `tail`과
+`head`/`tail` 출력 뒤의 filter·materializing stage도 포함한다. Downstream `head`는
+요청하지 않은 upstream 입력을 계속 단축 종료하지만, 치명적인 source 실패는 여전히
+최종 stage 상태보다 우선한다. 이 의미론은 하나의 ordered stage engine이 소유하며,
+runner는 더 이상 plan을 명령별 순서 보정 flag로 평탄화하지 않는다.
+
 Production sidecar는 이제 검증된 `cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
 실행하고, normal stdout 또는 최종 `>`·`>>` file sink로 출력한다. 모든 명시적 input을
 output보다 먼저 열고, pinned-parent/reparse-safe primitive로 redirection output을 열며,

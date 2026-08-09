@@ -89,6 +89,14 @@ fatal, and diagnostic ordering follows the text stream contract.
 
 ## Implemented read-only and redirection vertical slice (2026-08-09)
 
+Non-recursive text stages execute strictly from left to right in their declared
+plan order. Supported stages may be repeated and recombined, including repeated
+`grep`, `sort`, `uniq`, and finite `tail`, plus `head`/`tail` output feeding
+later filters or materializing stages. A downstream `head` still short-circuits
+unrequested upstream input, while fatal source failure continues to dominate
+the final stage status. One ordered stage engine owns these semantics; the
+runner no longer flattens a plan into command-specific ordering flags.
+
 The production sidecar now executes validated `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
 writer-based streaming entry point, either to normal stdout or to a final `>` or
 `>>` file sink. It opens every explicit input before the output, resolves and
