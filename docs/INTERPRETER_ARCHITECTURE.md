@@ -1,0 +1,111 @@
+# Common Interpreter Architecture (Draft)
+
+Status: accepted architecture direction; implementation is not started by this document.
+
+## Principle
+
+> The shell owns state. Wingman owns the agreed Unix-command meaning.
+
+PowerShell and `cmd` remain the active native shells. They own their current
+location, environment, session features, and native command behavior. Wingman
+only owns the bounded P0 compatibility grammar and the command contracts in
+this repository.
+
+## Decision flow
+
+```text
+submitted input line
+  -> Familiar mode off?             pass through raw input
+  -> native state command?          pass through raw input
+  -> recognised P0 Unix candidate?  parse and validate
+       -> valid                    execute common plan
+       -> invalid claimed syntax    show a Wingman diagnostic
+  -> otherwise                      pass through raw input
+```
+
+Native state commands include `cd`, `chdir`, `pushd`, `popd`, and PowerShell
+`Set-Location`. Wingman does not translate them.
+
+## Layers
+
+1. **Input classifier**: decides raw pass-through, Wingman diagnostic, or
+   common interpretation. It acts only on a reliably captured, submitted line.
+2. **Constrained lexer and parser**: accepts the P0 one-line grammar only:
+   words, single/double quotes, `--`, `|`, and one final `>` or `>>`.
+3. **Command catalog and validator**: turns generic parsed words into a
+   contract-valid command, rejects unsupported options and unsafe requests,
+   and assigns the documented exit behavior.
+4. **Common execution plan**: an unambiguous, shell-independent representation
+   of the requested work.
+5. **Wingman runner**: executes that plan with Windows filesystem, process,
+   and ACL semantics, moves structured text records through bounded pipelines,
+   writes output and diagnostics, and returns the planned exit code.
+
+The parser does not implement Bash syntax. Command substitution, environment
+expansion, glob expansion, `&&`, `||`, `;`, input/error redirection, and other
+non-P0 constructs are outside it.
+
+## Shell boundary
+
+Rust owns the prompt/session tracker. Only a validated prompt plus an
+allowlisted, mirrored edit sequence creates a reliable submitted line. The
+frontend then chooses between native Enter and a prepared-request ID; while a
+command or foreground program is running, all terminal input passes through.
+The exact state and fallback rules are defined in the [terminal submission and
+session contract](TERMINAL_SESSION_CONTRACT.md).
+
+Rust retains every rejection, control response, and execution plan in session
+memory; no plan is returned to the WebView. The runner is launched as a child
+of the active shell so it inherits the actual current filesystem directory,
+`PATH`, environment, and access token after native state commands such as `cd`.
+
+Shell-specific code must not parse P0 options or define independent command
+semantics. It may only transport a validated runner request safely. The
+transport must not interpolate user paths or patterns into shell source; use a
+versioned opaque request encoding.
+
+## Required consistency
+
+- The same valid P0 input produces comparable visible output and the same exit
+  code in PowerShell and `cmd`.
+- A claimed P0 command with unsupported syntax fails clearly; it is not partly
+  converted or silently guessed.
+- Raw native commands and native shell state commands remain available.
+- The displayed and frontend-managed command history retains the user's raw
+  input, not an internal runner invocation.
+- Cancellation, output streaming, redirection, and errors are validated by
+  tests at the runner boundary.
+
+## Migration target
+
+The current prototype has separate frontend `cmd` mapping and a PowerShell
+compatibility profile. The target architecture replaces their independent P0
+parsing and behavior with one catalog, parser, execution-plan format, and
+runner. A temporary shell-specific shim is acceptable only as a transport
+layer during migration.
+
+See [the common interpreter data model](INTERPRETER_DATA_MODEL.md) for the
+decision, parsing, execution-plan, and runner-request boundaries.
+See [the input classification contract](INPUT_CLASSIFICATION.md) for the
+ownership decision that precedes parsing.
+Prompt evidence, Unicode-safe input mirroring, completion fallback, paste,
+history, and shell transitions follow [the terminal submission and session
+contract](TERMINAL_SESSION_CONTRACT.md).
+See [the lexer contract](LEXER_CONTRACT.md) for the constrained token rules.
+Implementation is governed by [the implementation gate](IMPLEMENTATION_GATE.md).
+Update verification and support policy are defined in [the compatibility
+maintenance contract](COMPATIBILITY_MAINTENANCE.md).
+Runner I/O, cancellation, and exit behavior are defined in [the runner
+execution contract](RUNNER_EXECUTION_CONTRACT.md).
+UTF-8 decoding, BOM/newline records, pipeline backpressure, short-circuit,
+redirection sinks, and fatal priority follow [the text record and stream
+contract](TEXT_STREAM_MODEL.md).
+Privilege, WebView, transport, terminal-data, and update boundaries are defined
+in [the security and trust model](SECURITY_MODEL.md).
+Accepted path forms, runner-side resolution, identity, and reparse behavior are
+defined in [the Windows path and filesystem contract](WINDOWS_PATH_CONTRACT.md).
+User-visible latency, resource ceilings, baselines, and the renderer replacement
+trigger are defined in [the performance budget](PERFORMANCE_BUDGET.md).
+The legacy-to-runner transition is defined in [the migration plan](MIGRATION_PLAN.md).
+Mutating-request preflight, ordering, staging, commit, and partial-result rules
+are defined in [the mutation execution contract](MUTATION_EXECUTION_CONTRACT.md).
