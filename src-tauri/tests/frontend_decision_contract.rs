@@ -385,6 +385,40 @@ fn reliable_familiar_uniq_is_published_as_a_typed_plan() {
 }
 
 #[test]
+fn reliable_familiar_sort_is_published_as_a_typed_plan() {
+    let mut session = InterpreterSession::new(41, 37, ActiveShell::WindowsPowerShell);
+    let raw_line = "cat input.txt | sort -nu | uniq -c";
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 41,
+            command_sequence: 37,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: raw_line.to_string(),
+        })
+        .expect("classify a reliable sort pipeline");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared sort plan, got {other:?}"),
+    };
+
+    let request = session.consume_prepared(&request_id).unwrap();
+    let PreparedRequestKindV1::Execute { plan } = request.kind else {
+        panic!("expected executable sort plan");
+    };
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SortLines {
+            path: None,
+            reverse: false,
+            numeric: true,
+            unique: true,
+        }
+    ));
+}
+
+#[test]
 fn read_only_names_remain_native_when_ownership_evidence_is_missing() {
     for (sequence, familiar_enabled, evidence, raw_line) in [
         (19, false, LineEvidence::Reliable, "cat input.txt"),
@@ -395,6 +429,7 @@ fn read_only_names_remain_native_when_ownership_evidence_is_missing() {
         (30, true, LineEvidence::Reliable, "tail.exe -n 2 input.txt"),
         (33, true, LineEvidence::Reliable, "grep.exe TODO input.txt"),
         (35, true, LineEvidence::Reliable, "uniq.exe input.txt"),
+        (38, true, LineEvidence::Reliable, "sort.exe input.txt"),
     ] {
         let mut session = InterpreterSession::new(41, sequence, ActiveShell::WindowsPowerShell);
         let decision = session
@@ -438,6 +473,7 @@ fn claimed_read_only_syntax_and_catalog_failures_become_prepared_rejections() {
         (27, "wc input.txt", "wingman wc: unsupported option"),
         (31, "tail -f input.txt", "wingman tail: unsupported option"),
         (36, "uniq -du input.txt", "wingman uniq: unsupported option"),
+        (39, "sort -f input.txt", "wingman sort: unsupported option"),
     ] {
         let mut session = InterpreterSession::new(41, sequence, ActiveShell::WindowsPowerShell);
         let decision = session

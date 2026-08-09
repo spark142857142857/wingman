@@ -944,6 +944,233 @@ fn head_after_uniq_stops_before_decoding_an_invalid_suffix() {
     cleanup(&sandbox);
 }
 
+#[test]
+fn sort_uses_unicode_ordinal_order_and_normalizes_final_termination() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, "b\na\nä\nA").unwrap();
+
+    let ascending = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        false,
+        false,
+        false,
+    )]))
+    .unwrap();
+    assert_eq!(ascending.exit_code, 0);
+    assert_eq!(ascending.stdout, "A\r\na\r\nb\r\nä".as_bytes());
+
+    let descending = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        true,
+        false,
+        false,
+    )]))
+    .unwrap();
+    assert_eq!(descending.exit_code, 0);
+    assert_eq!(descending.stdout, "ä\r\nb\r\na\r\nA".as_bytes());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn numeric_sort_is_exact_and_stable_in_both_directions() {
+    let sandbox = sandbox();
+    let input = sandbox.join("numbers.txt");
+    fs::write(&input, b"1\n1.0\n+01\n-2\n.5\n0\n-0\n10\n").unwrap();
+
+    let ascending = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        false,
+        true,
+        false,
+    )]))
+    .unwrap();
+    assert_eq!(ascending.exit_code, 0);
+    assert_eq!(
+        ascending.stdout,
+        b"-2\r\n0\r\n-0\r\n.5\r\n1\r\n1.0\r\n+01\r\n10\r\n"
+    );
+
+    let descending = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        true,
+        true,
+        false,
+    )]))
+    .unwrap();
+    assert_eq!(descending.exit_code, 0);
+    assert_eq!(
+        descending.stdout,
+        b"10\r\n1\r\n1.0\r\n+01\r\n.5\r\n0\r\n-0\r\n-2\r\n"
+    );
+    cleanup(&sandbox);
+}
+
+#[test]
+fn numeric_sort_unique_removes_text_identical_nonadjacent_values_only() {
+    let sandbox = sandbox();
+    let input = sandbox.join("numbers.txt");
+    fs::write(&input, b"1\n1.0\n1\n+01\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        false,
+        true,
+        true,
+    )]))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"1\r\n1.0\r\n+01\r\n");
+    cleanup(&sandbox);
+}
+
+#[test]
+fn invalid_numeric_sort_data_emits_no_partial_sorted_output() {
+    let sandbox = sandbox();
+    let input = sandbox.join("numbers.txt");
+    fs::write(&input, b"2\n1\nNaN\n").unwrap();
+
+    let outcome = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        false,
+        true,
+        false,
+    )]))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 1);
+    assert!(outcome.stdout.is_empty());
+    assert!(String::from_utf8(outcome.stderr)
+        .unwrap()
+        .contains("invalid numeric data"));
+    cleanup(&sandbox);
+}
+
+#[test]
+fn numeric_sort_accepts_only_the_bounded_decimal_grammar() {
+    let sandbox = sandbox();
+    let input = sandbox.join("numbers.txt");
+    fs::write(&input, b" \n+.5\n1.\n-.0\n.0001\n-0.1\n").unwrap();
+    let outcome = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        false,
+        true,
+        false,
+    )]))
+    .unwrap();
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(
+        outcome.stdout,
+        b"-0.1\r\n \r\n-.0\r\n.0001\r\n+.5\r\n1.\r\n"
+    );
+
+    for invalid in [
+        "+", "-", ".", "1e2", "NaN", "1,2", "１２", "1 2", "--1", "1.2.3",
+    ] {
+        fs::write(&input, format!("0\n{invalid}\n")).unwrap();
+        let outcome = execute_prepared(request(vec![sort_stage(
+            Some(path_spec(&input)),
+            false,
+            true,
+            false,
+        )]))
+        .unwrap();
+        assert_eq!(outcome.exit_code, 1, "value: {invalid}");
+        assert!(outcome.stdout.is_empty(), "value: {invalid}");
+    }
+    cleanup(&sandbox);
+}
+
+#[test]
+fn sort_record_materialization_limit_fails_without_sorted_output() {
+    use wingman_lib::runner_readonly::MAX_SORT_RECORDS;
+
+    let sandbox = sandbox();
+    let input = sandbox.join("many.txt");
+    fs::write(&input, "x\n".repeat(MAX_SORT_RECORDS + 1)).unwrap();
+
+    let outcome = execute_prepared(request(vec![sort_stage(
+        Some(path_spec(&input)),
+        false,
+        false,
+        false,
+    )]))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 1);
+    assert!(outcome.stdout.is_empty());
+    assert!(String::from_utf8(outcome.stderr)
+        .unwrap()
+        .contains("materialization resource limit exceeded"));
+    cleanup(&sandbox);
+}
+
+#[test]
+fn sort_materializes_complete_input_before_downstream_head() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    fs::write(&input, [b"z\na\n".as_slice(), &[0xff, 0xfe]].concat()).unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        sort_stage(Some(path_spec(&input)), false, false, false),
+        StagePlanV1::HeadLines {
+            count: 1,
+            path: None,
+        },
+    ]))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 1);
+    assert!(outcome.stdout.is_empty());
+    assert!(String::from_utf8(outcome.stderr)
+        .unwrap()
+        .contains("input is not valid bounded UTF-8 text"));
+    cleanup(&sandbox);
+}
+
+#[test]
+fn sort_and_uniq_compose_before_safe_redirection() {
+    let sandbox = sandbox();
+    let input = sandbox.join("input.txt");
+    let output = sandbox.join("output.txt");
+    fs::write(&input, b"beta\nalpha\nbeta\nalpha").unwrap();
+    let stages = vec![
+        StagePlanV1::ReadTextFiles {
+            paths: vec![path_spec(&input)],
+            number_lines: false,
+        },
+        sort_stage(None, false, false, false),
+        uniq_stage(None, true, false, false),
+    ];
+
+    let outcome = execute_prepared(request_with_redirect(
+        stages,
+        &output,
+        RedirectModeV1::Overwrite,
+    ))
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert!(outcome.stdout.is_empty());
+    assert_eq!(fs::read(&output).unwrap(), b"2 alpha\r\n2 beta");
+    cleanup(&sandbox);
+}
+
+fn sort_stage(
+    path: Option<wingman_lib::windows_path::ValidatedPathSpecV1>,
+    reverse: bool,
+    numeric: bool,
+    unique: bool,
+) -> StagePlanV1 {
+    StagePlanV1::SortLines {
+        path,
+        reverse,
+        numeric,
+        unique,
+    }
+}
+
 fn uniq_stage(
     path: Option<wingman_lib::windows_path::ValidatedPathSpecV1>,
     count: bool,

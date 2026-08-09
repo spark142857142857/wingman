@@ -262,6 +262,34 @@ fn powershell_oob_readiness_reaches_the_real_runner_and_next_editor_cycle() {
     );
     assert_eq!(fs::read(&uniq_output).unwrap(), b"2 same\r\n1 other\r\n");
 
+    let sort_input = sandbox.join("sort-input.txt");
+    let sort_output = sandbox.join("sort-output.txt");
+    fs::write(&sort_input, b"10\n2\n1\n").unwrap();
+    let line = format!(
+        "sort -n \"{}\" > \"{}\"\r",
+        sort_input.display(),
+        sort_output.display()
+    );
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        &line,
+        familiar_enabled,
+    )
+    .expect("execute prepared numeric sort");
+    assert!(matches!(
+        outcome,
+        TerminalExecutionOutcomeV1::Prepared { .. }
+    ));
+    let ninth = receive_readiness(&readiness, 9);
+    assert!(
+        session.apply_editor_readiness(&ninth),
+        "ninth readiness frame was not accepted"
+    );
+    assert_eq!(fs::read(&sort_output).unwrap(), b"1\r\n2\r\n10\r\n");
+
     let _ = child.kill();
     drop(writer);
     requests.stop().expect("stop request broker");

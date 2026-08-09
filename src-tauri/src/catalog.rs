@@ -36,6 +36,8 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
             stages.push(build_grep(command, index > 0)?);
         } else if command.name.eq_ignore_ascii_case("uniq") {
             stages.push(build_uniq(command, index > 0)?);
+        } else if command.name.eq_ignore_ascii_case("sort") {
+            stages.push(build_sort(command, index > 0)?);
         } else {
             return Err(CatalogErrorV1::UnsupportedCommand);
         }
@@ -61,6 +63,65 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
         _ => CatalogErrorV1::InvalidSourceShape,
     })?;
     Ok(plan)
+}
+
+fn build_sort(
+    command: &ParsedCommandV1,
+    has_pipeline_input: bool,
+) -> Result<StagePlanV1, CatalogErrorV1> {
+    let mut reverse = false;
+    let mut numeric = false;
+    let mut unique = false;
+    let mut parse_options = true;
+    let mut paths = Vec::new();
+    for argument in &command.arguments {
+        if parse_options && argument == "--" {
+            parse_options = false;
+        } else if parse_options {
+            if let Some(long) = argument.strip_prefix("--") {
+                match long {
+                    "reverse" => reverse = true,
+                    "numeric-sort" => numeric = true,
+                    "unique" => unique = true,
+                    _ => return Err(CatalogErrorV1::UnsupportedOption),
+                }
+            } else if let Some(shorts) = argument.strip_prefix('-') {
+                if shorts.is_empty() {
+                    paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+                    continue;
+                }
+                for short in shorts.chars() {
+                    match short {
+                        'r' => reverse = true,
+                        'n' => numeric = true,
+                        'u' => unique = true,
+                        _ => return Err(CatalogErrorV1::UnsupportedOption),
+                    }
+                }
+            } else {
+                paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+            }
+        } else {
+            paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+        }
+    }
+    let path = if has_pipeline_input {
+        if !paths.is_empty() {
+            return Err(CatalogErrorV1::InvalidSourceShape);
+        }
+        None
+    } else {
+        if paths.len() != 1 {
+            return Err(CatalogErrorV1::InvalidSourceShape);
+        }
+        paths.pop()
+    };
+    Ok(StagePlanV1::SortLines {
+        path,
+        reverse,
+        numeric,
+        unique,
+    })
 }
 
 fn build_uniq(

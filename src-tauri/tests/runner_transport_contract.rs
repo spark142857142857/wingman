@@ -184,4 +184,21 @@ fn runner_revalidates_serialized_path_specs_and_pipeline_shapes() {
             RunnerRequestValidationErrorV1::InvalidStageShape
         ))
     );
+
+    let invalid_sort_source = br#"{
+        "protocol":"wingman.run",
+        "version":1,
+        "kind":{"type":"execute","plan":{
+            "stages":[{"SortLines":{
+                "path":null,"reverse":false,"numeric":true,"unique":false
+            }}],
+            "redirect":null
+        }}
+    }"#;
+    assert_eq!(
+        decode_prepared_request(invalid_sort_source),
+        Err(RunnerRequestDecodeErrorV1::InvalidRequest(
+            RunnerRequestValidationErrorV1::InvalidStageShape
+        ))
+    );
 }

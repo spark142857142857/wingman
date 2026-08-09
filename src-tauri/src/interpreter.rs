@@ -95,6 +95,12 @@ pub enum StagePlanV1 {
         fixed_strings: bool,
         recursive: bool,
     },
+    SortLines {
+        path: Option<ValidatedPathSpecV1>,
+        reverse: bool,
+        numeric: bool,
+        unique: bool,
+    },
     UniqueLines {
         path: Option<ValidatedPathSpecV1>,
         count: bool,
@@ -278,6 +284,7 @@ pub fn validate_execution_plan(
     let mut saw_tail = false;
     let mut saw_search = false;
     let mut saw_recursive_search = false;
+    let mut saw_sort = false;
     let mut saw_unique = false;
     let mut saw_selection_boundary = false;
     for (index, stage) in plan.stages.iter().enumerate() {
@@ -351,6 +358,7 @@ pub fn validate_execution_plan(
                 ..
             } => {
                 if saw_search
+                    || saw_sort
                     || saw_unique
                     || saw_selection_boundary
                     || pattern.len() > MAX_GREP_PATTERN_BYTES
@@ -376,6 +384,27 @@ pub fn validate_execution_plan(
                     0 => return Err(RunnerRequestValidationErrorV1::InvalidStageShape),
                     _ if paths.is_empty() && !recursive => {}
                     _ => return Err(RunnerRequestValidationErrorV1::InvalidStageShape),
+                }
+            }
+            StagePlanV1::SortLines { path, .. } => {
+                if saw_sort || saw_unique || saw_selection_boundary || saw_recursive_search {
+                    return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+                }
+                saw_sort = true;
+                match (index, path) {
+                    (0, Some(path)) => {
+                        path_count = path_count
+                            .checked_add(1)
+                            .ok_or(RunnerRequestValidationErrorV1::InvalidPathCount)?;
+                        if path_count > MAX_PATH_OPERANDS {
+                            return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
+                        }
+                        validate_serialized_path(path)?;
+                    }
+                    (0, None) | (_, Some(_)) => {
+                        return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+                    }
+                    (_, None) => {}
                 }
             }
             StagePlanV1::UniqueLines {
@@ -646,6 +675,8 @@ fn claimed_readonly_command(raw_line: &str) -> Option<&'static str> {
         Some("grep")
     } else if candidate.eq_ignore_ascii_case("uniq") {
         Some("uniq")
+    } else if candidate.eq_ignore_ascii_case("sort") {
+        Some("sort")
     } else {
         None
     }

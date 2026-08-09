@@ -12,11 +12,14 @@ use crate::text_stream::{
     Utf8RecordReaderV1, MAX_RECORD_BYTES,
 };
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
-use std::collections::VecDeque;
+use std::cmp::Ordering;
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, Write};
 
 pub const MAX_TAIL_BUFFER_RECORDS: usize = 65_536;
 pub const MAX_TAIL_BUFFER_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_SORT_RECORDS: usize = 262_144;
+pub const MAX_SORT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadonlyExecutionErrorV1 {
@@ -34,6 +37,7 @@ struct ReadonlySourceV1<'a> {
     grep: Option<GrepFilterV1>,
     grep_is_final: bool,
     grep_direct: bool,
+    sort: Option<SortFilterV1>,
     uniq: Option<UniqFilterV1>,
 }
 
@@ -41,6 +45,20 @@ struct GrepFilterV1 {
     pattern: GrepPatternV1,
     line_numbers: bool,
     invert_match: bool,
+}
+
+#[derive(Clone, Copy)]
+struct SortFilterV1 {
+    reverse: bool,
+    numeric: bool,
+    unique: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExactDecimalV1 {
+    negative: bool,
+    digits: Vec<u8>,
+    scale: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -297,6 +315,7 @@ fn readonly_source(
         mut record_limit,
         mut tail_limit,
         mut count_lines,
+        mut sort,
         mut uniq,
     ) = match first {
         StagePlanV1::ReadTextFiles {
@@ -310,17 +329,36 @@ fn readonly_source(
             None,
             false,
             None,
+            None,
         ),
         StagePlanV1::HeadLines {
             count,
             path: Some(path),
-        } => ("head", vec![path], false, Some(*count), None, false, None),
+        } => (
+            "head",
+            vec![path],
+            false,
+            Some(*count),
+            None,
+            false,
+            None,
+            None,
+        ),
         StagePlanV1::TailLines {
             count,
             path: Some(path),
-        } => ("tail", vec![path], false, None, Some(*count), false, None),
+        } => (
+            "tail",
+            vec![path],
+            false,
+            None,
+            Some(*count),
+            false,
+            None,
+            None,
+        ),
         StagePlanV1::CountLines { path: Some(path) } => {
-            ("wc", vec![path], false, None, None, true, None)
+            ("wc", vec![path], false, None, None, true, None, None)
         }
         StagePlanV1::SearchText {
             paths, recursive, ..
@@ -331,6 +369,7 @@ fn readonly_source(
             None,
             None,
             false,
+            None,
             None,
         ),
         StagePlanV1::UniqueLines {
@@ -344,7 +383,38 @@ fn readonly_source(
                 repeated_only: *repeated_only,
                 unique_only: *unique_only,
             };
-            ("uniq", vec![path], false, None, None, false, Some(filter))
+            (
+                "uniq",
+                vec![path],
+                false,
+                None,
+                None,
+                false,
+                None,
+                Some(filter),
+            )
+        }
+        StagePlanV1::SortLines {
+            path: Some(path),
+            reverse,
+            numeric,
+            unique,
+        } => {
+            let filter = SortFilterV1 {
+                reverse: *reverse,
+                numeric: *numeric,
+                unique: *unique,
+            };
+            (
+                "sort",
+                vec![path],
+                false,
+                None,
+                None,
+                false,
+                Some(filter),
+                None,
+            )
         }
         _ => return Err(ReadonlyExecutionErrorV1::UnsupportedPlan),
     };
@@ -362,6 +432,23 @@ fn readonly_source(
             {
                 grep = grep_filter(stage)?;
                 grep_stage_index = Some(index);
+            }
+            StagePlanV1::SortLines {
+                path: None,
+                reverse,
+                numeric,
+                unique,
+            } if sort.is_none()
+                && uniq.is_none()
+                && record_limit.is_none()
+                && tail_limit.is_none()
+                && !count_lines =>
+            {
+                sort = Some(SortFilterV1 {
+                    reverse: *reverse,
+                    numeric: *numeric,
+                    unique: *unique,
+                });
             }
             StagePlanV1::UniqueLines {
                 path: None,
@@ -407,6 +494,7 @@ fn readonly_source(
         grep,
         grep_is_final: grep_stage_index.is_some_and(|index| index + 1 == plan.stages.len()),
         grep_direct,
+        sort,
         uniq,
     })
 }
@@ -461,6 +549,8 @@ fn stream_inputs<W: Write>(
     let mut grep_line_number = 1u64;
     let mut grep_matched = false;
     let mut grep_pending_output: Option<RecordFrameV1> = None;
+    let mut sort_records = Vec::new();
+    let mut sort_bytes = 0usize;
     let mut uniq_pending: Option<UniqGroupV1> = None;
 
     if source.record_limit == Some(0) || source.tail_limit == Some(0) {
@@ -567,9 +657,11 @@ fn stream_inputs<W: Write>(
                 };
                 if let Some(mut previous) = grep_pending_output.take() {
                     previous.terminated = true;
-                    match process_after_unique(
+                    match process_after_sort(
                         previous,
                         source,
+                        &mut sort_records,
+                        &mut sort_bytes,
                         &mut uniq_pending,
                         &mut tail_records,
                         &mut tail_bytes,
@@ -586,11 +678,20 @@ fn stream_inputs<W: Write>(
                                 .push("wingman tail: buffer resource limit exceeded".to_string());
                             break 'inputs;
                         }
+                        SelectedRecordResultV1::SortResourceFailure => {
+                            had_operational_failure = true;
+                            diagnostics.push(
+                                "wingman sort: materialization resource limit exceeded".to_string(),
+                            );
+                            break 'inputs;
+                        }
                     }
                 }
-                match process_after_unique(
+                match process_after_sort(
                     candidate,
                     source,
+                    &mut sort_records,
+                    &mut sort_bytes,
                     &mut uniq_pending,
                     &mut tail_records,
                     &mut tail_bytes,
@@ -605,6 +706,13 @@ fn stream_inputs<W: Write>(
                         had_operational_failure = true;
                         diagnostics
                             .push("wingman tail: buffer resource limit exceeded".to_string());
+                        break 'inputs;
+                    }
+                    SelectedRecordResultV1::SortResourceFailure => {
+                        had_operational_failure = true;
+                        diagnostics.push(
+                            "wingman sort: materialization resource limit exceeded".to_string(),
+                        );
                         break 'inputs;
                     }
                 }
@@ -634,9 +742,11 @@ fn stream_inputs<W: Write>(
                 )? {
                     if let Some(mut previous) = grep_pending_output.replace(selected) {
                         previous.terminated = true;
-                        match process_after_unique(
+                        match process_after_sort(
                             previous,
                             source,
+                            &mut sort_records,
+                            &mut sort_bytes,
                             &mut uniq_pending,
                             &mut tail_records,
                             &mut tail_bytes,
@@ -655,6 +765,15 @@ fn stream_inputs<W: Write>(
                                 had_operational_failure = true;
                                 diagnostics.push(
                                     "wingman tail: buffer resource limit exceeded".to_string(),
+                                );
+                                break 'inputs;
+                            }
+                            SelectedRecordResultV1::SortResourceFailure => {
+                                grep_pending_output = None;
+                                had_operational_failure = true;
+                                diagnostics.push(
+                                    "wingman sort: materialization resource limit exceeded"
+                                        .to_string(),
                                 );
                                 break 'inputs;
                             }
@@ -697,9 +816,11 @@ fn stream_inputs<W: Write>(
     }
 
     if let Some(pending) = grep_pending_output {
-        match process_after_unique(
+        match process_after_sort(
             pending,
             source,
+            &mut sort_records,
+            &mut sort_bytes,
             &mut uniq_pending,
             &mut tail_records,
             &mut tail_bytes,
@@ -712,6 +833,48 @@ fn stream_inputs<W: Write>(
                 tail_resource_failure = true;
                 had_operational_failure = true;
                 diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+            }
+            SelectedRecordResultV1::SortResourceFailure => {
+                had_operational_failure = true;
+                diagnostics
+                    .push("wingman sort: materialization resource limit exceeded".to_string());
+            }
+        }
+    }
+
+    if source.sort.is_some() {
+        if had_operational_failure {
+            sort_records.clear();
+        } else {
+            match emit_sorted_records(
+                sort_records,
+                source,
+                &mut uniq_pending,
+                &mut tail_records,
+                &mut tail_bytes,
+                &mut terminated_count,
+                &mut emitted,
+                sink,
+                cancellation,
+            )? {
+                SortOutputResultV1::Complete => {}
+                SortOutputResultV1::Cancelled => {
+                    return Ok(StreamResultV1 {
+                        had_operational_failure,
+                        diagnostics,
+                        cancelled: true,
+                        grep_matched,
+                    });
+                }
+                SortOutputResultV1::InvalidNumeric => {
+                    had_operational_failure = true;
+                    diagnostics.push("wingman sort: invalid numeric data".to_string());
+                }
+                SortOutputResultV1::TailResourceFailure => {
+                    tail_resource_failure = true;
+                    had_operational_failure = true;
+                    diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+                }
             }
         }
     }
@@ -732,6 +895,9 @@ fn stream_inputs<W: Write>(
                 tail_resource_failure = true;
                 had_operational_failure = true;
                 diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+            }
+            SelectedRecordResultV1::SortResourceFailure => {
+                return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
             }
         }
     }
@@ -859,6 +1025,254 @@ enum SelectedRecordResultV1 {
     Continue,
     Stop,
     ResourceFailure,
+    SortResourceFailure,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SortOutputResultV1 {
+    Complete,
+    Cancelled,
+    InvalidNumeric,
+    TailResourceFailure,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_after_sort<W: Write>(
+    frame: RecordFrameV1,
+    source: &ReadonlySourceV1<'_>,
+    records: &mut Vec<RecordFrameV1>,
+    retained_bytes: &mut usize,
+    uniq_pending: &mut Option<UniqGroupV1>,
+    tail_records: &mut VecDeque<RecordFrameV1>,
+    tail_bytes: &mut usize,
+    terminated_count: &mut u64,
+    emitted: &mut usize,
+    sink: &mut RecordStreamWriterV1<W>,
+) -> Result<SelectedRecordResultV1, ReadonlyExecutionErrorV1> {
+    if source.sort.is_none() {
+        return process_after_unique(
+            frame,
+            source,
+            uniq_pending,
+            tail_records,
+            tail_bytes,
+            terminated_count,
+            emitted,
+            sink,
+        );
+    }
+    let next_bytes = retained_bytes.saturating_add(frame.text.len());
+    if records.len() >= MAX_SORT_RECORDS || next_bytes > MAX_SORT_BYTES {
+        records.clear();
+        *retained_bytes = 0;
+        return Ok(SelectedRecordResultV1::SortResourceFailure);
+    }
+    records.push(frame);
+    *retained_bytes = next_bytes;
+    Ok(SelectedRecordResultV1::Continue)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_sorted_records<W: Write>(
+    records: Vec<RecordFrameV1>,
+    source: &ReadonlySourceV1<'_>,
+    uniq_pending: &mut Option<UniqGroupV1>,
+    tail_records: &mut VecDeque<RecordFrameV1>,
+    tail_bytes: &mut usize,
+    terminated_count: &mut u64,
+    emitted: &mut usize,
+    sink: &mut RecordStreamWriterV1<W>,
+    cancellation: &RunnerCancellationV1,
+) -> Result<SortOutputResultV1, ReadonlyExecutionErrorV1> {
+    let Some(filter) = source.sort else {
+        return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
+    };
+    if records.is_empty() {
+        return Ok(SortOutputResultV1::Complete);
+    }
+    let final_terminated = records.last().is_some_and(|frame| frame.terminated);
+
+    let mut records = if filter.numeric {
+        let mut keyed = Vec::with_capacity(records.len());
+        for frame in records {
+            if cancellation.is_cancelled() {
+                return Ok(SortOutputResultV1::Cancelled);
+            }
+            let Some(key) = parse_exact_decimal(&frame.text) else {
+                return Ok(SortOutputResultV1::InvalidNumeric);
+            };
+            keyed.push((frame, key));
+        }
+        if filter.unique {
+            keyed = retain_first_identical(keyed, |entry| entry.0.text.as_str());
+        }
+        keyed.sort_by(|left, right| {
+            let ordering = compare_exact_decimal(&left.1, &right.1);
+            if filter.reverse {
+                ordering.reverse()
+            } else {
+                ordering
+            }
+        });
+        keyed.into_iter().map(|(frame, _)| frame).collect()
+    } else {
+        let mut records = records;
+        if filter.unique {
+            records = retain_first_identical(records, |frame| frame.text.as_str());
+        }
+        records.sort_by(|left, right| {
+            let ordering = left.text.cmp(&right.text);
+            if filter.reverse {
+                ordering.reverse()
+            } else {
+                ordering
+            }
+        });
+        records
+    };
+
+    let last_index = records.len().saturating_sub(1);
+    for (index, mut frame) in records.drain(..).enumerate() {
+        if cancellation.is_cancelled() {
+            return Ok(SortOutputResultV1::Cancelled);
+        }
+        frame.terminated = index != last_index || final_terminated;
+        match process_after_unique(
+            frame,
+            source,
+            uniq_pending,
+            tail_records,
+            tail_bytes,
+            terminated_count,
+            emitted,
+            sink,
+        )? {
+            SelectedRecordResultV1::Continue => {}
+            SelectedRecordResultV1::Stop => return Ok(SortOutputResultV1::Complete),
+            SelectedRecordResultV1::ResourceFailure => {
+                return Ok(SortOutputResultV1::TailResourceFailure);
+            }
+            SelectedRecordResultV1::SortResourceFailure => {
+                return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
+            }
+        }
+    }
+    Ok(SortOutputResultV1::Complete)
+}
+
+fn retain_first_identical<T>(records: Vec<T>, text: impl Fn(&T) -> &str) -> Vec<T> {
+    let mut seen = HashSet::with_capacity(records.len());
+    let retained = records
+        .iter()
+        .map(|record| seen.insert(text(record)))
+        .collect::<Vec<_>>();
+    drop(seen);
+    records
+        .into_iter()
+        .zip(retained)
+        .filter_map(|(record, keep)| keep.then_some(record))
+        .collect()
+}
+
+fn parse_exact_decimal(text: &str) -> Option<ExactDecimalV1> {
+    let trimmed = text.trim_matches([' ', '\t']);
+    if trimmed.is_empty() {
+        return Some(ExactDecimalV1 {
+            negative: false,
+            digits: vec![b'0'],
+            scale: 0,
+        });
+    }
+    let bytes = trimmed.as_bytes();
+    let (negative, payload) = match bytes.first()? {
+        b'+' => (false, &bytes[1..]),
+        b'-' => (true, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    if payload.is_empty() {
+        return None;
+    }
+    let mut seen_dot = false;
+    let mut digit_count = 0usize;
+    let mut fraction_count = 0usize;
+    let mut digits = Vec::with_capacity(payload.len());
+    for &byte in payload {
+        match byte {
+            b'.' if !seen_dot => seen_dot = true,
+            b'0'..=b'9' => {
+                digit_count = digit_count.saturating_add(1);
+                if seen_dot {
+                    fraction_count = fraction_count.saturating_add(1);
+                }
+                digits.push(byte);
+            }
+            _ => return None,
+        }
+    }
+    if digit_count == 0 {
+        return None;
+    }
+    let first_nonzero = digits.iter().position(|digit| *digit != b'0');
+    let Some(first_nonzero) = first_nonzero else {
+        return Some(ExactDecimalV1 {
+            negative: false,
+            digits: vec![b'0'],
+            scale: 0,
+        });
+    };
+    digits.drain(..first_nonzero);
+    while fraction_count > 0 && digits.last() == Some(&b'0') {
+        digits.pop();
+        fraction_count -= 1;
+    }
+    Some(ExactDecimalV1 {
+        negative,
+        digits,
+        scale: fraction_count,
+    })
+}
+
+fn compare_exact_decimal(left: &ExactDecimalV1, right: &ExactDecimalV1) -> Ordering {
+    if left.negative != right.negative {
+        return if left.negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
+    }
+    let magnitude = compare_decimal_magnitude(left, right);
+    if left.negative {
+        magnitude.reverse()
+    } else {
+        magnitude
+    }
+}
+
+fn compare_decimal_magnitude(left: &ExactDecimalV1, right: &ExactDecimalV1) -> Ordering {
+    let left_zero = left.digits.as_slice() == b"0";
+    let right_zero = right.digits.as_slice() == b"0";
+    match (left_zero, right_zero) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        (false, false) => {}
+    }
+    let left_integer_digits = left.digits.len() as isize - left.scale as isize;
+    let right_integer_digits = right.digits.len() as isize - right.scale as isize;
+    match left_integer_digits.cmp(&right_integer_digits) {
+        Ordering::Equal => {}
+        ordering => return ordering,
+    }
+    let maximum_digits = left.digits.len().max(right.digits.len());
+    for index in 0..maximum_digits {
+        let left_digit = left.digits.get(index).copied().unwrap_or(b'0');
+        let right_digit = right.digits.get(index).copied().unwrap_or(b'0');
+        match left_digit.cmp(&right_digit) {
+            Ordering::Equal => {}
+            ordering => return ordering,
+        }
+    }
+    Ordering::Equal
 }
 
 #[allow(clippy::too_many_arguments)]

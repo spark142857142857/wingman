@@ -288,3 +288,50 @@ fn uniq_rejects_conflicts_and_invalid_source_shapes() {
         assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
     }
 }
+
+#[test]
+fn sort_builds_typed_file_and_pipeline_stages() {
+    let parsed = parse_p0_tokens(&lex_p0_line("sort -rnu numbers.txt").unwrap()).unwrap();
+    let plan = build_readonly_plan(&parsed).expect("build file sort plan");
+    assert_eq!(
+        plan.stages,
+        vec![StagePlanV1::SortLines {
+            path: Some(validate_path_value("numbers.txt").unwrap()),
+            reverse: true,
+            numeric: true,
+            unique: true,
+        }]
+    );
+
+    let parsed = parse_p0_tokens(
+        &lex_p0_line("cat input.txt | grep value | sort --reverse | uniq | head -n 2").unwrap(),
+    )
+    .unwrap();
+    let plan = build_readonly_plan(&parsed).expect("build pipeline sort plan");
+    assert!(matches!(
+        plan.stages[2],
+        StagePlanV1::SortLines {
+            path: None,
+            reverse: true,
+            numeric: false,
+            unique: false,
+        }
+    ));
+}
+
+#[test]
+fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
+    for line in [
+        "sort",
+        "sort one.txt two.txt",
+        "sort -f input.txt",
+        "cat input.txt | sort other.txt",
+        "cat input.txt | head | sort",
+        "sort input.txt | grep value",
+        "sort input.txt | sort",
+        "grep -r value src | sort",
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+    }
+}
