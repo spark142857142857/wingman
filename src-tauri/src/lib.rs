@@ -16,6 +16,7 @@ use transport::{EditorReadinessBrokerV1, SessionBrokerV1};
 
 pub mod app_launch;
 pub mod catalog;
+pub mod find_pattern;
 pub mod grep_pattern;
 pub mod interpreter;
 pub mod lexer;
