@@ -205,6 +205,68 @@ fn recursive_grep_can_feed_finite_tail_and_wc() {
     cleanup(&sandbox);
 }
 
+#[test]
+fn recursive_grep_uses_the_common_repeated_sort_and_uniq_stages() {
+    let sandbox = sandbox();
+    let root = sandbox.join("root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("input.txt"),
+        b"TODO zebra\nTODO repeat\nTODO repeat\nTODO alpha\nignore\n",
+    )
+    .unwrap();
+
+    let sorted = execute_prepared(request_with_downstream(
+        &root,
+        "TODO",
+        vec![
+            StagePlanV1::SearchText {
+                pattern: "TODO".to_string(),
+                paths: Vec::new(),
+                ignore_case: false,
+                line_numbers: false,
+                invert_match: false,
+                fixed_strings: false,
+                recursive: false,
+            },
+            StagePlanV1::SortLines {
+                path: None,
+                reverse: false,
+                numeric: false,
+                unique: false,
+            },
+        ],
+    ))
+    .unwrap();
+    let display = root.display().to_string().replace('/', "\\");
+    assert_eq!(sorted.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(sorted.stdout).unwrap(),
+        format!(
+            "{display}\\input.txt:TODO alpha\r\n{display}\\input.txt:TODO repeat\r\n{display}\\input.txt:TODO repeat\r\n{display}\\input.txt:TODO zebra\r\n"
+        )
+    );
+
+    let unique = execute_prepared(request_with_downstream(
+        &root,
+        "repeat",
+        vec![StagePlanV1::UniqueLines {
+            path: None,
+            count: true,
+            repeated_only: false,
+            unique_only: false,
+        }],
+    ))
+    .unwrap();
+    assert_eq!(unique.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(unique.stdout).unwrap(),
+        format!("2 {display}\\input.txt:TODO repeat\r\n")
+    );
+    assert!(unique.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
 fn request(root: &Path, pattern: &str, line_numbers: bool) -> PreparedRequestV1 {
     PreparedRequestV1 {
         protocol: "wingman.run".to_string(),

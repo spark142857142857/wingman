@@ -139,15 +139,15 @@ payload는 decode하지 않는다. Follow mode는 아직 공개하지 않으며,
 
 `uniq`는 bounded 인접 그룹 하나만 메모리에 유지하고 전체 줄을 대소문자 구분하여 비교한다.
 `-c`·`-d`·`-u`를 지원하며 마지막 그룹 구성원의 termination 상태를 보존하고, downstream
-`head`·유한 `tail`·`wc -l`·안전한 redirection과 조합된다. 재귀 runner가 같은 stage를
-지원하기 전까지 `grep -r | uniq`는 거부한다.
+`head`·유한 `tail`·`wc -l`·안전한 redirection과 조합된다. 재귀 `grep -r`도 이제 같은
+ordered stage로 출력을 보낸다.
 
 `sort`는 출력 전에 전체 logical input을 검증하고 materialize한다. 최대 262,144개
 record와 64 MiB의 record text로 제한하며, 기본 Unicode ordinal 순서와 floating point가
 아닌 정확한 decimal sign·coefficient·scale 비교를 구현한다. 숫자 tie는 `-r`에서도
 stable하고 `-u`는 text가 완전히 같은 record만 제거한다. Decode·numeric data·상한
-실패는 sorted stdout을 내지 않는다. 재귀 runner가 같은 stage를 지원하기 전까지
-`grep -r | sort`는 거부한다.
+실패는 sorted stdout을 내지 않는다. 재귀 `grep -r`도 반복 downstream filter와
+materializing stage를 포함해 같은 ordered stage로 출력을 보낸다.
 
 `head`는 필요한 prefix를 받은 직후 upstream reader를 멈춘다. OS read buffer에 들어왔더라도
 record reader가 요청하지 않은 invalid UTF-8 suffix는 decode하지 않으므로 명령을 실패시키지

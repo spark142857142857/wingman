@@ -439,7 +439,7 @@ pub fn validate_execution_plan(
                 recursive,
                 ..
             } => {
-                if saw_recursive_search
+                if (*recursive && (index != 0 || saw_recursive_search))
                     || pattern.len() > MAX_GREP_PATTERN_BYTES
                     || pattern.contains(['\0', '\r', '\n'])
                     || GrepPatternV1::compile(pattern, *fixed_strings, *ignore_case).is_err()
@@ -464,33 +464,28 @@ pub fn validate_execution_plan(
                     _ => return Err(RunnerRequestValidationErrorV1::InvalidStageShape),
                 }
             }
-            StagePlanV1::SortLines { path, .. } => {
-                if saw_recursive_search {
+            StagePlanV1::SortLines { path, .. } => match (index, path) {
+                (0, Some(path)) => {
+                    path_count = path_count
+                        .checked_add(1)
+                        .ok_or(RunnerRequestValidationErrorV1::InvalidPathCount)?;
+                    if path_count > MAX_PATH_OPERANDS {
+                        return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
+                    }
+                    validate_serialized_path(path)?;
+                }
+                (0, None) | (_, Some(_)) => {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
-                match (index, path) {
-                    (0, Some(path)) => {
-                        path_count = path_count
-                            .checked_add(1)
-                            .ok_or(RunnerRequestValidationErrorV1::InvalidPathCount)?;
-                        if path_count > MAX_PATH_OPERANDS {
-                            return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
-                        }
-                        validate_serialized_path(path)?;
-                    }
-                    (0, None) | (_, Some(_)) => {
-                        return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
-                    }
-                    (_, None) => {}
-                }
-            }
+                (_, None) => {}
+            },
             StagePlanV1::UniqueLines {
                 path,
                 repeated_only,
                 unique_only,
                 ..
             } => {
-                if saw_recursive_search || (*repeated_only && *unique_only) {
+                if *repeated_only && *unique_only {
                     return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
                 }
                 match (index, path) {

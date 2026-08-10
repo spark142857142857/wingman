@@ -348,7 +348,6 @@ fn uniq_rejects_conflicts_and_invalid_source_shapes() {
         "uniq one.txt two.txt",
         "uniq -z input.txt",
         "cat input.txt | uniq other.txt",
-        "grep -r value src | uniq",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
         assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
@@ -504,9 +503,35 @@ fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
         "sort one.txt two.txt",
         "sort -f input.txt",
         "cat input.txt | sort other.txt",
-        "grep -r value src | sort",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
         assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
     }
+}
+
+#[test]
+fn recursive_grep_can_feed_the_common_ordered_stages() {
+    let parsed = parse_p0_tokens(
+        &lex_p0_line("grep -r value src | grep keep | sort -r | uniq -c | head -n 2").unwrap(),
+    )
+    .unwrap();
+    let plan = build_readonly_plan(&parsed).expect("build recursive ordered pipeline");
+    assert_eq!(plan.stages.len(), 5);
+    assert!(matches!(
+        plan.stages[0],
+        StagePlanV1::SearchText {
+            recursive: true,
+            ..
+        }
+    ));
+    assert!(matches!(
+        plan.stages[1],
+        StagePlanV1::SearchText {
+            recursive: false,
+            ..
+        }
+    ));
+    assert!(matches!(plan.stages[2], StagePlanV1::SortLines { .. }));
+    assert!(matches!(plan.stages[3], StagePlanV1::UniqueLines { .. }));
+    assert!(matches!(plan.stages[4], StagePlanV1::HeadLines { .. }));
 }

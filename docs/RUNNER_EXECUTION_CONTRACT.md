@@ -157,16 +157,15 @@ unpublished and `-f`/`--follow` is rejected by the claimed finite-tail slice.
 `uniq` keeps one bounded adjacent group in memory and compares complete lines
 case-sensitively. It supports `-c`, `-d`, and `-u`, preserves the final member's
 termination state, and composes with downstream `head`, finite `tail`, `wc -l`,
-and safe redirection. Recursive `grep -r | uniq` remains rejected until the
-recursive runner supports the same stage.
+and safe redirection. Recursive `grep -r` now feeds this same ordered stage.
 
 `sort` validates and materializes its complete logical input before emitting.
 It is capped at 262,144 records and 64 MiB of record text, uses Unicode ordinal
 ordering by default, and implements `-n` with exact decimal sign/coefficient/
 scale comparison rather than floating point. Numeric ties remain stable under
 `-r`; `-u` removes only text-identical records. Decode, numeric-data, and bound
-failures emit no sorted stdout. Recursive `grep -r | sort` remains rejected
-until the recursive runner supports the same stage.
+failures emit no sorted stdout. Recursive `grep -r` now feeds this same ordered
+stage, including repeated downstream filters and materializing stages.
 
 `head` stops the upstream reader after the required prefix. An invalid UTF-8
 suffix already buffered by the OS but not requested by the record reader is not

@@ -112,7 +112,7 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
     ) -> Result<Self, OrderedPipelineFaultV1> {
         let direct_search = matches!(
             plan.stages.first(),
-            Some(StagePlanV1::SearchText { paths, .. }) if !paths.is_empty()
+            Some(StagePlanV1::SearchText { paths, recursive: false, .. }) if !paths.is_empty()
         );
         let mut stages = Vec::new();
         for (index, stage) in plan.stages.iter().enumerate() {
@@ -121,6 +121,10 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
                 StagePlanV1::ReadTextFiles { .. }
                     | StagePlanV1::ListEntries { .. }
                     | StagePlanV1::FindPaths { .. }
+                    | StagePlanV1::SearchText {
+                        recursive: true,
+                        ..
+                    } if index == 0
             ) {
                 if index != 0 {
                     return Err(OrderedPipelineFaultV1::Unsupported);
