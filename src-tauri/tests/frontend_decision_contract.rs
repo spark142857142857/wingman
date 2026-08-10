@@ -471,7 +471,6 @@ fn claimed_read_only_syntax_and_catalog_failures_become_prepared_rejections() {
         ),
         (25, "cat -z input.txt", "wingman cat: unsupported option"),
         (27, "wc input.txt", "wingman wc: unsupported option"),
-        (31, "tail -f input.txt", "wingman tail: unsupported option"),
         (36, "uniq -du input.txt", "wingman uniq: unsupported option"),
         (39, "sort -f input.txt", "wingman sort: unsupported option"),
     ] {
@@ -571,6 +570,41 @@ fn reliable_familiar_tail_is_stored_as_a_typed_finite_stage() {
                     stages: vec![StagePlanV1::TailLines {
                         count: 2,
                         path: Some(validate_path_value("input.txt").unwrap()),
+                    }],
+                    redirect: None,
+                },
+            },
+        })
+    );
+}
+
+#[test]
+fn reliable_familiar_follow_is_stored_as_a_typed_file_source() {
+    let mut session = InterpreterSession::new(42, 31, ActiveShell::WindowsPowerShell);
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 42,
+            command_sequence: 31,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: "tail --follow -n 2 input.txt".to_string(),
+        })
+        .expect("classify follow tail");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared follow plan, got {other:?}"),
+    };
+    assert_eq!(
+        session.consume_prepared(&request_id),
+        Some(PreparedRequestV1 {
+            protocol: "wingman.run".to_string(),
+            version: 1,
+            kind: PreparedRequestKindV1::Execute {
+                plan: ExecutionPlanV1 {
+                    stages: vec![StagePlanV1::FollowFile {
+                        count: 2,
+                        path: validate_path_value("input.txt").unwrap(),
                     }],
                     redirect: None,
                 },

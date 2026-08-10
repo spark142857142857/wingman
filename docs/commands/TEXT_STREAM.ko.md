@@ -56,6 +56,8 @@ tail [-n N] [-f | --follow] FILE
   출력한 뒤 사용자가 `Ctrl+C`로 중지할 때까지 추가되는 줄을 출력합니다.
 - Follow mode에서는 현재 unterminated suffix를 append한 LF가 끝낼 때까지
   pending으로 둔다. `Ctrl+C`는 그 fragment를 flush하지 않는다.
+- 열린 파일이 이미 읽은 offset보다 작아진 것이 관찰되면 seek하거나 다시 열지
+  않고 실행 실패를 보고한다.
 - 파일 rotation 추적, `-F`, byte 단위 개수, 역순 출력, `+N` 문법은 범위
   밖입니다.
 

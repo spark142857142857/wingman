@@ -571,6 +571,113 @@ fn finite_tail_preserves_the_final_unterminated_record() {
 }
 
 #[test]
+fn follow_emits_the_last_complete_records_and_can_end_through_head() {
+    let sandbox = sandbox();
+    let input = sandbox.join("follow.txt");
+    fs::write(&input, b"one\ntwo\nthree\npending").unwrap();
+
+    let outcome = execute_prepared(request(vec![
+        StagePlanV1::FollowFile {
+            count: 2,
+            path: path_spec(&input),
+        },
+        StagePlanV1::HeadLines {
+            count: 2,
+            path: None,
+        },
+    ]))
+    .expect("finish follow through downstream head");
+
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(outcome.stdout, b"two\r\nthree\r\n");
+    assert!(outcome.stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn follow_keeps_an_unterminated_suffix_pending_until_append_and_cancels_cleanly() {
+    let sandbox = sandbox();
+    let input = sandbox.join("follow-pending.txt");
+    fs::write(&input, b"old\npart").unwrap();
+    let cancellation = RunnerCancellationV1::new();
+    let mut stdout = FollowAppendingWriter {
+        bytes: Vec::new(),
+        flushes: 0,
+        input: input.clone(),
+        cancellation: cancellation.clone(),
+    };
+    let mut stderr = Vec::new();
+
+    let exit_code = execute_prepared_to_with_cancellation(
+        request(vec![StagePlanV1::FollowFile {
+            count: 1,
+            path: path_spec(&input),
+        }]),
+        &mut stdout,
+        &mut stderr,
+        &cancellation,
+    )
+    .expect("cancel follow cleanly");
+
+    assert_eq!(exit_code, 130);
+    assert_eq!(stdout.bytes, b"old\r\npartial\r\n");
+    assert!(stderr.is_empty());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn follow_reports_observed_truncation_without_reopening_the_path() {
+    let sandbox = sandbox();
+    let input = sandbox.join("follow-truncated.txt");
+    fs::write(&input, b"visible\n").unwrap();
+    let mut stdout = FollowTruncatingWriter {
+        bytes: Vec::new(),
+        truncated: false,
+        input: input.clone(),
+    };
+    let mut stderr = Vec::new();
+
+    let exit_code = execute_prepared_to(
+        request(vec![StagePlanV1::FollowFile {
+            count: 1,
+            path: path_spec(&input),
+        }]),
+        &mut stdout,
+        &mut stderr,
+    )
+    .expect("return follow truncation outcome");
+
+    assert_eq!(exit_code, 1);
+    assert_eq!(stdout.bytes, b"visible\r\n");
+    assert!(String::from_utf8(stderr)
+        .unwrap()
+        .contains("input was truncated while following"));
+    cleanup(&sandbox);
+}
+
+#[test]
+fn follow_redirection_to_its_input_is_rejected_before_truncation() {
+    let sandbox = sandbox();
+    let input = sandbox.join("follow-alias.txt");
+    fs::write(&input, b"preserve\n").unwrap();
+
+    let outcome = execute_prepared(request_with_redirect(
+        vec![StagePlanV1::FollowFile {
+            count: 1,
+            path: path_spec(&input),
+        }],
+        &input,
+        RedirectModeV1::Overwrite,
+    ))
+    .expect("reject follow alias safely");
+
+    assert_eq!(outcome.exit_code, 2);
+    assert!(outcome.stdout.is_empty());
+    assert_eq!(fs::read(&input).unwrap(), b"preserve\n");
+    cleanup(&sandbox);
+}
+
+#[test]
 fn tail_zero_opens_but_does_not_decode_the_input() {
     let sandbox = sandbox();
     let input = sandbox.join("input.txt");
@@ -1559,6 +1666,56 @@ impl Write for CancellingWriter {
 
 struct CancellingFailureWriter {
     cancellation: RunnerCancellationV1,
+}
+
+struct FollowAppendingWriter {
+    bytes: Vec<u8>,
+    flushes: usize,
+    input: PathBuf,
+    cancellation: RunnerCancellationV1,
+}
+
+struct FollowTruncatingWriter {
+    bytes: Vec<u8>,
+    truncated: bool,
+    input: PathBuf,
+}
+
+impl Write for FollowTruncatingWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if !self.truncated {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&self.input)?
+                .set_len(0)?;
+            self.truncated = true;
+        }
+        Ok(())
+    }
+}
+
+impl Write for FollowAppendingWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flushes += 1;
+        if self.flushes == 1 {
+            let mut input = fs::OpenOptions::new().append(true).open(&self.input)?;
+            input.write_all(b"ial\nnext\n")?;
+            input.flush()?;
+        } else if self.flushes == 2 {
+            self.cancellation.cancel();
+        }
+        Ok(())
+    }
 }
 
 impl Write for CancellingFailureWriter {

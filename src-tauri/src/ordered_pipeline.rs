@@ -121,6 +121,7 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
                 StagePlanV1::ReadTextFiles { .. }
                     | StagePlanV1::ListEntries { .. }
                     | StagePlanV1::FindPaths { .. }
+                    | StagePlanV1::FollowFile { .. }
                     | StagePlanV1::SearchText {
                         recursive: true,
                         ..
@@ -203,6 +204,10 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
             Some(RuntimeStageV1::Search(search)) => Some(search.matched_any),
             _ => None,
         }
+    }
+
+    pub(crate) fn flush_output(&mut self) -> Result<(), OrderedPipelineFaultV1> {
+        self.sink.flush_terminated().map_err(map_sink_fault)
     }
 
     fn route_from(

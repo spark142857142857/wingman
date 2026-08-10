@@ -105,6 +105,10 @@ pub enum StagePlanV1 {
         count: usize,
         path: Option<ValidatedPathSpecV1>,
     },
+    FollowFile {
+        count: usize,
+        path: ValidatedPathSpecV1,
+    },
     SearchText {
         pattern: String,
         paths: Vec<ValidatedPathSpecV1>,
@@ -430,6 +434,18 @@ pub fn validate_execution_plan(
                     }
                     (_, None) => {}
                 }
+            }
+            StagePlanV1::FollowFile { count, path } => {
+                if index != 0 || *count > MAX_HEAD_LINE_COUNT {
+                    return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+                }
+                path_count = path_count
+                    .checked_add(1)
+                    .ok_or(RunnerRequestValidationErrorV1::InvalidPathCount)?;
+                if path_count > MAX_PATH_OPERANDS {
+                    return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
+                }
+                validate_serialized_path(path)?;
             }
             StagePlanV1::SearchText {
                 pattern,

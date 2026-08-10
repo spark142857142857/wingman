@@ -11,15 +11,19 @@ use crate::runner_io::{
 };
 use crate::text_stream::{
     RecordFrameV1, RecordStreamWriterV1, TextReadErrorV1, TextStreamWriteErrorV1,
-    Utf8RecordReaderV1, MAX_RECORD_BYTES,
+    Utf8RecordDecoderV1, Utf8RecordReaderV1, MAX_RECORD_BYTES,
 };
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
-use std::io::{self, Write};
+use std::collections::VecDeque;
+use std::io::{self, Read, Write};
+use std::thread;
+use std::time::Duration;
 
 pub use crate::sort_support::{MAX_SORT_BYTES, MAX_SORT_RECORDS};
 
 pub const MAX_TAIL_BUFFER_RECORDS: usize = 65_536;
 pub const MAX_TAIL_BUFFER_BYTES: usize = 16 * 1024 * 1024;
+const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadonlyExecutionErrorV1 {
@@ -33,6 +37,7 @@ struct ReadonlySourceV1<'a> {
     number_lines: bool,
     grep_is_final: bool,
     grep_direct: bool,
+    follow_count: Option<usize>,
 }
 
 pub fn execute_readonly_plan_to<W: Write, E: Write>(
@@ -199,7 +204,13 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
     let redirected = plan.redirect.is_some();
     let (inputs, output) = prepared.stream_parts_mut();
     let execution = match output {
+        Some(output) if source.follow_count.is_some() => {
+            execute_follow_to(&mut inputs[0], plan, &source, output, stderr, cancellation)
+        }
         Some(output) => execute_stream_to(inputs, plan, &source, output, stderr, cancellation),
+        None if source.follow_count.is_some() => {
+            execute_follow_to(&mut inputs[0], plan, &source, stdout, stderr, cancellation)
+        }
         None => execute_stream_to(inputs, plan, &source, stdout, stderr, cancellation),
     };
     if cancellation.is_cancelled() {
@@ -256,6 +267,222 @@ fn execute_stream_to<W: Write, E: Write>(
     )
 }
 
+fn execute_follow_to<W: Write, E: Write>(
+    input: &mut PreparedInputV1,
+    plan: &ExecutionPlanV1,
+    source: &ReadonlySourceV1<'_>,
+    writer: &mut W,
+    stderr: &mut E,
+    cancellation: &RunnerCancellationV1,
+) -> Result<u8, ReadonlyExecutionErrorV1> {
+    let count = source
+        .follow_count
+        .ok_or(ReadonlyExecutionErrorV1::UnsupportedPlan)?;
+    let mut sink = RecordStreamWriterV1::new(&mut *writer);
+    let mut pipeline = OrderedPipelineV1::new(plan, &mut sink, cancellation, &source.paths)
+        .map_err(map_ordered_setup_fault)?;
+    let mut decoder = Utf8RecordDecoderV1::new();
+    let mut initial: VecDeque<RecordFrameV1> = VecDeque::new();
+    let mut initial_bytes = 0usize;
+    let mut read_buffer = [0u8; 8192];
+    let mut observed_bytes = 0u64;
+    let mut stopped = pipeline.starts_stopped();
+    let mut operational_failure = false;
+    let mut diagnostics = Vec::new();
+    let mut stage_fault = None;
+
+    while !stopped && !operational_failure && !cancellation.is_cancelled() {
+        let length = match input.file_mut().read(&mut read_buffer) {
+            Ok(0) => break,
+            Ok(length) => length,
+            Err(_) => {
+                operational_failure = true;
+                diagnostics.push(operand_diagnostic(
+                    source.command_name,
+                    0,
+                    source.paths[0],
+                    "input read failed",
+                ));
+                break;
+            }
+        };
+        observed_bytes = observed_bytes.saturating_add(length as u64);
+        let records = match decoder.push(&read_buffer[..length]) {
+            Ok(records) => records,
+            Err(_) => {
+                operational_failure = true;
+                diagnostics.push(operand_diagnostic(
+                    source.command_name,
+                    0,
+                    source.paths[0],
+                    "input is not valid bounded UTF-8 text",
+                ));
+                break;
+            }
+        };
+        if count == 0 {
+            continue;
+        }
+        for record in records {
+            while initial.len() >= count {
+                if let Some(discarded) = initial.pop_front() {
+                    initial_bytes = initial_bytes.saturating_sub(discarded.text.len());
+                }
+            }
+            let next_bytes = initial_bytes.saturating_add(record.text.len());
+            if initial.len() >= MAX_TAIL_BUFFER_RECORDS || next_bytes > MAX_TAIL_BUFFER_BYTES {
+                initial.clear();
+                operational_failure = true;
+                diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+                break;
+            }
+            initial_bytes = next_bytes;
+            initial.push_back(record);
+        }
+    }
+
+    while !stopped && !operational_failure && !cancellation.is_cancelled() {
+        let Some(record) = initial.pop_front() else {
+            break;
+        };
+        match push_follow_record(&mut pipeline, record) {
+            Ok(OrderedFlowV1::Continue) => {}
+            Ok(OrderedFlowV1::StopUpstream) => stopped = true,
+            Err(fault) => stage_fault = Some(fault),
+        }
+        if stage_fault.is_some() {
+            break;
+        }
+    }
+
+    while !stopped && !operational_failure && stage_fault.is_none() && !cancellation.is_cancelled()
+    {
+        match input.file_mut().read(&mut read_buffer) {
+            Ok(0) => match input.file_mut().metadata() {
+                Ok(metadata) if metadata.len() < observed_bytes => {
+                    operational_failure = true;
+                    diagnostics.push(operand_diagnostic(
+                        source.command_name,
+                        0,
+                        source.paths[0],
+                        "input was truncated while following",
+                    ));
+                }
+                Ok(_) => thread::sleep(FOLLOW_POLL_INTERVAL),
+                Err(_) => {
+                    operational_failure = true;
+                    diagnostics.push(operand_diagnostic(
+                        source.command_name,
+                        0,
+                        source.paths[0],
+                        "input metadata cannot be read while following",
+                    ));
+                }
+            },
+            Ok(length) => {
+                observed_bytes = observed_bytes.saturating_add(length as u64);
+                let records = match decoder.push(&read_buffer[..length]) {
+                    Ok(records) => records,
+                    Err(_) => {
+                        operational_failure = true;
+                        diagnostics.push(operand_diagnostic(
+                            source.command_name,
+                            0,
+                            source.paths[0],
+                            "input is not valid bounded UTF-8 text",
+                        ));
+                        continue;
+                    }
+                };
+                for record in records {
+                    match push_follow_record(&mut pipeline, record) {
+                        Ok(OrderedFlowV1::Continue) => {}
+                        Ok(OrderedFlowV1::StopUpstream) => {
+                            stopped = true;
+                            break;
+                        }
+                        Err(fault) => {
+                            stage_fault = Some(fault);
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                operational_failure = true;
+                diagnostics.push(operand_diagnostic(
+                    source.command_name,
+                    0,
+                    source.paths[0],
+                    "input read failed while following",
+                ));
+            }
+        }
+    }
+
+    if stage_fault.is_none() && !cancellation.is_cancelled() {
+        let cause = if operational_failure {
+            OrderedFinishCauseV1::SourceFailed
+        } else {
+            OrderedFinishCauseV1::UpstreamStopped
+        };
+        if let Err(fault) = pipeline
+            .finish(cause)
+            .and_then(|()| pipeline.flush_output())
+        {
+            stage_fault = Some(fault);
+        }
+    }
+    let cancelled = cancellation.is_cancelled()
+        || matches!(stage_fault, Some(OrderedPipelineFaultV1::Cancelled));
+    drop(pipeline);
+    sink.finish().map_err(map_sink_error)?;
+    if cancelled {
+        return Ok(130);
+    }
+    if let Some(fault) = stage_fault {
+        match fault {
+            OrderedPipelineFaultV1::TailResource => {
+                operational_failure = true;
+                diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+            }
+            OrderedPipelineFaultV1::SortResource => {
+                operational_failure = true;
+                diagnostics
+                    .push("wingman sort: materialization resource limit exceeded".to_string());
+            }
+            OrderedPipelineFaultV1::InvalidNumeric => {
+                operational_failure = true;
+                diagnostics.push("wingman sort: invalid numeric data".to_string());
+            }
+            OrderedPipelineFaultV1::Output { kind } => {
+                return Err(ReadonlyExecutionErrorV1::Output { kind });
+            }
+            OrderedPipelineFaultV1::Overflow => {
+                return Err(ReadonlyExecutionErrorV1::Output {
+                    kind: io::ErrorKind::OutOfMemory,
+                });
+            }
+            OrderedPipelineFaultV1::Unsupported | OrderedPipelineFaultV1::Cancelled => {
+                return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
+            }
+        }
+    }
+    for diagnostic in diagnostics {
+        write_diagnostic(stderr, &diagnostic)?;
+    }
+    Ok(if operational_failure { 1 } else { 0 })
+}
+
+fn push_follow_record<W: Write>(
+    pipeline: &mut OrderedPipelineV1<'_, W>,
+    record: RecordFrameV1,
+) -> Result<OrderedFlowV1, OrderedPipelineFaultV1> {
+    let flow = pipeline.push(record, 0)?;
+    pipeline.flush_output()?;
+    Ok(flow)
+}
+
 fn path_resolution_exit(error: PathResolutionErrorV1) -> u8 {
     match error {
         PathResolutionErrorV1::InvalidCurrentDirectory => 1,
@@ -271,27 +498,28 @@ fn readonly_source(
     let Some(first) = plan.stages.first() else {
         return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
     };
-    let (command_name, paths, number_lines) = match first {
+    let (command_name, paths, number_lines, follow_count) = match first {
         StagePlanV1::ReadTextFiles {
             paths,
             number_lines,
-        } => ("cat", paths.iter().collect::<Vec<_>>(), *number_lines),
+        } => ("cat", paths.iter().collect::<Vec<_>>(), *number_lines, None),
         StagePlanV1::HeadLines {
             path: Some(path), ..
-        } => ("head", vec![path], false),
+        } => ("head", vec![path], false, None),
         StagePlanV1::TailLines {
             path: Some(path), ..
-        } => ("tail", vec![path], false),
-        StagePlanV1::CountLines { path: Some(path) } => ("wc", vec![path], false),
+        } => ("tail", vec![path], false, None),
+        StagePlanV1::FollowFile { count, path } => ("tail", vec![path], false, Some(*count)),
+        StagePlanV1::CountLines { path: Some(path) } => ("wc", vec![path], false, None),
         StagePlanV1::SearchText {
             paths, recursive, ..
-        } if !*recursive && !paths.is_empty() => ("grep", paths.iter().collect(), false),
+        } if !*recursive && !paths.is_empty() => ("grep", paths.iter().collect(), false, None),
         StagePlanV1::UniqueLines {
             path: Some(path), ..
-        } => ("uniq", vec![path], false),
+        } => ("uniq", vec![path], false, None),
         StagePlanV1::SortLines {
             path: Some(path), ..
-        } => ("sort", vec![path], false),
+        } => ("sort", vec![path], false, None),
         _ => return Err(ReadonlyExecutionErrorV1::UnsupportedPlan),
     };
 
@@ -315,6 +543,7 @@ fn readonly_source(
         number_lines,
         grep_is_final: matches!(plan.stages.last(), Some(StagePlanV1::SearchText { .. })),
         grep_direct: matches!(first, StagePlanV1::SearchText { .. }),
+        follow_count,
     })
 }
 

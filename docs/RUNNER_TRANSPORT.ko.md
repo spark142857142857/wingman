@@ -63,10 +63,10 @@ Runner는 decode 직후와 직접 실행 entry point에서 각각 검증한다. 
 위해 존재하던 environment-probe 실행 variant는 제거했으며, 실제 working-directory
 operation으로 process 경계 상속을 검증한다.
 
-이는 request validation을 완성한다. Typed `cat`/`head`/유한 `tail -n N`/`wc -l`/`grep` plan은 이제 production streaming
+이는 request validation을 완성한다. Typed `cat`/`head`/유한 `tail -n N`/단일 파일 `tail -f`/`wc -l`/`grep` plan은 이제 production streaming
 runner를 사용하고 typed `>`/`>>` plan도 같은 record stream을 safe prepared file sink로
 보낸다. Reliable·Familiar ON PowerShell 입력은 이제 공통 lexer/parser/catalog로 `cat`,
-`head`, 유한 `tail -n N`, `wc -l`, `grep`을 분류하고, 고정 editor replacement에는 opaque prepared request ID만 넣는다.
+`head`, 유한 `tail -n N`, 단일 파일 `tail -f`, `wc -l`, `grep`을 분류하고, 고정 editor replacement에는 opaque prepared request ID만 넣는다.
 Sidecar의 공유 cancellation token과 Windows console control handler는 terminal·redirected
 sink 모두에 적용되며, 실제 process-group test는 redirected streaming 중인 sidecar를
 취소한다. PowerShell/ConPTY vertical test도 Unicode 경로 redirection과 다음 OOB readiness

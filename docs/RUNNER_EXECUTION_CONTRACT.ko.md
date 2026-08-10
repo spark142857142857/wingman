@@ -120,7 +120,7 @@ Unicode glob matcher가 basename 전체에 `-name`/`-iname`을 적용하고, 순
 최종 stage 상태보다 우선한다. 이 의미론은 하나의 ordered stage engine이 소유하며,
 runner는 더 이상 plan을 명령별 순서 보정 flag로 평탄화하지 않는다.
 
-Production sidecar는 이제 검증된 `clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
+Production sidecar는 이제 검증된 `clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
 실행하고, normal stdout 또는 최종 `>`·`>>` file sink로 출력한다. 모든 명시적 input을
 output보다 먼저 열고, pinned-parent/reparse-safe primitive로 redirection output을 열며,
 overwrite truncate 전에 file identity를 검사한다. 공통 bounded UTF-8 reader로 각 파일을
@@ -134,8 +134,11 @@ sink는 pending record 하나만 유지한다.
 유한 `tail`은 요청한 마지막 record만 보관한다. `N`을 기준으로 선할당하지 않으며
 보관 ring은 최대 65,536개 record와 16 MiB의 record text로 제한한다. 어느 상한이든
 넘으면 tail data를 출력하지 않고 종료 `1`이다. `tail -n 0`은 명시한 input을 열지만
-payload는 decode하지 않는다. Follow mode는 아직 공개하지 않으며, 이 유한 tail slice가
-소유한 `-f`·`--follow`는 거부한다.
+payload는 decode하지 않는다. `tail -f`와 `--follow`는 정확히 한 파일만 받고 같은 bounded
+초기 suffix를 보관한 뒤 제한된 간격으로 append byte를 확인한다. 완료 record는 즉시
+flush하며 미종료 suffix는 이후 LF가 끝낼 때까지 공통 UTF-8 decoder에 보관한다. 취소는
+그 suffix를 버리고 `130`으로 끝난다. 관찰된 truncation은 실행 실패이며 rotation은
+추적하지 않는다.
 
 `uniq`는 bounded 인접 그룹 하나만 메모리에 유지하고 전체 줄을 대소문자 구분하여 비교한다.
 `-c`·`-d`·`-u`를 지원하며 마지막 그룹 구성원의 termination 상태를 보존하고, downstream
@@ -158,7 +161,7 @@ separator를 추가하지 않고 diagnostic은 stderr에 남는다. Runtime 실�
 계약대로 비어 있거나 부분적으로 작성된 target이 남을 수 있다.
 
 이 slice는 typed runner request와 실제 `wingman-runner` process로 접근할 수 있다.
-`clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
+`clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
 Reliable일 때 이제 분류·공개된다. 공통 lexer·parser·catalog는 하나의 typed plan을 만들거나
 결정적인 exit `2` rejection을 준비한다. 명시적 `.exe`, native-first pipeline, Familiar OFF,
 Uncertain 입력은 native pass-through를 유지한다. 실제 PowerShell/ConPTY test는 Familiar

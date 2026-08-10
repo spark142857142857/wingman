@@ -128,7 +128,7 @@ P0이 아니라 가능한 미래 기능이다.
 
 ## 현재 활성화 상태 (2026-08-09)
 
-Production classifier는 이제 이 ownership algorithm을 `cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`에 활성화한다.
+Production classifier는 이제 이 ownership algorithm을 `cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq`에 활성화한다.
 Reliable evidence와 Familiar ON을 요구하고, 공통 lexer/parser/read-only catalog를 사용하며,
 이미 소유한 잘못된 줄은 결정적인 rejection으로 준비한다. 명시적 executable 이름과
 native-first pipeline은 native pass-through를 보존한다. PowerShell FileSystem/OOB editor

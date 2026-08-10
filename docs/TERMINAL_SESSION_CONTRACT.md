@@ -90,7 +90,7 @@ production PowerShell sessions and has passed repeated ConPTY
 PowerShell → readiness → Rust decision → request broker → real sidecar → next
 readiness tests. PTY readiness parsing is explicitly disabled in production.
 Familiar remains default-paused, but an explicit `familiar on` now activates
-the proved `cat`/`head`/finite `tail -n N`/`wc -l`/`grep` read-only slice, including pipelines and final output
+the proved `cat`/`head`/finite `tail -n N`/single-file `tail -f`/`wc -l`/`grep` read-only slice, including pipelines and final output
 redirection. Familiar off, uncertain editing, and `cmd` remain native. A
 `prompt` PTY hook and a
 `PSConsoleHostReadLine` PTY-writing wrapper were both rejected by earlier

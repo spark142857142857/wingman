@@ -134,7 +134,7 @@ unrequested upstream input, while fatal source failure continues to dominate
 the final stage status. One ordered stage engine owns these semantics; the
 runner no longer flattens a plan into command-specific ordering flags.
 
-The production sidecar now executes validated `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
+The production sidecar now executes validated `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
 writer-based streaming entry point, either to normal stdout or to a final `>` or
 `>>` file sink. It opens every explicit input before the output, resolves and
 opens redirected output through the pinned-parent/reparse-safe primitive,
@@ -151,8 +151,12 @@ pipeline input and emits one generated terminated count record.
 Finite `tail` retains only the last requested records. It does not preallocate
 from `N`; the retained ring is capped at 65,536 records and 16 MiB of record
 text. Exceeding either bound emits no tail data and exits `1`. `tail -n 0`
-opens its explicit input but does not decode the payload. Follow mode remains
-unpublished and `-f`/`--follow` is rejected by the claimed finite-tail slice.
+opens its explicit input but does not decode the payload. `tail -f` and
+`--follow` accept exactly one file, retain the same bounded initial suffix, then
+poll for appended bytes at a bounded interval. Complete records are flushed as
+they arrive; an unterminated suffix remains in the shared UTF-8 decoder until a
+later LF completes it. Cancellation discards that suffix and exits `130`.
+Observed truncation is an operational failure, and file rotation is not tracked.
 
 `uniq` keeps one bounded adjacent group in memory and compares complete lines
 case-sensitively. It supports `-c`, `-d`, and `-u`, preserves the final member's
@@ -176,7 +180,7 @@ no BOM or separator, diagnostics remain on stderr, and a runtime failure or
 cancellation can leave an empty or partial target as specified above.
 
 This slice is reachable through typed runner requests and the actual
-`wingman-runner` process. `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
+`wingman-runner` process. `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
 Familiar is on and the production PowerShell editor cycle is Reliable at a
 FileSystem location. The shared lexer, parser, and catalog either build one
 typed plan or prepare a deterministic exit-`2` rejection; explicit `.exe`

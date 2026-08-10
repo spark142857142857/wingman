@@ -130,7 +130,7 @@ fn wc_lines_accepts_exactly_one_file_or_one_pipeline_input() {
 }
 
 #[test]
-fn finite_tail_accepts_one_file_or_pipeline_input_and_rejects_follow_mode() {
+fn tail_accepts_finite_and_single_file_follow_sources() {
     let parsed = parse_p0_tokens(&lex_p0_line("tail input.txt").unwrap()).unwrap();
     let plan = build_readonly_plan(&parsed).expect("build default tail plan");
     assert_eq!(
@@ -164,8 +164,21 @@ fn finite_tail_accepts_one_file_or_pipeline_input_and_rejects_follow_mode() {
         ]
     );
 
+    let parsed = parse_p0_tokens(
+        &lex_p0_line("tail --follow -n 3 input.txt | grep ERROR | head -n 1").unwrap(),
+    )
+    .unwrap();
+    let plan = build_readonly_plan(&parsed).expect("build follow pipeline");
+    assert!(matches!(
+        &plan.stages[0],
+        StagePlanV1::FollowFile { count: 3, path }
+            if path == &validate_path_value("input.txt").unwrap()
+    ));
+
     for line in [
-        "tail -f input.txt",
+        "tail -f",
+        "tail -f one.txt two.txt",
+        "cat input.txt | tail -f",
         "tail -n nope input.txt",
         "tail one.txt two.txt",
         "cat input.txt | tail other.txt",

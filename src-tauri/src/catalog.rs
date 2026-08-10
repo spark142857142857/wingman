@@ -540,6 +540,7 @@ fn build_tail(
     has_pipeline_input: bool,
 ) -> Result<StagePlanV1, CatalogErrorV1> {
     let mut count = 10usize;
+    let mut follow = false;
     let mut index = 0;
     let mut parse_options = true;
     let mut paths = Vec::new();
@@ -557,12 +558,24 @@ fn build_tail(
                 .parse::<usize>()
                 .map_err(|_| CatalogErrorV1::InvalidCount)?;
             index += 2;
+        } else if parse_options && matches!(argument.as_str(), "-f" | "--follow") {
+            follow = true;
+            index += 1;
         } else if parse_options && argument.starts_with('-') {
             return Err(CatalogErrorV1::UnsupportedOption);
         } else {
             paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
             index += 1;
         }
+    }
+    if follow {
+        if has_pipeline_input || paths.len() != 1 {
+            return Err(CatalogErrorV1::InvalidSourceShape);
+        }
+        return Ok(StagePlanV1::FollowFile {
+            count,
+            path: paths.pop().expect("validated one follow path"),
+        });
     }
     let path = if has_pipeline_input {
         if !paths.is_empty() {

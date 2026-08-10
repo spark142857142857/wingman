@@ -216,7 +216,7 @@ source 안 destination, 안전하게 가능한 drive·UNC root, 한글·대소�
 통해 다른 target을 따라가지 않는 것을 확인한다. 기존 reparse leaf와 ancestor는
 truncate 전에 거부되며, reparse ancestor 아래의 없는 leaf도 생성하지 않는다.
 
-Production sidecar는 이제 이 primitive를 검증된 `cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` record stream의 `>`·`>>`에
+Production sidecar는 이제 이 primitive를 검증된 `cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq` record stream의 `>`·`>>`에
 연결한다. Integration test는 input-before-output 순서, overwrite·append, hard-link 동일 파일
 거부, reparse 거부, output-open 실패, runtime partial output, 실제 redirected runner process
 취소를 확인한다. Production PowerShell/ConPTY vertical test도 Unicode 경로의

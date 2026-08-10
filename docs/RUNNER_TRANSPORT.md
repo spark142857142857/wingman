@@ -68,10 +68,10 @@ and never echoes request contents. The test-only environment-probe execution
 variant has been removed; process-boundary inheritance is tested with the real
 working-directory operation instead.
 
-This completes request validation. Typed `cat`/`head`/finite `tail -n N`/`wc -l`/`grep` plans now use the
+This completes request validation. Typed `cat`/`head`/finite `tail -n N`/single-file `tail -f`/`wc -l`/`grep` plans now use the
 production streaming runner, and typed `>`/`>>` plans use the same record stream
 through the safe prepared file sink. Reliable Familiar-on PowerShell input now
-classifies `cat`, `head`, finite `tail -n N`, `wc -l`, and `grep` through the shared lexer/parser/catalog and sends
+classifies `cat`, `head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, and `grep` through the shared lexer/parser/catalog and sends
 only the opaque prepared request ID through the fixed editor replacement.
 The sidecar's shared cancellation token and Windows console control handler
 cover both terminal and redirected sinks; an actual process-group test cancels

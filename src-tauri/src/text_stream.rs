@@ -147,6 +147,26 @@ impl<W: Write> RecordStreamWriterV1<W> {
         Ok(())
     }
 
+    pub(crate) fn flush_terminated(&mut self) -> Result<(), TextStreamWriteErrorV1> {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|(_, pending)| !pending.terminated)
+        {
+            return Ok(());
+        }
+        if let Some((_, pending)) = self.pending.take() {
+            write_record(&mut self.writer, &pending)
+                .and_then(|()| self.writer.flush())
+                .map_err(|error| TextStreamWriteErrorV1::Io { kind: error.kind() })?;
+        } else {
+            self.writer
+                .flush()
+                .map_err(|error| TextStreamWriteErrorV1::Io { kind: error.kind() })?;
+        }
+        Ok(())
+    }
+
     pub fn finish(mut self) -> Result<W, TextStreamWriteErrorV1> {
         if let Some((_, pending)) = self.pending.take() {
             write_record(&mut self.writer, &pending)

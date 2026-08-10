@@ -59,6 +59,8 @@ tail [-n N] [-f | --follow] FILE
   N lines and then prints appended lines until the user interrupts with `Ctrl+C`.
 - In follow mode, a current unterminated suffix remains pending until an
   appended LF completes it. `Ctrl+C` does not flush that pending fragment.
+- If the open file is observed to shrink below the consumed offset, follow mode
+  reports an operational failure instead of seeking or reopening it.
 - File rotation tracking, `-F`, byte counts, reverse output, and `+N` syntax
   are out of scope.
 

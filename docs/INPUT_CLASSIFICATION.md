@@ -140,7 +140,7 @@ active shell.
 ## Current activation status (2026-08-09)
 
 The production classifier now activates this ownership algorithm for `cat`,
-`head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq`. It requires Reliable evidence and Familiar on, uses the shared
+`head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, and `uniq`. It requires Reliable evidence and Familiar on, uses the shared
 lexer/parser/read-only catalog, prepares deterministic rejections for claimed
 invalid lines, and preserves native pass-through for explicit executable names
 and native-first pipelines. The PowerShell FileSystem/OOB editor path is proved

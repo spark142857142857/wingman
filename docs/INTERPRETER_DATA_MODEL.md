@@ -125,6 +125,7 @@ string. Representative forms are:
 ReadTextFiles { paths, number_lines }
 HeadLines { count, path }
 TailLines { count, path }
+FollowFile { count, path }
 CountLines { path }
 ListDirectory { path, include_hidden, long_format, human_sizes }
 SearchText {
