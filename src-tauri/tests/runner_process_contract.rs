@@ -386,3 +386,99 @@ fn runner_process_accepts_a_group_control_event_as_cancellation() {
     assert!(output_length < complete_length);
     fs::remove_dir_all(&sandbox).unwrap();
 }
+
+#[cfg(windows)]
+#[test]
+fn idle_tail_follow_process_observes_group_cancellation() {
+    let sandbox = std::env::temp_dir().join(format!(
+        "wingman-runner-follow-cancel-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&sandbox).unwrap();
+    let input = sandbox.join("idle.log");
+    fs::write(&input, b"").unwrap();
+
+    let request_id = Uuid::new_v4().as_simple().to_string();
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let broker = OneShotBrokerV1::bind(
+        &pipe_name,
+        request_id.clone(),
+        PreparedRequestV1 {
+            protocol: "wingman.run".to_string(),
+            version: 1,
+            kind: PreparedRequestKindV1::Execute {
+                plan: ExecutionPlanV1 {
+                    stages: vec![StagePlanV1::FollowFile {
+                        count: 0,
+                        path: validate_path_value(&input.to_string_lossy()).unwrap(),
+                    }],
+                    redirect: None,
+                },
+            },
+        },
+    )
+    .expect("bind follow cancellation broker");
+    let server = thread::spawn(move || broker.serve());
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wingman-runner"))
+        .arg(&request_id)
+        .env("WINGMAN_BROKER_PIPE", &pipe_name)
+        .creation_flags(CREATE_NEW_PROCESS_GROUP)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start idle follow runner");
+
+    server
+        .join()
+        .expect("broker thread")
+        .expect("serve follow request");
+    assert!(child.try_wait().unwrap().is_none());
+    thread::sleep(Duration::from_millis(100));
+    assert!(child.try_wait().unwrap().is_none());
+
+    let generated = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+    assert_ne!(
+        generated,
+        0,
+        "cancel idle follow process: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("idle follow runner did not stop after cancellation");
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    let mut stdout = Vec::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut stdout)
+        .unwrap();
+    let mut stderr = Vec::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_end(&mut stderr)
+        .unwrap();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    fs::remove_dir_all(&sandbox).unwrap();
+}
