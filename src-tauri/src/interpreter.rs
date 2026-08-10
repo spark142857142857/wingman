@@ -78,6 +78,12 @@ pub enum StagePlanV1 {
     FindExecutable {
         name: String,
     },
+    ListEntries {
+        path: Option<ValidatedPathSpecV1>,
+        include_hidden: bool,
+        long: bool,
+        human_readable: bool,
+    },
     ReadTextFiles {
         paths: Vec<ValidatedPathSpecV1>,
         number_lines: bool,
@@ -310,6 +316,25 @@ pub fn validate_execution_plan(
             | StagePlanV1::ClearTerminal
             | StagePlanV1::FindExecutable { .. } => {
                 return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+            }
+            StagePlanV1::ListEntries {
+                path,
+                long,
+                human_readable,
+                ..
+            } => {
+                if index != 0 || (*human_readable && !*long) {
+                    return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+                }
+                if let Some(path) = path {
+                    path_count = path_count
+                        .checked_add(1)
+                        .ok_or(RunnerRequestValidationErrorV1::InvalidPathCount)?;
+                    if path_count > MAX_PATH_OPERANDS {
+                        return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
+                    }
+                    validate_serialized_path(path)?;
+                }
             }
             StagePlanV1::ReadTextFiles { paths, .. } => {
                 if index != 0 || paths.is_empty() {
@@ -675,6 +700,10 @@ fn claimed_readonly_command(raw_line: &str) -> Option<&'static str> {
         Some("clear")
     } else if candidate.eq_ignore_ascii_case("which") {
         Some("which")
+    } else if candidate.eq_ignore_ascii_case("ls") {
+        Some("ls")
+    } else if candidate.eq_ignore_ascii_case("ll") {
+        Some("ll")
     } else if candidate.eq_ignore_ascii_case("head") {
         Some("head")
     } else if candidate.eq_ignore_ascii_case("wc") {

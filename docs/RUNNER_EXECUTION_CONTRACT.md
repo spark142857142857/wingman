@@ -103,6 +103,17 @@ fixed clear-screen and cursor-home sequence; arguments, pipelines, and
 redirection are rejected, and prepared control text cannot inject terminal
 escape characters.
 
+`ls` and its exact long-form alias `ll` are generated-record sources in the
+same ordered text engine. Directory children or one explicit file are collected
+before output mutation, bounded to 262,144 entries and 64 MiB of filename text,
+and sorted with Windows Unicode ordinal ignore-case order plus an ordinal
+case-sensitive tiebreaker. `-a` follows Windows Hidden/System attributes;
+`-l` emits the pinned `TYPE ATTRS SIZE MODIFIED NAME` shape; and `-h` performs
+integer half-up IEC size formatting only with `-l`. Explicit non-recursive
+paths follow normal Windows access rules, while discovered reparse entries are
+reported as type `l`. Generated records can feed every supported ordered text
+stage and the existing reparse-safe final redirection sink.
+
 Non-recursive text stages execute strictly from left to right in their declared
 plan order. Supported stages may be repeated and recombined, including repeated
 `grep`, `sort`, `uniq`, and finite `tail`, plus `head`/`tail` output feeding
@@ -111,7 +122,7 @@ unrequested upstream input, while fatal source failure continues to dominate
 the final stage status. One ordered stage engine owns these semantics; the
 runner no longer flattens a plan into command-specific ordering flags.
 
-The production sidecar now executes validated `clear`, `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
+The production sidecar now executes validated `clear`, `which`, `ls`/`ll`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
 writer-based streaming entry point, either to normal stdout or to a final `>` or
 `>>` file sink. It opens every explicit input before the output, resolves and
 opens redirected output through the pinned-parent/reparse-safe primitive,
@@ -154,7 +165,7 @@ no BOM or separator, diagnostics remain on stderr, and a runtime failure or
 cancellation can leave an empty or partial target as specified above.
 
 This slice is reachable through typed runner requests and the actual
-`wingman-runner` process. `clear`, `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
+`wingman-runner` process. `clear`, `which`, `ls`/`ll`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
 Familiar is on and the production PowerShell editor cycle is Reliable at a
 FileSystem location. The shared lexer, parser, and catalog either build one
 typed plan or prepare a deterministic exit-`2` rejection; explicit `.exe`

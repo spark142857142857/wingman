@@ -93,6 +93,16 @@ result `1`이고 잘못된 이름은 실행 전에 거부한다.
 sequence만 출력한다. 인자, pipeline, redirection은 거부하며 prepared control text가
 터미널 escape 문자를 주입할 수는 없다.
 
+`ls`와 정확한 long-form 별칭 `ll`은 같은 ordered text engine의 generated-record
+source다. 디렉터리 바로 아래 항목 또는 명시한 파일 하나를 output mutation 전에
+수집하고, 최대 262,144개 항목과 64 MiB filename text로 제한한다. Windows Unicode
+ordinal ignore-case 순서와 case-sensitive ordinal tiebreaker로 정렬한다. `-a`는
+Windows Hidden/System 속성을 따르고, `-l`은 고정된 `TYPE ATTRS SIZE MODIFIED NAME`
+형식을 내며, `-h`는 `-l`과 함께일 때만 integer half-up IEC 크기 형식을 적용한다.
+명시적인 비재귀 경로는 일반 Windows 접근 규칙으로 따라가되 발견한 reparse 항목은
+type `l`로 표시한다. 생성 record는 지원되는 모든 ordered text stage와 기존
+reparse-safe final redirection sink로 보낼 수 있다.
+
 비재귀 text stage는 plan에 선언된 왼쪽에서 오른쪽 순서 그대로 실행된다. 지원 stage는
 반복하거나 다시 조합할 수 있으며, 반복 `grep`·`sort`·`uniq`·유한 `tail`과
 `head`/`tail` 출력 뒤의 filter·materializing stage도 포함한다. Downstream `head`는
@@ -100,7 +110,7 @@ sequence만 출력한다. 인자, pipeline, redirection은 거부하며 prepared
 최종 stage 상태보다 우선한다. 이 의미론은 하나의 ordered stage engine이 소유하며,
 runner는 더 이상 plan을 명령별 순서 보정 flag로 평탄화하지 않는다.
 
-Production sidecar는 이제 검증된 `clear`·`which`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
+Production sidecar는 이제 검증된 `clear`·`which`·`ls`/`ll`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
 실행하고, normal stdout 또는 최종 `>`·`>>` file sink로 출력한다. 모든 명시적 input을
 output보다 먼저 열고, pinned-parent/reparse-safe primitive로 redirection output을 열며,
 overwrite truncate 전에 file identity를 검사한다. 공통 bounded UTF-8 reader로 각 파일을
@@ -138,7 +148,7 @@ separator를 추가하지 않고 diagnostic은 stderr에 남는다. Runtime 실�
 계약대로 비어 있거나 부분적으로 작성된 target이 남을 수 있다.
 
 이 slice는 typed runner request와 실제 `wingman-runner` process로 접근할 수 있다.
-`clear`·`which`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
+`clear`·`which`·`ls`/`ll`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
 Reliable일 때 이제 분류·공개된다. 공통 lexer·parser·catalog는 하나의 typed plan을 만들거나
 결정적인 exit `2` rejection을 준비한다. 명시적 `.exe`, native-first pipeline, Familiar OFF,
 Uncertain 입력은 native pass-through를 유지한다. 실제 PowerShell/ConPTY test는 Familiar

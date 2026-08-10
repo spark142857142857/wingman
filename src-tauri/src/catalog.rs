@@ -22,7 +22,12 @@ pub enum CatalogErrorV1 {
 pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, CatalogErrorV1> {
     let mut stages = Vec::with_capacity(parsed.stages.len());
     for (index, command) in parsed.stages.iter().enumerate() {
-        if command.name.eq_ignore_ascii_case("clear") {
+        if command.name.eq_ignore_ascii_case("ls") || command.name.eq_ignore_ascii_case("ll") {
+            if index != 0 {
+                return Err(CatalogErrorV1::InvalidSourceShape);
+            }
+            stages.push(build_ls(command)?);
+        } else if command.name.eq_ignore_ascii_case("clear") {
             stages.push(build_clear(command)?);
         } else if command.name.eq_ignore_ascii_case("which") {
             stages.push(build_which(command)?);
@@ -68,6 +73,53 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
         _ => CatalogErrorV1::InvalidSourceShape,
     })?;
     Ok(plan)
+}
+
+fn build_ls(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let is_ll = command.name.eq_ignore_ascii_case("ll");
+    let mut include_hidden = false;
+    let mut long = is_ll;
+    let mut human_readable = false;
+    let mut parse_options = true;
+    let mut paths = Vec::new();
+    for argument in &command.arguments {
+        if parse_options && argument == "--" {
+            parse_options = false;
+        } else if parse_options && !is_ll {
+            if let Some(shorts) = argument.strip_prefix('-') {
+                if shorts.is_empty() {
+                    paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+                    continue;
+                }
+                for short in shorts.chars() {
+                    match short {
+                        'a' => include_hidden = true,
+                        'l' => long = true,
+                        'h' => human_readable = true,
+                        _ => return Err(CatalogErrorV1::UnsupportedOption),
+                    }
+                }
+            } else {
+                paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+            }
+        } else if parse_options && is_ll && argument.starts_with('-') {
+            return Err(CatalogErrorV1::UnsupportedOption);
+        } else {
+            paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+        }
+    }
+    if paths.len() > 1 {
+        return Err(CatalogErrorV1::InvalidSourceShape);
+    }
+    if human_readable && !long {
+        return Err(CatalogErrorV1::UnsupportedOption);
+    }
+    Ok(StagePlanV1::ListEntries {
+        path: paths.pop(),
+        include_hidden,
+        long,
+        human_readable,
+    })
 }
 
 fn build_clear(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {

@@ -116,7 +116,10 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
         );
         let mut stages = Vec::new();
         for (index, stage) in plan.stages.iter().enumerate() {
-            if matches!(stage, StagePlanV1::ReadTextFiles { .. }) {
+            if matches!(
+                stage,
+                StagePlanV1::ReadTextFiles { .. } | StagePlanV1::ListEntries { .. }
+            ) {
                 if index != 0 {
                     return Err(OrderedPipelineFaultV1::Unsupported);
                 }
