@@ -40,6 +40,12 @@ struct ListingEntryV1 {
     metadata: fs::Metadata,
 }
 
+pub(crate) struct GeneratedSourceV1<'a> {
+    pub(crate) command_name: &'a str,
+    pub(crate) records: Vec<RecordFrameV1>,
+    pub(crate) failed: bool,
+}
+
 pub fn execute_ls_to<W: Write, E: Write>(
     plan: &ExecutionPlanV1,
     stdout: &mut W,
@@ -125,6 +131,33 @@ pub fn execute_ls_with_cwd_to<W: Write, E: Write>(
         return Ok(130);
     }
 
+    execute_generated_records_with_cwd_to(
+        plan,
+        cwd,
+        GeneratedSourceV1 {
+            command_name: "ls",
+            records,
+            failed: false,
+        },
+        stdout,
+        stderr,
+        cancellation,
+    )
+}
+
+pub(crate) fn execute_generated_records_with_cwd_to<W: Write, E: Write>(
+    plan: &ExecutionPlanV1,
+    cwd: &str,
+    source: GeneratedSourceV1<'_>,
+    stdout: &mut W,
+    stderr: &mut E,
+    cancellation: &RunnerCancellationV1,
+) -> Result<u8, ReadonlyExecutionErrorV1> {
+    let GeneratedSourceV1 {
+        command_name,
+        records,
+        failed: source_failed,
+    } = source;
     let mut redirected = match &plan.redirect {
         Some(redirect) => {
             let path = match resolve_path_spec(&redirect.path, cwd) {
@@ -132,7 +165,9 @@ pub fn execute_ls_with_cwd_to<W: Write, E: Write>(
                 Err(_) => {
                     write_diagnostic(
                         stderr,
-                        "wingman ls: redirection target cannot be resolved safely",
+                        &format!(
+                            "wingman {command_name}: redirection target cannot be resolved safely"
+                        ),
                     )?;
                     return Ok(2);
                 }
@@ -149,12 +184,17 @@ pub fn execute_ls_with_cwd_to<W: Write, E: Write>(
                 Err(IoPreparationErrorV1::OutputReparsePoint) => {
                     write_diagnostic(
                         stderr,
-                        "wingman ls: redirection target is or crosses a reparse point",
+                        &format!(
+                            "wingman {command_name}: redirection target is or crosses a reparse point"
+                        ),
                     )?;
                     return Ok(2);
                 }
                 Err(_) => {
-                    write_diagnostic(stderr, "wingman ls: redirection target cannot be opened")?;
+                    write_diagnostic(
+                        stderr,
+                        &format!("wingman {command_name}: redirection target cannot be opened"),
+                    )?;
                     return Ok(1);
                 }
             }
@@ -166,9 +206,8 @@ pub fn execute_ls_with_cwd_to<W: Write, E: Write>(
         None => stdout,
     };
     let mut sink = RecordStreamWriterV1::new(writer);
-    let source_paths = path.as_ref().into_iter().collect::<Vec<_>>();
-    let mut pipeline = OrderedPipelineV1::new(plan, &mut sink, cancellation, &source_paths)
-        .map_err(map_setup_fault)?;
+    let mut pipeline =
+        OrderedPipelineV1::new(plan, &mut sink, cancellation, &[]).map_err(map_setup_fault)?;
     let mut stopped = pipeline.starts_stopped();
     let mut fault = None;
     if !stopped {
@@ -187,7 +226,9 @@ pub fn execute_ls_with_cwd_to<W: Write, E: Write>(
         }
     }
     if fault.is_none() && !cancellation.is_cancelled() {
-        if let Err(error) = pipeline.finish(if stopped {
+        if let Err(error) = pipeline.finish(if source_failed {
+            OrderedFinishCauseV1::SourceFailed
+        } else if stopped {
             OrderedFinishCauseV1::UpstreamStopped
         } else {
             OrderedFinishCauseV1::Complete
@@ -210,7 +251,9 @@ pub fn execute_ls_with_cwd_to<W: Write, E: Write>(
             OrderedPipelineFaultV1::Output { .. } if plan.redirect.is_some() => {
                 write_diagnostic(
                     stderr,
-                    "wingman ls: redirection output failed and may be partial",
+                    &format!(
+                        "wingman {command_name}: redirection output failed and may be partial"
+                    ),
                 )?;
                 return Ok(1);
             }
@@ -233,13 +276,17 @@ pub fn execute_ls_with_cwd_to<W: Write, E: Write>(
         if plan.redirect.is_some() {
             write_diagnostic(
                 stderr,
-                "wingman ls: redirection output failed and may be partial",
+                &format!("wingman {command_name}: redirection output failed and may be partial"),
             )?;
             return Ok(1);
         }
         return Err(error);
     }
-    Ok(if grep_matched == Some(false) { 1 } else { 0 })
+    Ok(if source_failed || grep_matched == Some(false) {
+        1
+    } else {
+        0
+    })
 }
 
 fn collect_records(
@@ -355,7 +402,7 @@ fn human_size(size: u64) -> String {
     }
 }
 
-fn compare_names(left: &str, right: &str) -> Ordering {
+pub(crate) fn compare_names(left: &str, right: &str) -> Ordering {
     compare_ordinal(left, right, true).then_with(|| compare_ordinal(left, right, false))
 }
 

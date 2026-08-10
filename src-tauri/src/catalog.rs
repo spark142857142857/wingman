@@ -1,7 +1,8 @@
+use crate::find_pattern::FindPatternV1;
 use crate::grep_pattern::GrepPatternV1;
 use crate::interpreter::{
-    validate_execution_plan, ExecutionPlanV1, RedirectModeV1, RunnerRequestValidationErrorV1,
-    StagePlanV1, ValidatedRedirectPlanV1,
+    validate_execution_plan, ExecutionPlanV1, FindEntryTypeV1, RedirectModeV1,
+    RunnerRequestValidationErrorV1, StagePlanV1, ValidatedRedirectPlanV1, MAX_FIND_DEPTH_VALUE,
 };
 use crate::parser::{ParsedCommandV1, ParsedLineV1, ParsedRedirectModeV1};
 use crate::windows_path::{validate_executable_name, validate_path_value, PathValidationErrorV1};
@@ -22,7 +23,13 @@ pub enum CatalogErrorV1 {
 pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, CatalogErrorV1> {
     let mut stages = Vec::with_capacity(parsed.stages.len());
     for (index, command) in parsed.stages.iter().enumerate() {
-        if command.name.eq_ignore_ascii_case("ls") || command.name.eq_ignore_ascii_case("ll") {
+        if command.name.eq_ignore_ascii_case("find") {
+            if index != 0 {
+                return Err(CatalogErrorV1::InvalidSourceShape);
+            }
+            stages.push(build_find(command)?);
+        } else if command.name.eq_ignore_ascii_case("ls") || command.name.eq_ignore_ascii_case("ll")
+        {
             if index != 0 {
                 return Err(CatalogErrorV1::InvalidSourceShape);
             }
@@ -73,6 +80,94 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
         _ => CatalogErrorV1::InvalidSourceShape,
     })?;
     Ok(plan)
+}
+
+fn build_find(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let mut index = 0usize;
+    if command.arguments.first().is_some_and(|value| value == "--") {
+        index += 1;
+    }
+    let path = command
+        .arguments
+        .get(index)
+        .ok_or(CatalogErrorV1::MissingOperand)
+        .and_then(|path| validate_path_value(path).map_err(CatalogErrorV1::Path))?;
+    index += 1;
+    let mut entry_type = None;
+    let mut name_pattern = None;
+    let mut ignore_case = false;
+    let mut min_depth = None;
+    let mut max_depth = None;
+    let mut saw_print = false;
+    while index < command.arguments.len() {
+        let predicate = &command.arguments[index];
+        match predicate.as_str() {
+            "-type" if entry_type.is_none() => {
+                let value = command
+                    .arguments
+                    .get(index + 1)
+                    .ok_or(CatalogErrorV1::MissingOperand)?;
+                entry_type = Some(match value.as_str() {
+                    "f" => FindEntryTypeV1::File,
+                    "d" => FindEntryTypeV1::Directory,
+                    _ => return Err(CatalogErrorV1::UnsupportedOption),
+                });
+                index += 2;
+            }
+            "-name" | "-iname" if name_pattern.is_none() => {
+                let pattern = command
+                    .arguments
+                    .get(index + 1)
+                    .ok_or(CatalogErrorV1::MissingOperand)?
+                    .clone();
+                ignore_case = predicate == "-iname";
+                FindPatternV1::compile(&pattern, ignore_case)
+                    .map_err(|_| CatalogErrorV1::InvalidPattern)?;
+                name_pattern = Some(pattern);
+                index += 2;
+            }
+            "-mindepth" if min_depth.is_none() => {
+                min_depth = Some(parse_find_depth(
+                    command
+                        .arguments
+                        .get(index + 1)
+                        .ok_or(CatalogErrorV1::MissingOperand)?,
+                )?);
+                index += 2;
+            }
+            "-maxdepth" if max_depth.is_none() => {
+                max_depth = Some(parse_find_depth(
+                    command
+                        .arguments
+                        .get(index + 1)
+                        .ok_or(CatalogErrorV1::MissingOperand)?,
+                )?);
+                index += 2;
+            }
+            "-print" if !saw_print => {
+                saw_print = true;
+                index += 1;
+            }
+            _ => return Err(CatalogErrorV1::UnsupportedOption),
+        }
+    }
+    Ok(StagePlanV1::FindPaths {
+        path,
+        entry_type,
+        name_pattern,
+        ignore_case,
+        min_depth: min_depth.unwrap_or(0),
+        max_depth,
+    })
+}
+
+fn parse_find_depth(value: &str) -> Result<usize, CatalogErrorV1> {
+    let depth = value
+        .parse::<usize>()
+        .map_err(|_| CatalogErrorV1::InvalidCount)?;
+    (depth <= MAX_FIND_DEPTH_VALUE)
+        .then_some(depth)
+        .ok_or(CatalogErrorV1::InvalidCount)
 }
 
 fn build_ls(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {

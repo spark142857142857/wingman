@@ -14,6 +14,7 @@ pub const MAX_PREPARED_DIAGNOSTIC_BYTES: usize = 4 * 1024;
 pub const MAX_CONTROL_RESPONSE_BYTES: usize = 256;
 pub const MAX_HEAD_LINE_COUNT: usize = u32::MAX as usize;
 pub const MAX_GREP_PATTERN_BYTES: usize = 16 * 1024;
+pub const MAX_FIND_DEPTH_VALUE: usize = u32::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActiveShell {
@@ -84,6 +85,14 @@ pub enum StagePlanV1 {
         long: bool,
         human_readable: bool,
     },
+    FindPaths {
+        path: ValidatedPathSpecV1,
+        entry_type: Option<FindEntryTypeV1>,
+        name_pattern: Option<String>,
+        ignore_case: bool,
+        min_depth: usize,
+        max_depth: Option<usize>,
+    },
     ReadTextFiles {
         paths: Vec<ValidatedPathSpecV1>,
         number_lines: bool,
@@ -120,6 +129,12 @@ pub enum StagePlanV1 {
     CountLines {
         path: Option<ValidatedPathSpecV1>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum FindEntryTypeV1 {
+    File,
+    Directory,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -335,6 +350,31 @@ pub fn validate_execution_plan(
                     }
                     validate_serialized_path(path)?;
                 }
+            }
+            StagePlanV1::FindPaths {
+                path,
+                name_pattern,
+                ignore_case,
+                min_depth,
+                max_depth,
+                ..
+            } => {
+                if index != 0
+                    || *min_depth > MAX_FIND_DEPTH_VALUE
+                    || max_depth.is_some_and(|depth| depth > MAX_FIND_DEPTH_VALUE)
+                    || name_pattern.as_ref().is_some_and(|pattern| {
+                        crate::find_pattern::FindPatternV1::compile(pattern, *ignore_case).is_err()
+                    })
+                {
+                    return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+                }
+                path_count = path_count
+                    .checked_add(1)
+                    .ok_or(RunnerRequestValidationErrorV1::InvalidPathCount)?;
+                if path_count > MAX_PATH_OPERANDS {
+                    return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
+                }
+                validate_serialized_path(path)?;
             }
             StagePlanV1::ReadTextFiles { paths, .. } => {
                 if index != 0 || paths.is_empty() {
@@ -704,6 +744,8 @@ fn claimed_readonly_command(raw_line: &str) -> Option<&'static str> {
         Some("ls")
     } else if candidate.eq_ignore_ascii_case("ll") {
         Some("ll")
+    } else if candidate.eq_ignore_ascii_case("find") {
+        Some("find")
     } else if candidate.eq_ignore_ascii_case("head") {
         Some("head")
     } else if candidate.eq_ignore_ascii_case("wc") {

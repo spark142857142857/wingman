@@ -103,6 +103,16 @@ Windows Hidden/System 속성을 따르고, `-l`은 고정된 `TYPE ATTRS SIZE MO
 type `l`로 표시한다. 생성 record는 지원되는 모든 ordered text stage와 기존
 reparse-safe final redirection sink로 보낼 수 있다.
 
+`find`는 두 번째 generated-record source다. 명시한 start를 depth 0에서 검사하고
+`ls`와 같은 Windows ordinal child 순서로 depth-first pre-order 순회한다. 숨김 항목을
+포함하지만 reparse entry나 reparse start 안으로는 절대 들어가지 않는다. 전용 bounded
+Unicode glob matcher가 basename 전체에 `-name`/`-iname`을 적용하고, 순회기가 `-type`·
+`-mindepth`·`-maxdepth`를 판정한다. 순회는 최대 100,000개 방문 항목과 depth 256으로
+제한하며 취소·resource 실패 뒤에는 새 파일 시스템 object로 계속 진행하지 않는다.
+상대 display path는 상대 형태와 native separator를 유지하고 `.`·`.\child` 형식을
+보존한다. Find record도 같은 ordered stage와 안전한 final redirection으로 보내며,
+정상적인 빈 검색은 status `0`이다.
+
 비재귀 text stage는 plan에 선언된 왼쪽에서 오른쪽 순서 그대로 실행된다. 지원 stage는
 반복하거나 다시 조합할 수 있으며, 반복 `grep`·`sort`·`uniq`·유한 `tail`과
 `head`/`tail` 출력 뒤의 filter·materializing stage도 포함한다. Downstream `head`는
@@ -110,7 +120,7 @@ reparse-safe final redirection sink로 보낼 수 있다.
 최종 stage 상태보다 우선한다. 이 의미론은 하나의 ordered stage engine이 소유하며,
 runner는 더 이상 plan을 명령별 순서 보정 flag로 평탄화하지 않는다.
 
-Production sidecar는 이제 검증된 `clear`·`which`·`ls`/`ll`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
+Production sidecar는 이제 검증된 `clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
 실행하고, normal stdout 또는 최종 `>`·`>>` file sink로 출력한다. 모든 명시적 input을
 output보다 먼저 열고, pinned-parent/reparse-safe primitive로 redirection output을 열며,
 overwrite truncate 전에 file identity를 검사한다. 공통 bounded UTF-8 reader로 각 파일을
@@ -148,7 +158,7 @@ separator를 추가하지 않고 diagnostic은 stderr에 남는다. Runtime 실�
 계약대로 비어 있거나 부분적으로 작성된 target이 남을 수 있다.
 
 이 slice는 typed runner request와 실제 `wingman-runner` process로 접근할 수 있다.
-`clear`·`which`·`ls`/`ll`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
+`clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
 Reliable일 때 이제 분류·공개된다. 공통 lexer·parser·catalog는 하나의 typed plan을 만들거나
 결정적인 exit `2` rejection을 준비한다. 명시적 `.exe`, native-first pipeline, Familiar OFF,
 Uncertain 입력은 native pass-through를 유지한다. 실제 PowerShell/ConPTY test는 Familiar

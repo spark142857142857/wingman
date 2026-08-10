@@ -118,7 +118,9 @@ impl<'a, W: Write> OrderedPipelineV1<'a, W> {
         for (index, stage) in plan.stages.iter().enumerate() {
             if matches!(
                 stage,
-                StagePlanV1::ReadTextFiles { .. } | StagePlanV1::ListEntries { .. }
+                StagePlanV1::ReadTextFiles { .. }
+                    | StagePlanV1::ListEntries { .. }
+                    | StagePlanV1::FindPaths { .. }
             ) {
                 if index != 0 {
                     return Err(OrderedPipelineFaultV1::Unsupported);

@@ -25,6 +25,7 @@ pub mod parser;
 pub mod pipeline;
 pub mod runner;
 pub mod runner_cancel;
+pub mod runner_find;
 pub mod runner_grep;
 pub mod runner_io;
 pub mod runner_ls;

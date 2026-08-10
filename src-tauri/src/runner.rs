@@ -3,6 +3,7 @@ use crate::interpreter::{
     RunnerRequestValidationErrorV1, StagePlanV1,
 };
 use crate::runner_cancel::RunnerCancellationV1;
+use crate::runner_find::execute_find_to;
 use crate::runner_grep::execute_recursive_grep_to;
 use crate::runner_ls::execute_ls_to;
 use crate::runner_readonly::{execute_readonly_plan_to, ReadonlyExecutionErrorV1};
@@ -125,6 +126,16 @@ pub fn execute_prepared_to_with_cancellation<W: Write, E: Write>(
                 .map_err(|error| RunnerDispatchErrorV1::OutputFailure { kind: error.kind() })
         }
         PreparedRequestKindV1::Execute { plan } => {
+            if let Some(result) = execute_find_to(&plan, stdout, stderr, cancellation) {
+                return result.map_err(|error| match error {
+                    ReadonlyExecutionErrorV1::UnsupportedPlan => {
+                        RunnerDispatchErrorV1::UnsupportedExecutionPlan
+                    }
+                    ReadonlyExecutionErrorV1::Output { kind } => {
+                        RunnerDispatchErrorV1::OutputFailure { kind }
+                    }
+                });
+            }
             if let Some(result) = execute_ls_to(&plan, stdout, stderr, cancellation) {
                 return result.map_err(|error| match error {
                     ReadonlyExecutionErrorV1::UnsupportedPlan => {
