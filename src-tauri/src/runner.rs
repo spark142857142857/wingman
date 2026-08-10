@@ -8,6 +8,8 @@ use crate::runner_readonly::{execute_readonly_plan_to, ReadonlyExecutionErrorV1}
 use crate::runner_which::execute_which_to;
 use std::io::{self, Write};
 
+const CLEAR_TERMINAL_SEQUENCE: &[u8] = b"\x1b[2J\x1b[H";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunnerOutcomeV1 {
     pub stdout: Vec<u8>,
@@ -97,6 +99,19 @@ pub fn execute_prepared_to_with_cancellation<W: Write, E: Write>(
                     Ok(1)
                 }
             }
+        }
+        PreparedRequestKindV1::Execute { plan }
+            if plan.redirect.is_none()
+                && plan.stages.as_slice() == [StagePlanV1::ClearTerminal] =>
+        {
+            if cancellation.is_cancelled() {
+                return Ok(130);
+            }
+            stdout
+                .write_all(CLEAR_TERMINAL_SEQUENCE)
+                .and_then(|()| stdout.flush())
+                .map_err(|error| RunnerDispatchErrorV1::OutputFailure { kind: error.kind() })?;
+            Ok(if cancellation.is_cancelled() { 130 } else { 0 })
         }
         PreparedRequestKindV1::Execute { plan }
             if plan.redirect.is_none()

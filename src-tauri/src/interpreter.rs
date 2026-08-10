@@ -74,6 +74,7 @@ pub struct ExecutionPlanV1 {
 #[serde(deny_unknown_fields)]
 pub enum StagePlanV1 {
     PrintWorkingDirectory,
+    ClearTerminal,
     FindExecutable {
         name: String,
     },
@@ -284,6 +285,14 @@ pub fn validate_execution_plan(
         };
     }
 
+    if plan.stages.as_slice() == [StagePlanV1::ClearTerminal] {
+        return if plan.redirect.is_none() {
+            Ok(())
+        } else {
+            Err(RunnerRequestValidationErrorV1::InvalidStageShape)
+        };
+    }
+
     if let [StagePlanV1::FindExecutable { name }] = plan.stages.as_slice() {
         return if plan.redirect.is_none()
             && validate_executable_name(name).ok().as_deref() == Some(name)
@@ -297,7 +306,9 @@ pub fn validate_execution_plan(
     let mut saw_recursive_search = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
-            StagePlanV1::PrintWorkingDirectory | StagePlanV1::FindExecutable { .. } => {
+            StagePlanV1::PrintWorkingDirectory
+            | StagePlanV1::ClearTerminal
+            | StagePlanV1::FindExecutable { .. } => {
                 return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
             }
             StagePlanV1::ReadTextFiles { paths, .. } => {
@@ -660,6 +671,8 @@ fn claimed_readonly_command(raw_line: &str) -> Option<&'static str> {
     let candidate = &line[..end];
     if candidate.eq_ignore_ascii_case("cat") {
         Some("cat")
+    } else if candidate.eq_ignore_ascii_case("clear") {
+        Some("clear")
     } else if candidate.eq_ignore_ascii_case("which") {
         Some("which")
     } else if candidate.eq_ignore_ascii_case("head") {

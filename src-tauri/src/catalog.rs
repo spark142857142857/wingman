@@ -22,7 +22,9 @@ pub enum CatalogErrorV1 {
 pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, CatalogErrorV1> {
     let mut stages = Vec::with_capacity(parsed.stages.len());
     for (index, command) in parsed.stages.iter().enumerate() {
-        if command.name.eq_ignore_ascii_case("which") {
+        if command.name.eq_ignore_ascii_case("clear") {
+            stages.push(build_clear(command)?);
+        } else if command.name.eq_ignore_ascii_case("which") {
             stages.push(build_which(command)?);
         } else if command.name.eq_ignore_ascii_case("cat") {
             if index != 0 {
@@ -66,6 +68,14 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
         _ => CatalogErrorV1::InvalidSourceShape,
     })?;
     Ok(plan)
+}
+
+fn build_clear(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    if command.arguments.is_empty() {
+        Ok(StagePlanV1::ClearTerminal)
+    } else {
+        Err(CatalogErrorV1::InvalidSourceShape)
+    }
 }
 
 fn build_which(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {

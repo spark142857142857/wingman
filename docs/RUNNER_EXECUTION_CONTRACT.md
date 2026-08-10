@@ -98,6 +98,11 @@ non-directory match. It does not invoke a shell or report shell aliases,
 functions, built-ins, or Wingman compatibility commands. No match is result
 status `1` without a diagnostic; invalid names are rejected before execution.
 
+`clear` is a standalone validated terminal operation. The runner emits only its
+fixed clear-screen and cursor-home sequence; arguments, pipelines, and
+redirection are rejected, and prepared control text cannot inject terminal
+escape characters.
+
 Non-recursive text stages execute strictly from left to right in their declared
 plan order. Supported stages may be repeated and recombined, including repeated
 `grep`, `sort`, `uniq`, and finite `tail`, plus `head`/`tail` output feeding
@@ -106,7 +111,7 @@ unrequested upstream input, while fatal source failure continues to dominate
 the final stage status. One ordered stage engine owns these semantics; the
 runner no longer flattens a plan into command-specific ordering flags.
 
-The production sidecar now executes validated `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
+The production sidecar now executes validated `clear`, `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
 writer-based streaming entry point, either to normal stdout or to a final `>` or
 `>>` file sink. It opens every explicit input before the output, resolves and
 opens redirected output through the pinned-parent/reparse-safe primitive,
@@ -149,7 +154,7 @@ no BOM or separator, diagnostics remain on stderr, and a runtime failure or
 cancellation can leave an empty or partial target as specified above.
 
 This slice is reachable through typed runner requests and the actual
-`wingman-runner` process. `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
+`wingman-runner` process. `clear`, `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
 Familiar is on and the production PowerShell editor cycle is Reliable at a
 FileSystem location. The shared lexer, parser, and catalog either build one
 typed plan or prepare a deterministic exit-`2` rejection; explicit `.exe`
