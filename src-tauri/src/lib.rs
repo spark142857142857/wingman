@@ -27,6 +27,7 @@ pub mod runner_cancel;
 pub mod runner_grep;
 pub mod runner_io;
 pub mod runner_readonly;
+pub mod runner_which;
 pub mod session_runtime;
 pub mod shell_adapter;
 pub mod sort_support;

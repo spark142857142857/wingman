@@ -5,6 +5,7 @@ use crate::interpreter::{
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_grep::execute_recursive_grep_to;
 use crate::runner_readonly::{execute_readonly_plan_to, ReadonlyExecutionErrorV1};
+use crate::runner_which::execute_which_to;
 use std::io::{self, Write};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,6 +97,16 @@ pub fn execute_prepared_to_with_cancellation<W: Write, E: Write>(
                     Ok(1)
                 }
             }
+        }
+        PreparedRequestKindV1::Execute { plan }
+            if plan.redirect.is_none()
+                && matches!(plan.stages.as_slice(), [StagePlanV1::FindExecutable { .. }]) =>
+        {
+            let [StagePlanV1::FindExecutable { name }] = plan.stages.as_slice() else {
+                unreachable!();
+            };
+            execute_which_to(name, stdout, stderr, cancellation)
+                .map_err(|error| RunnerDispatchErrorV1::OutputFailure { kind: error.kind() })
         }
         PreparedRequestKindV1::Execute { plan } => {
             if let Some(result) = execute_recursive_grep_to(&plan, stdout, stderr, cancellation) {

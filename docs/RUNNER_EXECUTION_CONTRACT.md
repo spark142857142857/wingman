@@ -87,7 +87,16 @@ short-circuit is not fatal, suppresses its synthetic broken-pipe artifacts, and
 does not require unread suffix data to be decoded. Exact result, cancellation,
 fatal, and diagnostic ordering follows the text stream contract.
 
-## Implemented read-only and redirection vertical slice (2026-08-09)
+## Implemented read-only and redirection vertical slice (2026-08-10)
+
+`which NAME` is also owned by the common catalog and runner when Familiar input
+is reliable. It searches the runner's current filesystem directory first and
+then its inherited `PATH` snapshot, applies a sanitized and deduplicated
+`PATHEXT` snapshot (or the documented default), skips duplicate search
+directories case-insensitively, and emits the first normalized absolute
+non-directory match. It does not invoke a shell or report shell aliases,
+functions, built-ins, or Wingman compatibility commands. No match is result
+status `1` without a diagnostic; invalid names are rejected before execution.
 
 Non-recursive text stages execute strictly from left to right in their declared
 plan order. Supported stages may be repeated and recombined, including repeated
@@ -97,7 +106,7 @@ unrequested upstream input, while fatal source failure continues to dominate
 the final stage status. One ordered stage engine owns these semantics; the
 runner no longer flattens a plan into command-specific ordering flags.
 
-The production sidecar now executes validated `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
+The production sidecar now executes validated `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
 writer-based streaming entry point, either to normal stdout or to a final `>` or
 `>>` file sink. It opens every explicit input before the output, resolves and
 opens redirected output through the pinned-parent/reparse-safe primitive,
@@ -140,7 +149,7 @@ no BOM or separator, diagnostics remain on stderr, and a runtime failure or
 cancellation can leave an empty or partial target as specified above.
 
 This slice is reachable through typed runner requests and the actual
-`wingman-runner` process. `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
+`wingman-runner` process. `which`, `cat`, `head`, finite `tail -n N`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
 Familiar is on and the production PowerShell editor cycle is Reliable at a
 FileSystem location. The shared lexer, parser, and catalog either build one
 typed plan or prepare a deterministic exit-`2` rejection; explicit `.exe`

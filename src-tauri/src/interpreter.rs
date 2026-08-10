@@ -2,7 +2,7 @@ use crate::catalog::{build_readonly_plan, CatalogErrorV1};
 use crate::grep_pattern::GrepPatternV1;
 use crate::lexer::{lex_p0_line, LexErrorV1};
 use crate::parser::{parse_p0_tokens, ParseErrorV1};
-use crate::windows_path::{validate_path_value, ValidatedPathSpecV1};
+use crate::windows_path::{validate_executable_name, validate_path_value, ValidatedPathSpecV1};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -74,6 +74,9 @@ pub struct ExecutionPlanV1 {
 #[serde(deny_unknown_fields)]
 pub enum StagePlanV1 {
     PrintWorkingDirectory,
+    FindExecutable {
+        name: String,
+    },
     ReadTextFiles {
         paths: Vec<ValidatedPathSpecV1>,
         number_lines: bool,
@@ -281,10 +284,20 @@ pub fn validate_execution_plan(
         };
     }
 
+    if let [StagePlanV1::FindExecutable { name }] = plan.stages.as_slice() {
+        return if plan.redirect.is_none()
+            && validate_executable_name(name).ok().as_deref() == Some(name)
+        {
+            Ok(())
+        } else {
+            Err(RunnerRequestValidationErrorV1::InvalidStageShape)
+        };
+    }
+
     let mut saw_recursive_search = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
-            StagePlanV1::PrintWorkingDirectory => {
+            StagePlanV1::PrintWorkingDirectory | StagePlanV1::FindExecutable { .. } => {
                 return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
             }
             StagePlanV1::ReadTextFiles { paths, .. } => {
@@ -647,6 +660,8 @@ fn claimed_readonly_command(raw_line: &str) -> Option<&'static str> {
     let candidate = &line[..end];
     if candidate.eq_ignore_ascii_case("cat") {
         Some("cat")
+    } else if candidate.eq_ignore_ascii_case("which") {
+        Some("which")
     } else if candidate.eq_ignore_ascii_case("head") {
         Some("head")
     } else if candidate.eq_ignore_ascii_case("wc") {
@@ -692,6 +707,7 @@ fn readonly_catalog_diagnostic(command_name: &str, error: CatalogErrorV1) -> Str
         CatalogErrorV1::InvalidCount => "invalid line count",
         CatalogErrorV1::InvalidSourceShape => "invalid pipeline source shape",
         CatalogErrorV1::InvalidPattern => "invalid pattern",
+        CatalogErrorV1::InvalidName => "invalid executable name",
         CatalogErrorV1::ResourceLimit => "request exceeds a resource limit",
         CatalogErrorV1::Path(_) => "unsupported path",
     };

@@ -79,7 +79,15 @@ P0는 `grep`의 미일치 같은 결과 상태와 실제 실행 실패를 구분
 읽지 않은 suffix data를 decode할 필요가 없다. 정확한 result·cancellation·fatal·진단
 순서는 text stream 계약을 따른다.
 
-## 구현된 read-only·redirection vertical slice (2026-08-09)
+## 구현된 read-only·redirection vertical slice (2026-08-10)
+
+Reliable한 Familiar 입력의 `which NAME`도 이제 공통 catalog와 runner가 소유한다.
+Runner의 현재 파일 시스템 폴더를 먼저 보고 상속받은 `PATH` snapshot을 순서대로
+검색하며, 정리·중복 제거한 `PATHEXT` snapshot 또는 문서화된 기본값을 적용한다.
+검색 폴더 중복은 대소문자 구분 없이 건너뛰고 처음 발견한 non-directory match의
+정규화된 Windows 절대 경로를 출력한다. 셸을 호출하지 않으므로 셸 alias·function·
+built-in이나 Wingman 호환 명령은 결과에 포함하지 않는다. Match가 없으면 진단 없이
+result `1`이고 잘못된 이름은 실행 전에 거부한다.
 
 비재귀 text stage는 plan에 선언된 왼쪽에서 오른쪽 순서 그대로 실행된다. 지원 stage는
 반복하거나 다시 조합할 수 있으며, 반복 `grep`·`sort`·`uniq`·유한 `tail`과
@@ -88,7 +96,7 @@ P0는 `grep`의 미일치 같은 결과 상태와 실제 실행 실패를 구분
 최종 stage 상태보다 우선한다. 이 의미론은 하나의 ordered stage engine이 소유하며,
 runner는 더 이상 plan을 명령별 순서 보정 flag로 평탄화하지 않는다.
 
-Production sidecar는 이제 검증된 `cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
+Production sidecar는 이제 검증된 `which`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
 실행하고, normal stdout 또는 최종 `>`·`>>` file sink로 출력한다. 모든 명시적 input을
 output보다 먼저 열고, pinned-parent/reparse-safe primitive로 redirection output을 열며,
 overwrite truncate 전에 file identity를 검사한다. 공통 bounded UTF-8 reader로 각 파일을
@@ -126,7 +134,7 @@ separator를 추가하지 않고 diagnostic은 stderr에 남는다. Runtime 실�
 계약대로 비어 있거나 부분적으로 작성된 target이 남을 수 있다.
 
 이 slice는 typed runner request와 실제 `wingman-runner` process로 접근할 수 있다.
-`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
+`which`·`cat`·`head`·유한 `tail -n N`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
 Reliable일 때 이제 분류·공개된다. 공통 lexer·parser·catalog는 하나의 typed plan을 만들거나
 결정적인 exit `2` rejection을 준비한다. 명시적 `.exe`, native-first pipeline, Familiar OFF,
 Uncertain 입력은 native pass-through를 유지한다. 실제 PowerShell/ConPTY test는 Familiar

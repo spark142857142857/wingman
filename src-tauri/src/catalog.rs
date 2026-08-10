@@ -4,7 +4,7 @@ use crate::interpreter::{
     StagePlanV1, ValidatedRedirectPlanV1,
 };
 use crate::parser::{ParsedCommandV1, ParsedLineV1, ParsedRedirectModeV1};
-use crate::windows_path::{validate_path_value, PathValidationErrorV1};
+use crate::windows_path::{validate_executable_name, validate_path_value, PathValidationErrorV1};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CatalogErrorV1 {
@@ -14,6 +14,7 @@ pub enum CatalogErrorV1 {
     InvalidCount,
     InvalidSourceShape,
     InvalidPattern,
+    InvalidName,
     ResourceLimit,
     Path(PathValidationErrorV1),
 }
@@ -21,7 +22,9 @@ pub enum CatalogErrorV1 {
 pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, CatalogErrorV1> {
     let mut stages = Vec::with_capacity(parsed.stages.len());
     for (index, command) in parsed.stages.iter().enumerate() {
-        if command.name.eq_ignore_ascii_case("cat") {
+        if command.name.eq_ignore_ascii_case("which") {
+            stages.push(build_which(command)?);
+        } else if command.name.eq_ignore_ascii_case("cat") {
             if index != 0 {
                 return Err(CatalogErrorV1::InvalidSourceShape);
             }
@@ -63,6 +66,17 @@ pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Cat
         _ => CatalogErrorV1::InvalidSourceShape,
     })?;
     Ok(plan)
+}
+
+fn build_which(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let arguments = match command.arguments.as_slice() {
+        [name] => std::slice::from_ref(name),
+        [terminator, name] if terminator == "--" => std::slice::from_ref(name),
+        [] => return Err(CatalogErrorV1::MissingOperand),
+        _ => return Err(CatalogErrorV1::InvalidSourceShape),
+    };
+    let name = validate_executable_name(&arguments[0]).map_err(|_| CatalogErrorV1::InvalidName)?;
+    Ok(StagePlanV1::FindExecutable { name })
 }
 
 fn build_sort(

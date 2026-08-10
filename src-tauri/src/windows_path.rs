@@ -115,6 +115,18 @@ pub fn validate_path_value(input: &str) -> Result<ValidatedPathSpecV1, PathValid
     })
 }
 
+pub fn validate_executable_name(input: &str) -> Result<String, PathValidationErrorV1> {
+    let path = validate_path_value(input)?;
+    if path.kind != PathKindV1::Relative
+        || path.components.as_slice() != [input]
+        || matches!(input, "." | "..")
+        || input.contains(['\\', '/'])
+    {
+        return Err(PathValidationErrorV1::InvalidCharacter);
+    }
+    Ok(input.to_string())
+}
+
 pub fn resolve_path_spec(
     spec: &ValidatedPathSpecV1,
     inherited_cwd: &str,
