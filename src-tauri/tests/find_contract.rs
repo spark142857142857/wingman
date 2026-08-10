@@ -4,7 +4,8 @@ use uuid::Uuid;
 use wingman_lib::catalog::{build_readonly_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
     ActiveShell, ExecutionPlanV1, FindEntryTypeV1, FrontendDecisionKindV1, InterpreterSession,
-    LineEvidence, PrepareSubmissionV1, PreparedRequestKindV1, StagePlanV1,
+    LineEvidence, PrepareSubmissionV1, PreparedRequestKindV1, RunnerRequestValidationErrorV1,
+    StagePlanV1,
 };
 use wingman_lib::lexer::lex_p0_line;
 use wingman_lib::parser::parse_p0_tokens;
@@ -176,5 +177,18 @@ fn reliable_familiar_find_is_prepared_for_the_runner() {
         PreparedRequestKindV1::Execute {
             plan: parse(line).unwrap()
         }
+    );
+}
+
+#[test]
+fn runner_rejects_a_noncanonical_find_wire_plan() {
+    let mut plan = parse("find .").unwrap();
+    let StagePlanV1::FindPaths { ignore_case, .. } = &mut plan.stages[0] else {
+        unreachable!();
+    };
+    *ignore_case = true;
+    assert_eq!(
+        wingman_lib::interpreter::validate_execution_plan(&plan),
+        Err(RunnerRequestValidationErrorV1::InvalidStageShape)
     );
 }

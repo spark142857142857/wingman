@@ -226,6 +226,65 @@ fn reliable_cat_head_redirection_runs_through_the_real_broker_and_sidecar() {
     fs::remove_dir_all(&sandbox).unwrap();
 }
 
+#[test]
+fn reliable_find_pipeline_runs_through_the_real_broker_and_sidecar() {
+    let sandbox = std::env::temp_dir().join(format!(
+        "wingman-runtime-find-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&sandbox).unwrap();
+    fs::create_dir(sandbox.join("nested")).unwrap();
+    fs::write(sandbox.join("one.ts"), b"").unwrap();
+    fs::write(sandbox.join("nested").join("two.ts"), b"").unwrap();
+    fs::write(sandbox.join("nested").join("note.txt"), b"").unwrap();
+
+    let mut session = TerminalSessionV1::new(605, ActiveShell::WindowsPowerShell);
+    let marker = format!(
+        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
+        session.integration_nonce()
+    );
+    assert_eq!(session.ingest_pty_output(&marker), "");
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-runtime-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start session broker");
+    let mut terminal_wire = Vec::new();
+    let line = "find . -type f -name \"*.ts\" | wc -l\r";
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &broker,
+        &mut terminal_wire,
+        line,
+        true,
+    )
+    .expect("dispatch reliable find pipeline");
+    let TerminalExecutionOutcomeV1::Prepared { request_id, .. } = outcome else {
+        panic!("expected a prepared find dispatch");
+    };
+    assert!(String::from_utf8(terminal_wire)
+        .expect("UTF-8 terminal write")
+        .ends_with(&format!(
+            "Invoke-WingmanPrepared -RequestId '{request_id}'\r"
+        )));
+
+    let process = Command::new(env!("CARGO_BIN_EXE_wingman-runner"))
+        .arg(&request_id)
+        .env("WINGMAN_BROKER_PIPE", &pipe_name)
+        .current_dir(&sandbox)
+        .output()
+        .expect("start packaged runner binary");
+    assert_eq!(process.status.code(), Some(0));
+    assert_eq!(process.stdout, b"2\r\n");
+    assert!(process.stderr.is_empty());
+
+    broker.stop().expect("stop session broker");
+    fs::remove_dir_all(&sandbox).unwrap();
+}
+
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }

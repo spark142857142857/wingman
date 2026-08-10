@@ -362,6 +362,7 @@ pub fn validate_execution_plan(
                 if index != 0
                     || *min_depth > MAX_FIND_DEPTH_VALUE
                     || max_depth.is_some_and(|depth| depth > MAX_FIND_DEPTH_VALUE)
+                    || (name_pattern.is_none() && *ignore_case)
                     || name_pattern.as_ref().is_some_and(|pattern| {
                         crate::find_pattern::FindPatternV1::compile(pattern, *ignore_case).is_err()
                     })
