@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 use uuid::Uuid;
 use wingman_lib::interpreter::{
     ExecutionPlanV1, PreparedRequestKindV1, PreparedRequestV1, RedirectModeV1, StagePlanV1,
@@ -656,6 +658,57 @@ fn follow_reports_observed_truncation_without_reopening_the_path() {
     assert!(String::from_utf8(stderr)
         .unwrap()
         .contains("input was truncated while following"));
+    cleanup(&sandbox);
+}
+
+#[test]
+fn follow_decodes_split_utf8_and_slow_appends_as_complete_records() {
+    let sandbox = sandbox();
+    let input = sandbox.join("follow-split-utf8.txt");
+    fs::write(&input, b"").unwrap();
+    let cancellation = RunnerCancellationV1::new();
+    let mut stdout = CancellingRecordWriter {
+        bytes: Vec::new(),
+        flushes: 0,
+        cancel_after: 2,
+        cancellation: cancellation.clone(),
+    };
+    let mut stderr = Vec::new();
+    let append_path = input.clone();
+    let appender = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(75));
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(append_path)
+            .unwrap();
+        for byte in "한🙂글\n".as_bytes() {
+            file.write_all(std::slice::from_ref(byte)).unwrap();
+            file.flush().unwrap();
+            thread::sleep(Duration::from_millis(10));
+        }
+        for chunk in [b"sl".as_slice(), b"ow".as_slice(), b"\n".as_slice()] {
+            file.write_all(chunk).unwrap();
+            file.flush().unwrap();
+            thread::sleep(Duration::from_millis(60));
+        }
+    });
+
+    let exit_code = execute_prepared_to_with_cancellation(
+        request(vec![StagePlanV1::FollowFile {
+            count: 0,
+            path: path_spec(&input),
+        }]),
+        &mut stdout,
+        &mut stderr,
+        &cancellation,
+    )
+    .expect("cancel split append follow cleanly");
+    appender.join().unwrap();
+
+    assert_eq!(exit_code, 130);
+    assert_eq!(stdout.bytes, "한🙂글\r\nslow\r\n".as_bytes());
+    assert_eq!(stdout.flushes, 2);
+    assert!(stderr.is_empty());
     cleanup(&sandbox);
 }
 
@@ -1683,6 +1736,28 @@ struct FollowTruncatingWriter {
     bytes: Vec<u8>,
     truncated: bool,
     input: PathBuf,
+}
+
+struct CancellingRecordWriter {
+    bytes: Vec<u8>,
+    flushes: usize,
+    cancel_after: usize,
+    cancellation: RunnerCancellationV1,
+}
+
+impl Write for CancellingRecordWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flushes += 1;
+        if self.flushes >= self.cancel_after {
+            self.cancellation.cancel();
+        }
+        Ok(())
+    }
 }
 
 impl Write for FollowTruncatingWriter {
