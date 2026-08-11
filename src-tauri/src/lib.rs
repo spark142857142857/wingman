@@ -35,6 +35,7 @@ mod runner_mutation;
 mod runner_mv;
 mod runner_ordered_fault;
 pub mod runner_readonly;
+mod runner_rm;
 mod runner_touch;
 pub mod runner_which;
 pub mod session_runtime;

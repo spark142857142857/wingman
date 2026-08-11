@@ -14,6 +14,13 @@ pub(crate) enum VerifiedDirectoryEntryKindV1 {
     ReparsePoint,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RemovalEntryKindV1 {
+    File,
+    Directory,
+    ReparsePoint,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedDirectoryEntryV1 {
     pub(crate) name: std::ffi::OsString,
@@ -565,7 +572,8 @@ pub(crate) fn open_verified_child_file(
     name: &std::ffi::OsStr,
 ) -> Result<File, FileAccessErrorV1> {
     use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+        FILE_OPEN, FILE_OPEN_FOR_BACKUP_INTENT, FILE_OPEN_REPARSE_POINT,
+        FILE_SYNCHRONOUS_IO_NONALERT,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
@@ -576,7 +584,7 @@ pub(crate) fn open_verified_child_file(
         name,
         FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
         FILE_OPEN,
-        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+        FILE_OPEN_FOR_BACKUP_INTENT | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
     )
     .map_err(map_file_open_error)?;
     verify_regular_file_handle(&file)?;
@@ -625,6 +633,41 @@ pub(crate) fn open_verified_child_file_for_move(
     .map_err(map_file_open_error)?;
     verify_regular_file_handle(&file)?;
     Ok(file)
+}
+
+#[cfg(windows)]
+pub(crate) fn open_child_for_removal(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> io::Result<(File, RemovalEntryKindV1)> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ, SYNCHRONIZE};
+
+    let file = open_relative_to_directory(
+        parent,
+        name,
+        DELETE | FILE_GENERIC_READ | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )?;
+    let kind = if is_reparse_handle(&file)? {
+        RemovalEntryKindV1::ReparsePoint
+    } else {
+        let metadata = file.metadata()?;
+        if metadata.is_dir() {
+            RemovalEntryKindV1::Directory
+        } else if metadata.is_file() {
+            RemovalEntryKindV1::File
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "removal target is not a file or directory",
+            ));
+        }
+    };
+    Ok((file, kind))
 }
 
 #[cfg(windows)]
@@ -768,14 +811,26 @@ pub(crate) fn rename_open_file_relative(
 
 #[cfg(windows)]
 pub(crate) fn delete_open_file(file: &File) -> io::Result<()> {
+    delete_open_file_with_force(file, false)
+}
+
+#[cfg(windows)]
+pub(crate) fn delete_open_file_with_force(file: &File, force: bool) -> io::Result<()> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         FileDispositionInfoEx, SetFileInformationByHandle, FILE_DISPOSITION_FLAG_DELETE,
-        FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
+        FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+        FILE_DISPOSITION_INFO_EX,
     };
 
     let disposition = FILE_DISPOSITION_INFO_EX {
-        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+        Flags: FILE_DISPOSITION_FLAG_DELETE
+            | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+            | if force {
+                FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
+            } else {
+                0
+            },
     };
     if unsafe {
         SetFileInformationByHandle(
@@ -941,6 +996,17 @@ pub(crate) fn open_verified_child_file_for_move(
 }
 
 #[cfg(not(windows))]
+pub(crate) fn open_child_for_removal(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> io::Result<(File, RemovalEntryKindV1)> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Wingman handle-relative removal requires Windows",
+    ))
+}
+
+#[cfg(not(windows))]
 pub(crate) fn open_verified_child_file_for_inspection(
     _parent: &File,
     _name: &std::ffi::OsStr,
@@ -976,6 +1042,14 @@ pub(crate) fn rename_open_file_relative(
 
 #[cfg(not(windows))]
 pub(crate) fn delete_open_file(_file: &File) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Wingman handle-relative deletion requires Windows",
+    ))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn delete_open_file_with_force(_file: &File, _force: bool) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Wingman handle-relative deletion requires Windows",
