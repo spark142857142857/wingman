@@ -3,10 +3,10 @@ use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     capture_file_identity, create_verified_staging_child_directory,
     create_verified_staging_child_file, delete_open_file, file_matches_identity,
-    list_verified_directory, open_verified_child_directory,
-    open_verified_child_file_for_inspection, open_verified_child_file_for_read,
-    open_verified_root_directory, rename_open_file_relative, DirectoryAccessErrorV1,
-    FileAccessErrorV1, FileIdentityV1, VerifiedDirectoryEntryKindV1,
+    list_verified_directory, open_verified_child_directory, open_verified_child_directory_for_move,
+    open_verified_child_file_for_inspection, open_verified_child_file_for_move,
+    open_verified_child_file_for_read, open_verified_root_directory, rename_open_file_relative,
+    DirectoryAccessErrorV1, FileAccessErrorV1, FileIdentityV1, VerifiedDirectoryEntryKindV1,
 };
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
@@ -20,30 +20,30 @@ use uuid::Uuid;
 const MAX_COPY_ENTRIES: usize = 100_000;
 const MAX_COPY_DEPTH: usize = 256;
 
-struct PreparedSourceFileV1 {
-    display: String,
-    resolved: PathBuf,
-    basename: OsString,
-    handle: File,
-    identity: FileIdentityV1,
+pub(crate) struct PreparedSourceFileV1 {
+    pub(crate) display: String,
+    pub(crate) resolved: PathBuf,
+    pub(crate) basename: OsString,
+    pub(crate) handle: File,
+    pub(crate) identity: FileIdentityV1,
 }
 
-enum PreparedSourceV1 {
+pub(crate) enum PreparedSourceV1 {
     File(PreparedSourceFileV1),
     Missing,
     Directory(Option<PreparedSourceDirectoryV1>),
 }
 
-struct PreparedSourceDirectoryV1 {
-    display: String,
-    resolved: PathBuf,
-    basename: OsString,
-    tree: PreparedCopyDirectoryV1,
+pub(crate) struct PreparedSourceDirectoryV1 {
+    pub(crate) display: String,
+    pub(crate) resolved: PathBuf,
+    pub(crate) basename: OsString,
+    pub(crate) tree: PreparedCopyDirectoryV1,
 }
 
-struct PreparedCopyDirectoryV1 {
-    handle: File,
-    identity: FileIdentityV1,
+pub(crate) struct PreparedCopyDirectoryV1 {
+    pub(crate) handle: File,
+    pub(crate) identity: FileIdentityV1,
     entries: Vec<PreparedCopyEntryV1>,
 }
 
@@ -75,22 +75,22 @@ enum StagedCopyEntryV1 {
     Directory(StagedCopyDirectoryV1),
 }
 
-enum PreparedDestinationStateV1 {
+pub(crate) enum PreparedDestinationStateV1 {
     Missing,
     ExistingFile { identity: FileIdentityV1 },
     ExistingDirectory,
     MissingParent,
 }
 
-struct PreparedDestinationV1 {
-    display: String,
-    resolved: PathBuf,
-    parent: Option<File>,
-    leaf: Option<OsString>,
-    state: PreparedDestinationStateV1,
+pub(crate) struct PreparedDestinationV1 {
+    pub(crate) display: String,
+    pub(crate) resolved: PathBuf,
+    pub(crate) parent: Option<File>,
+    pub(crate) leaf: Option<OsString>,
+    pub(crate) state: PreparedDestinationStateV1,
 }
 
-enum CpPreflightFailureV1 {
+pub(crate) enum CpPreflightFailureV1 {
     KnownSafety {
         display: String,
         message: &'static str,
@@ -99,6 +99,12 @@ enum CpPreflightFailureV1 {
         display: String,
     },
     Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TransferSourceAccessV1 {
+    Copy,
+    Move,
 }
 
 pub(crate) fn execute_cp_to<E: Write>(
@@ -146,7 +152,13 @@ fn execute<E: Write>(
             return Ok(1);
         }
     };
-    let source = match prepare_source(source_spec, &cwd, recursive, cancellation) {
+    let source = match prepare_source(
+        source_spec,
+        &cwd,
+        recursive,
+        TransferSourceAccessV1::Copy,
+        cancellation,
+    ) {
         Ok(source) => source,
         Err(failure) => return report_preflight_failure(stderr, failure),
     };
@@ -551,7 +563,7 @@ fn cleanup_staged_directory(directory: &StagedCopyDirectoryV1) -> bool {
     failed
 }
 
-fn source_directory_still_matches(directory: &PreparedCopyDirectoryV1) -> bool {
+pub(crate) fn source_directory_still_matches(directory: &PreparedCopyDirectoryV1) -> bool {
     if !file_matches_identity(&directory.handle, directory.identity).unwrap_or(false) {
         return false;
     }
@@ -602,6 +614,18 @@ fn source_directory_still_matches(directory: &PreparedCopyDirectoryV1) -> bool {
     true
 }
 
+pub(crate) fn close_prepared_source_children(directory: PreparedCopyDirectoryV1) -> File {
+    for entry in directory.entries {
+        match entry {
+            PreparedCopyEntryV1::File { handle, .. } => drop(handle),
+            PreparedCopyEntryV1::Directory { directory, .. } => {
+                drop(close_prepared_source_children(directory));
+            }
+        }
+    }
+    directory.handle
+}
+
 fn create_staging_directory(parent: &File) -> Result<File, DirectoryAccessErrorV1> {
     for _ in 0..8 {
         let name = format!(".wingman-stage-{}.tmp", Uuid::new_v4().as_simple());
@@ -617,7 +641,7 @@ fn create_staging_directory(parent: &File) -> Result<File, DirectoryAccessErrorV
     })
 }
 
-fn path_is_same_or_descendant(candidate: &Path, ancestor: &Path) -> bool {
+pub(crate) fn path_is_same_or_descendant(candidate: &Path, ancestor: &Path) -> bool {
     let candidate = candidate.components().collect::<Vec<_>>();
     let ancestor = ancestor.components().collect::<Vec<_>>();
     candidate.len() >= ancestor.len()
@@ -641,10 +665,11 @@ fn cleanup_staging<E: Write>(
     Ok(())
 }
 
-fn prepare_source(
+pub(crate) fn prepare_source(
     spec: &ValidatedPathSpecV1,
     cwd: &str,
     recursive: bool,
+    access: TransferSourceAccessV1,
     cancellation: &RunnerCancellationV1,
 ) -> Result<PreparedSourceV1, CpPreflightFailureV1> {
     let display = spec.original.clone();
@@ -667,11 +692,16 @@ fn prepare_source(
     let Some(parent) = traverse_parent(root, &components, &display)? else {
         return Ok(PreparedSourceV1::Missing);
     };
-    match open_verified_child_directory(&parent, &leaf) {
+    let opened_directory = match access {
+        TransferSourceAccessV1::Copy => open_verified_child_directory(&parent, &leaf),
+        TransferSourceAccessV1::Move => open_verified_child_directory_for_move(&parent, &leaf),
+    };
+    match opened_directory {
         Ok(_directory) if !recursive => Ok(PreparedSourceV1::Directory(None)),
         Ok(directory) => {
             let mut state = CopyPreflightStateV1 { visited: 1 };
-            let tree = prepare_copy_directory(directory, 0, &mut state, &display, cancellation)?;
+            let tree =
+                prepare_copy_directory(directory, 0, &mut state, &display, access, cancellation)?;
             Ok(PreparedSourceV1::Directory(Some(
                 PreparedSourceDirectoryV1 {
                     display,
@@ -689,7 +719,11 @@ fn prepare_source(
             Err(CpPreflightFailureV1::Unavailable { display })
         }
         Err(DirectoryAccessErrorV1::Missing) | Err(DirectoryAccessErrorV1::NotDirectory) => {
-            match open_verified_child_file_for_read(&parent, &leaf) {
+            let opened_file = match access {
+                TransferSourceAccessV1::Copy => open_verified_child_file_for_read(&parent, &leaf),
+                TransferSourceAccessV1::Move => open_verified_child_file_for_move(&parent, &leaf),
+            };
+            match opened_file {
                 Ok(handle) => {
                     let identity = capture_file_identity(&handle).map_err(|_| {
                         CpPreflightFailureV1::Unavailable {
@@ -722,6 +756,7 @@ fn prepare_copy_directory(
     depth: usize,
     state: &mut CopyPreflightStateV1,
     display: &str,
+    access: TransferSourceAccessV1,
     cancellation: &RunnerCancellationV1,
 ) -> Result<PreparedCopyDirectoryV1, CpPreflightFailureV1> {
     if cancellation.is_cancelled() {
@@ -761,18 +796,23 @@ fn prepare_copy_directory(
                 });
             }
             VerifiedDirectoryEntryKindV1::File => {
-                let file =
-                    open_verified_child_file_for_read(&handle, &entry.name).map_err(|error| {
-                        match error {
-                            FileAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
-                                display: display.to_string(),
-                                message: "recursive source contains a reparse point",
-                            },
-                            _ => CpPreflightFailureV1::Unavailable {
-                                display: display.to_string(),
-                            },
-                        }
-                    })?;
+                let opened_file = match access {
+                    TransferSourceAccessV1::Copy => {
+                        open_verified_child_file_for_read(&handle, &entry.name)
+                    }
+                    TransferSourceAccessV1::Move => {
+                        open_verified_child_file_for_move(&handle, &entry.name)
+                    }
+                };
+                let file = opened_file.map_err(|error| match error {
+                    FileAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
+                        display: display.to_string(),
+                        message: "recursive source contains a reparse point",
+                    },
+                    _ => CpPreflightFailureV1::Unavailable {
+                        display: display.to_string(),
+                    },
+                })?;
                 let identity = capture_file_identity(&file).map_err(|_| {
                     CpPreflightFailureV1::Unavailable {
                         display: display.to_string(),
@@ -786,19 +826,31 @@ fn prepare_copy_directory(
                 });
             }
             VerifiedDirectoryEntryKindV1::Directory => {
-                let directory = open_verified_child_directory(&handle, &entry.name).map_err(
-                    |error| match error {
-                        DirectoryAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
-                            display: display.to_string(),
-                            message: "recursive source contains a reparse point",
-                        },
-                        _ => CpPreflightFailureV1::Unavailable {
-                            display: display.to_string(),
-                        },
+                let opened_directory = match access {
+                    TransferSourceAccessV1::Copy => {
+                        open_verified_child_directory(&handle, &entry.name)
+                    }
+                    TransferSourceAccessV1::Move => {
+                        open_verified_child_directory_for_move(&handle, &entry.name)
+                    }
+                };
+                let directory = opened_directory.map_err(|error| match error {
+                    DirectoryAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
+                        display: display.to_string(),
+                        message: "recursive source contains a reparse point",
                     },
+                    _ => CpPreflightFailureV1::Unavailable {
+                        display: display.to_string(),
+                    },
+                })?;
+                let directory = prepare_copy_directory(
+                    directory,
+                    depth + 1,
+                    state,
+                    display,
+                    access,
+                    cancellation,
                 )?;
-                let directory =
-                    prepare_copy_directory(directory, depth + 1, state, display, cancellation)?;
                 entries.push(PreparedCopyEntryV1::Directory {
                     name: entry.name,
                     display_name: entry.display_name,
@@ -814,7 +866,7 @@ fn prepare_copy_directory(
     })
 }
 
-fn prepare_destination(
+pub(crate) fn prepare_destination(
     spec: &ValidatedPathSpecV1,
     cwd: &str,
     source_basename: &OsStr,
@@ -1040,7 +1092,7 @@ fn copy_file_contents(
     }
 }
 
-fn destination_still_matches(
+pub(crate) fn destination_still_matches(
     parent: &File,
     leaf: &OsStr,
     expected: &PreparedDestinationStateV1,

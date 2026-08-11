@@ -146,6 +146,10 @@ pub(crate) fn file_matches_identity(file: &File, identity: FileIdentityV1) -> io
     file_identity(file).map(|candidate| candidate == identity)
 }
 
+pub(crate) fn identities_share_volume(left: FileIdentityV1, right: FileIdentityV1) -> bool {
+    left.volume_serial_number == right.volume_serial_number
+}
+
 pub(crate) fn capture_file_identity(file: &File) -> io::Result<FileIdentityV1> {
     file_identity(file)
 }
@@ -368,6 +372,28 @@ pub(crate) fn open_verified_child_directory(
 }
 
 #[cfg(windows)]
+pub(crate) fn open_verified_child_directory_for_move(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ, SYNCHRONIZE};
+
+    let directory = open_relative_to_directory(
+        parent,
+        name,
+        FILE_GENERIC_READ | DELETE | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_directory_open_error)?;
+    verify_directory_handle(&directory)?;
+    Ok(directory)
+}
+
+#[cfg(windows)]
 pub(crate) fn create_verified_child_directory(
     parent: &File,
     name: &std::ffi::OsStr,
@@ -571,6 +597,28 @@ pub(crate) fn open_verified_child_file_for_read(
         parent,
         name,
         FILE_GENERIC_READ | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_file_open_error)?;
+    verify_regular_file_handle(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+pub(crate) fn open_verified_child_file_for_move(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ, SYNCHRONIZE};
+
+    let file = open_relative_to_directory(
+        parent,
+        name,
+        FILE_GENERIC_READ | DELETE | SYNCHRONIZE,
         FILE_OPEN,
         FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
     )
@@ -813,6 +861,16 @@ pub(crate) fn open_verified_child_directory(
 }
 
 #[cfg(not(windows))]
+pub(crate) fn open_verified_child_directory_for_move(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    Err(DirectoryAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
 pub(crate) fn create_verified_child_directory(
     _parent: &File,
     _name: &std::ffi::OsStr,
@@ -864,6 +922,16 @@ pub(crate) fn create_verified_child_file(
 
 #[cfg(not(windows))]
 pub(crate) fn open_verified_child_file_for_read(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    Err(FileAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open_verified_child_file_for_move(
     _parent: &File,
     _name: &std::ffi::OsStr,
 ) -> Result<File, FileAccessErrorV1> {
