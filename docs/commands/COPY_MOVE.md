@@ -69,6 +69,10 @@ Wingman must reject the following before executing either command:
 
 ## Exit rules
 
+Recursive source preflight is bounded to 100,000 entries and a maximum depth
+of 256 below the source root. Exceeding either bound is a resource-safety
+rejection with exit `2` and no mutation.
+
 - Exit `0` after a successful copy or move.
 - `-n` exits `0` when it skips an existing destination.
 - Missing source, access denied, destination conflict, or a locked file exits

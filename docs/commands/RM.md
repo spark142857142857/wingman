@@ -51,6 +51,10 @@ request exits `1` and deletes nothing.
 
 ## Exit rules
 
+Recursive removal preflight is bounded to 100,000 entries and a maximum depth
+of 256 below each target root. Exceeding either bound is a resource-safety
+rejection with exit `2` and no deletion.
+
 - Exit `0` only when all requested targets are successfully removed.
 - Without `-f`, a missing path, access-denied error, or in-use file exits `1`.
 - With `-f`, a missing path is successful; ACL and in-use-file errors still
