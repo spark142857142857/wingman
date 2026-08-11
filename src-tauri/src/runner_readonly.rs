@@ -9,6 +9,7 @@ use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     prepare_file_io, IoPreparationErrorV1, PreparedInputV1, RedirectModeV1, RedirectSpecV1,
 };
+use crate::runner_ordered_fault::{resolve_ordered_fault, OrderedFaultResolutionV1};
 use crate::text_stream::{
     RecordFrameV1, RecordStreamWriterV1, TextReadErrorV1, TextStreamWriteErrorV1,
     Utf8RecordDecoderV1, Utf8RecordReaderV1, MAX_RECORD_BYTES,
@@ -484,29 +485,22 @@ fn execute_follow_to<W: Write, E: Write>(
     }
     sink.finish().map_err(map_sink_error)?;
     if let Some(fault) = stage_fault {
-        match fault {
-            OrderedPipelineFaultV1::TailResource => {
+        match resolve_ordered_fault(fault, false) {
+            OrderedFaultResolutionV1::Diagnostic(message) => {
                 operational_failure = true;
-                diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+                diagnostics.push(message.to_string());
             }
-            OrderedPipelineFaultV1::SortResource => {
-                operational_failure = true;
-                diagnostics
-                    .push("wingman sort: materialization resource limit exceeded".to_string());
-            }
-            OrderedPipelineFaultV1::InvalidNumeric => {
-                operational_failure = true;
-                diagnostics.push("wingman sort: invalid numeric data".to_string());
-            }
-            OrderedPipelineFaultV1::Output { kind } => {
+            OrderedFaultResolutionV1::Output { kind } => {
                 return Err(ReadonlyExecutionErrorV1::Output { kind });
             }
-            OrderedPipelineFaultV1::Overflow => {
+            OrderedFaultResolutionV1::Overflow => {
                 return Err(ReadonlyExecutionErrorV1::Output {
                     kind: io::ErrorKind::OutOfMemory,
                 });
             }
-            OrderedPipelineFaultV1::Unsupported | OrderedPipelineFaultV1::Cancelled => {
+            OrderedFaultResolutionV1::Unsupported
+            | OrderedFaultResolutionV1::RedirectOutput
+            | OrderedFaultResolutionV1::Cancelled => {
                 return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
             }
         }
@@ -731,28 +725,19 @@ fn stream_inputs_ordered<W: Write>(
     }
 
     if let Some(fault) = stage_fault {
-        match fault {
-            OrderedPipelineFaultV1::Unsupported => {
+        match resolve_ordered_fault(fault, false) {
+            OrderedFaultResolutionV1::Unsupported | OrderedFaultResolutionV1::RedirectOutput => {
                 return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
             }
-            OrderedPipelineFaultV1::Output { kind } => {
+            OrderedFaultResolutionV1::Output { kind } => {
                 return Err(ReadonlyExecutionErrorV1::Output { kind });
             }
-            OrderedPipelineFaultV1::Cancelled => {}
-            OrderedPipelineFaultV1::TailResource => {
+            OrderedFaultResolutionV1::Cancelled => {}
+            OrderedFaultResolutionV1::Diagnostic(message) => {
                 had_operational_failure = true;
-                diagnostics.push("wingman tail: buffer resource limit exceeded".to_string());
+                diagnostics.push(message.to_string());
             }
-            OrderedPipelineFaultV1::SortResource => {
-                had_operational_failure = true;
-                diagnostics
-                    .push("wingman sort: materialization resource limit exceeded".to_string());
-            }
-            OrderedPipelineFaultV1::InvalidNumeric => {
-                had_operational_failure = true;
-                diagnostics.push("wingman sort: invalid numeric data".to_string());
-            }
-            OrderedPipelineFaultV1::Overflow => {
+            OrderedFaultResolutionV1::Overflow => {
                 return Err(ReadonlyExecutionErrorV1::Output {
                     kind: io::ErrorKind::OutOfMemory,
                 });
@@ -770,8 +755,8 @@ fn stream_inputs_ordered<W: Write>(
 }
 
 fn map_ordered_setup_fault(fault: OrderedPipelineFaultV1) -> ReadonlyExecutionErrorV1 {
-    match fault {
-        OrderedPipelineFaultV1::Output { kind } => ReadonlyExecutionErrorV1::Output { kind },
+    match resolve_ordered_fault(fault, false) {
+        OrderedFaultResolutionV1::Output { kind } => ReadonlyExecutionErrorV1::Output { kind },
         _ => ReadonlyExecutionErrorV1::UnsupportedPlan,
     }
 }

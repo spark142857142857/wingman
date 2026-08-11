@@ -6,6 +6,7 @@ use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     prepare_discovered_output, IoPreparationErrorV1, RedirectModeV1, RedirectSpecV1,
 };
+use crate::runner_ordered_fault::{resolve_ordered_fault, OrderedFaultResolutionV1};
 use crate::runner_readonly::ReadonlyExecutionErrorV1;
 use crate::text_stream::{RecordFrameV1, RecordStreamWriterV1, TextStreamWriteErrorV1};
 use crate::windows_path::resolve_path_spec;
@@ -242,13 +243,9 @@ pub(crate) fn execute_generated_records_with_cwd_to<W: Write, E: Write>(
         return Ok(130);
     }
     if let Some(error) = fault {
-        let message = match error {
-            OrderedPipelineFaultV1::TailResource => "wingman tail: buffer resource limit exceeded",
-            OrderedPipelineFaultV1::SortResource => {
-                "wingman sort: materialization resource limit exceeded"
-            }
-            OrderedPipelineFaultV1::InvalidNumeric => "wingman sort: invalid numeric data",
-            OrderedPipelineFaultV1::Output { .. } if plan.redirect.is_some() => {
+        let message = match resolve_ordered_fault(error, plan.redirect.is_some()) {
+            OrderedFaultResolutionV1::Diagnostic(message) => message,
+            OrderedFaultResolutionV1::RedirectOutput => {
                 write_diagnostic(
                     stderr,
                     &format!(
@@ -257,15 +254,15 @@ pub(crate) fn execute_generated_records_with_cwd_to<W: Write, E: Write>(
                 )?;
                 return Ok(1);
             }
-            OrderedPipelineFaultV1::Output { kind } => {
+            OrderedFaultResolutionV1::Output { kind } => {
                 return Err(ReadonlyExecutionErrorV1::Output { kind })
             }
-            OrderedPipelineFaultV1::Overflow => {
+            OrderedFaultResolutionV1::Overflow => {
                 return Err(ReadonlyExecutionErrorV1::Output {
                     kind: std::io::ErrorKind::OutOfMemory,
                 })
             }
-            OrderedPipelineFaultV1::Unsupported | OrderedPipelineFaultV1::Cancelled => {
+            OrderedFaultResolutionV1::Unsupported | OrderedFaultResolutionV1::Cancelled => {
                 return Err(ReadonlyExecutionErrorV1::UnsupportedPlan)
             }
         };
@@ -489,8 +486,8 @@ fn write_diagnostic(writer: &mut impl Write, value: &str) -> Result<(), Readonly
 }
 
 fn map_setup_fault(error: OrderedPipelineFaultV1) -> ReadonlyExecutionErrorV1 {
-    match error {
-        OrderedPipelineFaultV1::Output { kind } => ReadonlyExecutionErrorV1::Output { kind },
+    match resolve_ordered_fault(error, false) {
+        OrderedFaultResolutionV1::Output { kind } => ReadonlyExecutionErrorV1::Output { kind },
         _ => ReadonlyExecutionErrorV1::UnsupportedPlan,
     }
 }

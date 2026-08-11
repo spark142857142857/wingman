@@ -12,6 +12,7 @@ use crate::runner_io::{
     IoPreparationErrorV1, PreparedStreamingOutputV1, RedirectModeV1, RedirectSpecV1,
 };
 use crate::runner_ls::{compare_names, names_equal_ignore_case};
+use crate::runner_ordered_fault::{resolve_ordered_fault, OrderedFaultResolutionV1};
 use crate::runner_readonly::ReadonlyExecutionErrorV1;
 use crate::text_stream::{
     RecordFrameV1, RecordStreamWriterV1, TextReadErrorV1, Utf8RecordReaderV1,
@@ -320,32 +321,26 @@ fn execute_recursive<W: Write, E: Write>(
         return Ok(130);
     }
     if let Some(error) = state.stage_fault {
-        match error {
-            OrderedPipelineFaultV1::TailResource => state
-                .diagnostics
-                .push("wingman tail: buffer resource limit exceeded".to_string()),
-            OrderedPipelineFaultV1::SortResource => state
-                .diagnostics
-                .push("wingman sort: materialization resource limit exceeded".to_string()),
-            OrderedPipelineFaultV1::InvalidNumeric => state
-                .diagnostics
-                .push("wingman sort: invalid numeric data".to_string()),
-            OrderedPipelineFaultV1::Output { .. } if grep.plan.redirect.is_some() => {
+        match resolve_ordered_fault(error, grep.plan.redirect.is_some()) {
+            OrderedFaultResolutionV1::Diagnostic(message) => {
+                state.diagnostics.push(message.to_string())
+            }
+            OrderedFaultResolutionV1::RedirectOutput => {
                 write_diagnostic(
                     stderr,
                     "wingman grep: redirection output failed and may be partial",
                 )?;
                 return Ok(1);
             }
-            OrderedPipelineFaultV1::Output { kind } => {
+            OrderedFaultResolutionV1::Output { kind } => {
                 return Err(ReadonlyExecutionErrorV1::Output { kind })
             }
-            OrderedPipelineFaultV1::Overflow => {
+            OrderedFaultResolutionV1::Overflow => {
                 return Err(ReadonlyExecutionErrorV1::Output {
                     kind: io::ErrorKind::OutOfMemory,
                 })
             }
-            OrderedPipelineFaultV1::Unsupported | OrderedPipelineFaultV1::Cancelled => {
+            OrderedFaultResolutionV1::Unsupported | OrderedFaultResolutionV1::Cancelled => {
                 return Err(ReadonlyExecutionErrorV1::UnsupportedPlan)
             }
         }
@@ -747,8 +742,8 @@ fn map_sink_error(error: crate::text_stream::TextStreamWriteErrorV1) -> Readonly
 }
 
 fn map_ordered_setup_fault(error: OrderedPipelineFaultV1) -> ReadonlyExecutionErrorV1 {
-    match error {
-        OrderedPipelineFaultV1::Output { kind } => ReadonlyExecutionErrorV1::Output { kind },
+    match resolve_ordered_fault(error, false) {
+        OrderedFaultResolutionV1::Output { kind } => ReadonlyExecutionErrorV1::Output { kind },
         _ => ReadonlyExecutionErrorV1::UnsupportedPlan,
     }
 }
