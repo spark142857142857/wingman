@@ -53,6 +53,14 @@ pub(crate) enum DirectoryAccessErrorV1 {
     Io { kind: io::ErrorKind },
 }
 
+#[derive(Debug)]
+pub(crate) enum FileAccessErrorV1 {
+    Missing,
+    NotRegularFile,
+    ReparsePoint,
+    Io { kind: io::ErrorKind },
+}
+
 pub struct PreparedInputV1 {
     file: File,
     identity: FileIdentityV1,
@@ -122,6 +130,10 @@ impl PreparedStreamingOutputV1 {
 
 pub(crate) fn file_matches_identity(file: &File, identity: FileIdentityV1) -> io::Result<bool> {
     file_identity(file).map(|candidate| candidate == identity)
+}
+
+pub(crate) fn capture_file_identity(file: &File) -> io::Result<FileIdentityV1> {
+    file_identity(file)
 }
 
 impl fmt::Debug for PreparedFileIoV1 {
@@ -366,6 +378,54 @@ pub(crate) fn create_verified_child_directory(
 }
 
 #[cfg(windows)]
+pub(crate) fn open_verified_child_file(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
+    };
+
+    let file = open_relative_to_directory(
+        parent,
+        name,
+        FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_file_open_error)?;
+    verify_regular_file_handle(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+pub(crate) fn create_verified_child_file(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
+    };
+
+    let file = open_relative_to_directory(
+        parent,
+        name,
+        FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
+        FILE_CREATE,
+        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_file_open_error)?;
+    verify_regular_file_handle(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
 fn verify_directory_handle(directory: &File) -> Result<(), DirectoryAccessErrorV1> {
     if is_reparse_handle(directory)
         .map_err(|error| DirectoryAccessErrorV1::Io { kind: error.kind() })?
@@ -388,6 +448,32 @@ fn map_directory_open_error(error: io::Error) -> DirectoryAccessErrorV1 {
         io::ErrorKind::NotFound => DirectoryAccessErrorV1::Missing,
         io::ErrorKind::NotADirectory => DirectoryAccessErrorV1::NotDirectory,
         kind => DirectoryAccessErrorV1::Io { kind },
+    }
+}
+
+#[cfg(windows)]
+fn verify_regular_file_handle(file: &File) -> Result<(), FileAccessErrorV1> {
+    if is_reparse_handle(file).map_err(|error| FileAccessErrorV1::Io { kind: error.kind() })? {
+        return Err(FileAccessErrorV1::ReparsePoint);
+    }
+    if !file
+        .metadata()
+        .map_err(|error| FileAccessErrorV1::Io { kind: error.kind() })?
+        .is_file()
+    {
+        return Err(FileAccessErrorV1::NotRegularFile);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn map_file_open_error(error: io::Error) -> FileAccessErrorV1 {
+    match error.kind() {
+        io::ErrorKind::NotFound => FileAccessErrorV1::Missing,
+        io::ErrorKind::IsADirectory | io::ErrorKind::NotADirectory => {
+            FileAccessErrorV1::NotRegularFile
+        }
+        kind => FileAccessErrorV1::Io { kind },
     }
 }
 
@@ -414,6 +500,26 @@ pub(crate) fn create_verified_child_directory(
     _name: &std::ffi::OsStr,
 ) -> Result<File, DirectoryAccessErrorV1> {
     Err(DirectoryAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open_verified_child_file(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    Err(FileAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn create_verified_child_file(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    Err(FileAccessErrorV1::Io {
         kind: io::ErrorKind::Unsupported,
     })
 }
@@ -744,6 +850,34 @@ mod tests {
 
         assert!(pinned_parent.join("child").is_dir());
         assert!(!alternate_target.join("child").exists());
+        fs::remove_dir(&requested_parent).unwrap();
+        fs::remove_dir_all(&sandbox).unwrap();
+    }
+
+    #[test]
+    fn pinned_directory_handle_prevents_a_late_touch_junction_swap() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "wingman-touch-race-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ));
+        let requested_parent = sandbox.join("requested");
+        let pinned_parent = sandbox.join("pinned");
+        let alternate_target = sandbox.join("alternate");
+        fs::create_dir_all(&requested_parent).unwrap();
+        fs::create_dir(&alternate_target).unwrap();
+
+        let parent = open_verified_root_directory(&requested_parent)
+            .expect("pin the verified requested directory");
+        fs::rename(&requested_parent, &pinned_parent).unwrap();
+        create_directory_reparse(&alternate_target, &requested_parent);
+        let created = create_verified_child_file(&parent, std::ffi::OsStr::new("file.txt"))
+            .expect("create relative to the pinned directory");
+        drop(created);
+        drop(parent);
+
+        assert!(pinned_parent.join("file.txt").is_file());
+        assert!(!alternate_target.join("file.txt").exists());
         fs::remove_dir(&requested_parent).unwrap();
         fs::remove_dir_all(&sandbox).unwrap();
     }
