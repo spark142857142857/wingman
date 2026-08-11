@@ -8,6 +8,20 @@ use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VerifiedDirectoryEntryKindV1 {
+    File,
+    Directory,
+    ReparsePoint,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedDirectoryEntryV1 {
+    pub(crate) name: std::ffi::OsString,
+    pub(crate) display_name: String,
+    pub(crate) kind: VerifiedDirectoryEntryKindV1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RedirectModeV1 {
     Overwrite,
     Append,
@@ -378,6 +392,148 @@ pub(crate) fn create_verified_child_directory(
 }
 
 #[cfg(windows)]
+pub(crate) fn create_verified_staging_child_directory(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_CREATE, FILE_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, SYNCHRONIZE,
+    };
+
+    let directory = open_relative_to_directory(
+        parent,
+        name,
+        FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | SYNCHRONIZE,
+        FILE_CREATE,
+        FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_directory_open_error)?;
+    verify_directory_handle(&directory)?;
+    Ok(directory)
+}
+
+#[cfg(windows)]
+pub(crate) fn list_verified_directory(
+    directory: &File,
+) -> io::Result<Vec<VerifiedDirectoryEntryV1>> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, GetFileInformationByHandleEx,
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ID_BOTH_DIR_INFO,
+    };
+
+    const BUFFER_BYTES: usize = 64 * 1024;
+    let word_count = BUFFER_BYTES.div_ceil(std::mem::size_of::<u64>());
+    let mut storage = vec![0u64; word_count];
+    let mut entries = Vec::new();
+    let mut restart = true;
+    loop {
+        let class = if restart {
+            FileIdBothDirectoryRestartInfo
+        } else {
+            FileIdBothDirectoryInfo
+        };
+        restart = false;
+        if unsafe {
+            GetFileInformationByHandleEx(
+                directory.as_raw_handle().cast(),
+                class,
+                storage.as_mut_ptr().cast(),
+                u32::try_from(BUFFER_BYTES).unwrap(),
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                break;
+            }
+            return Err(error);
+        }
+        let mut offset = 0usize;
+        loop {
+            let minimum = std::mem::offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
+            if offset
+                .checked_add(minimum)
+                .is_none_or(|end| end > BUFFER_BYTES)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "directory enumeration returned an invalid record",
+                ));
+            }
+            let record = unsafe {
+                &*storage
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<FILE_ID_BOTH_DIR_INFO>()
+            };
+            let name_bytes = usize::try_from(record.FileNameLength).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "directory name is too long")
+            })?;
+            if name_bytes % std::mem::size_of::<u16>() != 0
+                || offset
+                    .checked_add(minimum)
+                    .and_then(|start| start.checked_add(name_bytes))
+                    .is_none_or(|end| end > BUFFER_BYTES)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "directory enumeration returned an invalid name",
+                ));
+            }
+            let name_wide = unsafe {
+                std::slice::from_raw_parts(
+                    record.FileName.as_ptr(),
+                    name_bytes / std::mem::size_of::<u16>(),
+                )
+            };
+            let display_name = String::from_utf16(name_wide).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "filename is not valid Unicode")
+            })?;
+            if display_name != "." && display_name != ".." {
+                let kind = if record.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    VerifiedDirectoryEntryKindV1::ReparsePoint
+                } else if record.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                    VerifiedDirectoryEntryKindV1::Directory
+                } else {
+                    VerifiedDirectoryEntryKindV1::File
+                };
+                entries.push(VerifiedDirectoryEntryV1 {
+                    name: std::ffi::OsString::from_wide(name_wide),
+                    display_name,
+                    kind,
+                });
+            }
+            if record.NextEntryOffset == 0 {
+                break;
+            }
+            let next = usize::try_from(record.NextEntryOffset).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "directory offset is invalid")
+            })?;
+            if next < minimum {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "directory offset is invalid",
+                ));
+            }
+            offset = offset.checked_add(next).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "directory offset overflow")
+            })?;
+        }
+    }
+    entries.sort_by(|left, right| {
+        crate::runner_ls::compare_names(&left.display_name, &right.display_name)
+    });
+    Ok(entries)
+}
+
+#[cfg(windows)]
 pub(crate) fn open_verified_child_file(
     parent: &File,
     name: &std::ffi::OsStr,
@@ -664,6 +820,26 @@ pub(crate) fn create_verified_child_directory(
     Err(DirectoryAccessErrorV1::Io {
         kind: io::ErrorKind::Unsupported,
     })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn create_verified_staging_child_directory(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    Err(DirectoryAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn list_verified_directory(
+    _directory: &File,
+) -> io::Result<Vec<VerifiedDirectoryEntryV1>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Wingman handle directory enumeration requires Windows",
+    ))
 }
 
 #[cfg(not(windows))]
@@ -1132,6 +1308,42 @@ mod tests {
         drop(committed);
         drop(parent);
         fs::remove_dir_all(&sandbox).unwrap();
+    }
+
+    #[test]
+    fn pinned_directory_enumeration_is_sorted_and_classifies_reparse_entries() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "wingman-enumeration-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ));
+        let outside = sandbox.with_extension("outside");
+        fs::create_dir(&sandbox).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(sandbox.join("z.txt"), b"").unwrap();
+        fs::write(sandbox.join("A.txt"), b"").unwrap();
+        fs::create_dir(sandbox.join("middle")).unwrap();
+        create_directory_reparse(&outside, &sandbox.join("link"));
+        let directory = open_verified_root_directory(&sandbox).unwrap();
+
+        let entries = list_verified_directory(&directory).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.display_name.as_str(), entry.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                ("A.txt", VerifiedDirectoryEntryKindV1::File),
+                ("link", VerifiedDirectoryEntryKindV1::ReparsePoint),
+                ("middle", VerifiedDirectoryEntryKindV1::Directory),
+                ("z.txt", VerifiedDirectoryEntryKindV1::File),
+            ]
+        );
+
+        drop(directory);
+        fs::remove_dir(sandbox.join("link")).unwrap();
+        fs::remove_dir_all(&sandbox).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
     }
 
     fn create_directory_reparse(target: &Path, link: &Path) {

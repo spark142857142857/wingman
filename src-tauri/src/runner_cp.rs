@@ -1,10 +1,12 @@
 use crate::interpreter::{ExecutionPlanV1, ExistingDestinationPolicyV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
-    capture_file_identity, create_verified_staging_child_file, delete_open_file,
-    file_matches_identity, open_verified_child_directory, open_verified_child_file_for_inspection,
-    open_verified_child_file_for_read, open_verified_root_directory, rename_open_file_relative,
-    DirectoryAccessErrorV1, FileAccessErrorV1, FileIdentityV1,
+    capture_file_identity, create_verified_staging_child_directory,
+    create_verified_staging_child_file, delete_open_file, file_matches_identity,
+    list_verified_directory, open_verified_child_directory,
+    open_verified_child_file_for_inspection, open_verified_child_file_for_read,
+    open_verified_root_directory, rename_open_file_relative, DirectoryAccessErrorV1,
+    FileAccessErrorV1, FileIdentityV1, VerifiedDirectoryEntryKindV1,
 };
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
@@ -14,6 +16,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
+
+const MAX_COPY_ENTRIES: usize = 100_000;
+const MAX_COPY_DEPTH: usize = 256;
 
 struct PreparedSourceFileV1 {
     display: String,
@@ -26,7 +31,48 @@ struct PreparedSourceFileV1 {
 enum PreparedSourceV1 {
     File(PreparedSourceFileV1),
     Missing,
-    Directory,
+    Directory(Option<PreparedSourceDirectoryV1>),
+}
+
+struct PreparedSourceDirectoryV1 {
+    display: String,
+    resolved: PathBuf,
+    basename: OsString,
+    tree: PreparedCopyDirectoryV1,
+}
+
+struct PreparedCopyDirectoryV1 {
+    handle: File,
+    identity: FileIdentityV1,
+    entries: Vec<PreparedCopyEntryV1>,
+}
+
+enum PreparedCopyEntryV1 {
+    File {
+        name: OsString,
+        display_name: String,
+        handle: File,
+        identity: FileIdentityV1,
+    },
+    Directory {
+        name: OsString,
+        display_name: String,
+        directory: PreparedCopyDirectoryV1,
+    },
+}
+
+struct CopyPreflightStateV1 {
+    visited: usize,
+}
+
+struct StagedCopyDirectoryV1 {
+    handle: File,
+    entries: Vec<StagedCopyEntryV1>,
+}
+
+enum StagedCopyEntryV1 {
+    File(File),
+    Directory(StagedCopyDirectoryV1),
 }
 
 enum PreparedDestinationStateV1 {
@@ -52,6 +98,7 @@ enum CpPreflightFailureV1 {
     Unavailable {
         display: String,
     },
+    Cancelled,
 }
 
 pub(crate) fn execute_cp_to<E: Write>(
@@ -99,31 +146,47 @@ fn execute<E: Write>(
             return Ok(1);
         }
     };
-    let source = match prepare_source(source_spec, &cwd) {
+    let source = match prepare_source(source_spec, &cwd, recursive, cancellation) {
         Ok(source) => source,
         Err(failure) => return report_preflight_failure(stderr, failure),
     };
-    let PreparedSourceV1::File(mut source) = source else {
-        let (display, message) = match source {
-            PreparedSourceV1::Missing => (&source_spec.original, "source does not exist"),
-            PreparedSourceV1::Directory if !recursive => (
+    match source {
+        PreparedSourceV1::Missing => {
+            let mut diagnostics = MutationDiagnosticsV1::default();
+            diagnostics.operand(stderr, "cp", &source_spec.original, "source does not exist")?;
+            Ok(1)
+        }
+        PreparedSourceV1::Directory(None) => {
+            let mut diagnostics = MutationDiagnosticsV1::default();
+            diagnostics.operand(
+                stderr,
+                "cp",
                 &source_spec.original,
                 "directory source requires recursive copy",
-            ),
-            PreparedSourceV1::Directory => (
-                &source_spec.original,
-                "recursive directory copy is not available",
-            ),
-            PreparedSourceV1::File(_) => unreachable!(),
-        };
-        let mut diagnostics = MutationDiagnosticsV1::default();
-        diagnostics.operand(stderr, "cp", display, message)?;
-        return Ok(1);
-    };
+            )?;
+            Ok(1)
+        }
+        PreparedSourceV1::Directory(Some(source)) => {
+            execute_directory_copy(source, destination_spec, &cwd, policy, stderr, cancellation)
+        }
+        PreparedSourceV1::File(source) => {
+            execute_file_copy(source, destination_spec, &cwd, policy, stderr, cancellation)
+        }
+    }
+}
+
+fn execute_file_copy<E: Write>(
+    mut source: PreparedSourceFileV1,
+    destination_spec: &ValidatedPathSpecV1,
+    cwd: &str,
+    policy: ExistingDestinationPolicyV1,
+    stderr: &mut E,
+    cancellation: &RunnerCancellationV1,
+) -> Result<u8, MutationExecutionErrorV1> {
     if cancellation.is_cancelled() {
         return Ok(130);
     }
-    let destination = match prepare_destination(destination_spec, &cwd, &source.basename) {
+    let destination = match prepare_destination(destination_spec, cwd, &source.basename) {
         Ok(destination) => destination,
         Err(failure) => return report_preflight_failure(stderr, failure),
     };
@@ -244,6 +307,328 @@ fn execute<E: Write>(
     Ok(0)
 }
 
+fn execute_directory_copy<E: Write>(
+    mut source: PreparedSourceDirectoryV1,
+    destination_spec: &ValidatedPathSpecV1,
+    cwd: &str,
+    policy: ExistingDestinationPolicyV1,
+    stderr: &mut E,
+    cancellation: &RunnerCancellationV1,
+) -> Result<u8, MutationExecutionErrorV1> {
+    if cancellation.is_cancelled() {
+        return Ok(130);
+    }
+    let destination = match prepare_destination(destination_spec, cwd, &source.basename) {
+        Ok(destination) => destination,
+        Err(failure) => return report_preflight_failure(stderr, failure),
+    };
+    if path_is_same_or_descendant(&destination.resolved, &source.resolved) {
+        write_diagnostic(
+            stderr,
+            "wingman cp: recursive destination cannot be the source or inside it",
+        )?;
+        return Ok(2);
+    }
+    if policy == ExistingDestinationPolicyV1::NoClobber
+        && matches!(
+            destination.state,
+            PreparedDestinationStateV1::ExistingFile { .. }
+        )
+    {
+        return Ok(0);
+    }
+    match destination.state {
+        PreparedDestinationStateV1::ExistingDirectory => {
+            let mut diagnostics = MutationDiagnosticsV1::default();
+            diagnostics.operand(
+                stderr,
+                "cp",
+                &destination.display,
+                "destination directory already exists",
+            )?;
+            return Ok(1);
+        }
+        PreparedDestinationStateV1::MissingParent => {
+            let mut diagnostics = MutationDiagnosticsV1::default();
+            diagnostics.operand(
+                stderr,
+                "cp",
+                &destination.display,
+                "destination parent directory does not exist",
+            )?;
+            return Ok(1);
+        }
+        PreparedDestinationStateV1::Missing | PreparedDestinationStateV1::ExistingFile { .. } => {}
+    }
+    let parent = destination.parent.expect("prepared destination parent");
+    let leaf = destination.leaf.expect("prepared destination leaf");
+    let mut diagnostics = MutationDiagnosticsV1::default();
+    let staging_root = match create_staging_directory(&parent) {
+        Ok(staging) => StagedCopyDirectoryV1 {
+            handle: staging,
+            entries: Vec::new(),
+        },
+        Err(_) => {
+            diagnostics.operand(
+                stderr,
+                "cp",
+                &destination.display,
+                "staging directory creation failed",
+            )?;
+            return Ok(1);
+        }
+    };
+    let staging = match stage_copy_directory(&mut source.tree, staging_root, cancellation) {
+        Ok(staging) => staging,
+        Err(failure) => {
+            let cleanup_failed = cleanup_staged_directory(&failure.staging);
+            if failure.cancelled {
+                if cleanup_failed {
+                    diagnostics.operand(
+                        stderr,
+                        "cp",
+                        &destination.display,
+                        "staging cleanup failed after cancellation",
+                    )?;
+                }
+                return Ok(130);
+            }
+            diagnostics.operand(
+                stderr,
+                "cp",
+                &source.display,
+                "recursive staging copy failed",
+            )?;
+            if cleanup_failed {
+                diagnostics.operand(
+                    stderr,
+                    "cp",
+                    &destination.display,
+                    "staging cleanup failed",
+                )?;
+            }
+            return Ok(1);
+        }
+    };
+    if cancellation.is_cancelled() {
+        if cleanup_staged_directory(&staging) {
+            diagnostics.operand(
+                stderr,
+                "cp",
+                &destination.display,
+                "staging cleanup failed after cancellation",
+            )?;
+        }
+        return Ok(130);
+    }
+    if !source_directory_still_matches(&source.tree)
+        || !destination_still_matches(&parent, &leaf, &destination.state)
+    {
+        diagnostics.operand(
+            stderr,
+            "cp",
+            &destination.display,
+            "source or destination changed before commit",
+        )?;
+        if cleanup_staged_directory(&staging) {
+            diagnostics.operand(stderr, "cp", &destination.display, "staging cleanup failed")?;
+        }
+        return Ok(1);
+    }
+    let staging_root = close_staged_children(staging);
+    if rename_open_file_relative(
+        &staging_root,
+        &parent,
+        &leaf,
+        true,
+        policy == ExistingDestinationPolicyV1::Force,
+    )
+    .is_err()
+    {
+        diagnostics.operand(stderr, "cp", &destination.display, "copy commit failed")?;
+        if delete_open_file(&staging_root).is_err() {
+            diagnostics.operand(stderr, "cp", &destination.display, "staging cleanup failed")?;
+        }
+        return Ok(1);
+    }
+    Ok(0)
+}
+
+fn close_staged_children(directory: StagedCopyDirectoryV1) -> File {
+    for entry in directory.entries {
+        match entry {
+            StagedCopyEntryV1::File(file) => drop(file),
+            StagedCopyEntryV1::Directory(child) => drop(close_staged_children(child)),
+        }
+    }
+    directory.handle
+}
+
+struct StageCopyFailureV1 {
+    cancelled: bool,
+    staging: StagedCopyDirectoryV1,
+}
+
+fn stage_copy_directory(
+    source: &mut PreparedCopyDirectoryV1,
+    mut staging: StagedCopyDirectoryV1,
+    cancellation: &RunnerCancellationV1,
+) -> Result<StagedCopyDirectoryV1, StageCopyFailureV1> {
+    for entry in &mut source.entries {
+        if cancellation.is_cancelled() {
+            return Err(StageCopyFailureV1 {
+                cancelled: true,
+                staging,
+            });
+        }
+        match entry {
+            PreparedCopyEntryV1::File { name, handle, .. } => {
+                let file = match create_verified_staging_child_file(&staging.handle, name) {
+                    Ok(file) => file,
+                    Err(_) => {
+                        return Err(StageCopyFailureV1 {
+                            cancelled: false,
+                            staging,
+                        });
+                    }
+                };
+                staging.entries.push(StagedCopyEntryV1::File(file));
+                let Some(StagedCopyEntryV1::File(destination)) = staging.entries.last_mut() else {
+                    unreachable!();
+                };
+                if let Err(cancelled) = copy_file_contents(handle, destination, cancellation) {
+                    return Err(StageCopyFailureV1 { cancelled, staging });
+                }
+                if destination.sync_all().is_err() {
+                    return Err(StageCopyFailureV1 {
+                        cancelled: false,
+                        staging,
+                    });
+                }
+            }
+            PreparedCopyEntryV1::Directory {
+                name, directory, ..
+            } => {
+                let child = match create_verified_staging_child_directory(&staging.handle, name) {
+                    Ok(handle) => StagedCopyDirectoryV1 {
+                        handle,
+                        entries: Vec::new(),
+                    },
+                    Err(_) => {
+                        return Err(StageCopyFailureV1 {
+                            cancelled: false,
+                            staging,
+                        });
+                    }
+                };
+                match stage_copy_directory(directory, child, cancellation) {
+                    Ok(child) => staging.entries.push(StagedCopyEntryV1::Directory(child)),
+                    Err(failure) => {
+                        staging
+                            .entries
+                            .push(StagedCopyEntryV1::Directory(failure.staging));
+                        return Err(StageCopyFailureV1 {
+                            cancelled: failure.cancelled,
+                            staging,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(staging)
+}
+
+fn cleanup_staged_directory(directory: &StagedCopyDirectoryV1) -> bool {
+    let mut failed = false;
+    for entry in directory.entries.iter().rev() {
+        match entry {
+            StagedCopyEntryV1::File(file) => failed |= delete_open_file(file).is_err(),
+            StagedCopyEntryV1::Directory(child) => failed |= cleanup_staged_directory(child),
+        }
+    }
+    failed |= delete_open_file(&directory.handle).is_err();
+    failed
+}
+
+fn source_directory_still_matches(directory: &PreparedCopyDirectoryV1) -> bool {
+    if !file_matches_identity(&directory.handle, directory.identity).unwrap_or(false) {
+        return false;
+    }
+    let Ok(current) = list_verified_directory(&directory.handle) else {
+        return false;
+    };
+    if current.len() != directory.entries.len() {
+        return false;
+    }
+    for (expected, current) in directory.entries.iter().zip(current) {
+        match expected {
+            PreparedCopyEntryV1::File {
+                display_name,
+                identity,
+                ..
+            } if current.kind == VerifiedDirectoryEntryKindV1::File
+                && current.display_name == *display_name =>
+            {
+                let Ok(file) =
+                    open_verified_child_file_for_inspection(&directory.handle, &current.name)
+                else {
+                    return false;
+                };
+                if !file_matches_identity(&file, *identity).unwrap_or(false) {
+                    return false;
+                }
+            }
+            PreparedCopyEntryV1::Directory {
+                display_name,
+                directory: child,
+                ..
+            } if current.kind == VerifiedDirectoryEntryKindV1::Directory
+                && current.display_name == *display_name =>
+            {
+                let Ok(opened) = open_verified_child_directory(&directory.handle, &current.name)
+                else {
+                    return false;
+                };
+                if !file_matches_identity(&opened, child.identity).unwrap_or(false)
+                    || !source_directory_still_matches(child)
+                {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn create_staging_directory(parent: &File) -> Result<File, DirectoryAccessErrorV1> {
+    for _ in 0..8 {
+        let name = format!(".wingman-stage-{}.tmp", Uuid::new_v4().as_simple());
+        match create_verified_staging_child_directory(parent, OsStr::new(&name)) {
+            Err(DirectoryAccessErrorV1::Io {
+                kind: std::io::ErrorKind::AlreadyExists,
+            }) => continue,
+            result => return result,
+        }
+    }
+    Err(DirectoryAccessErrorV1::Io {
+        kind: std::io::ErrorKind::AlreadyExists,
+    })
+}
+
+fn path_is_same_or_descendant(candidate: &Path, ancestor: &Path) -> bool {
+    let candidate = candidate.components().collect::<Vec<_>>();
+    let ancestor = ancestor.components().collect::<Vec<_>>();
+    candidate.len() >= ancestor.len()
+        && candidate.iter().zip(ancestor).all(|(left, right)| {
+            names_equal_ignore_case(
+                &left.as_os_str().to_string_lossy(),
+                &right.as_os_str().to_string_lossy(),
+            )
+        })
+}
+
 fn cleanup_staging<E: Write>(
     staging: &File,
     stderr: &mut E,
@@ -259,6 +644,8 @@ fn cleanup_staging<E: Write>(
 fn prepare_source(
     spec: &ValidatedPathSpecV1,
     cwd: &str,
+    recursive: bool,
+    cancellation: &RunnerCancellationV1,
 ) -> Result<PreparedSourceV1, CpPreflightFailureV1> {
     let display = spec.original.clone();
     let resolved = resolve_copy_path(spec, cwd, &display)?;
@@ -268,13 +655,32 @@ fn prepare_source(
             message: "unsupported source path",
         })?;
     let Some(leaf) = components.pop() else {
-        return Ok(PreparedSourceV1::Directory);
+        return if recursive {
+            Err(CpPreflightFailureV1::KnownSafety {
+                display,
+                message: "copying a filesystem root is not supported",
+            })
+        } else {
+            Ok(PreparedSourceV1::Directory(None))
+        };
     };
     let Some(parent) = traverse_parent(root, &components, &display)? else {
         return Ok(PreparedSourceV1::Missing);
     };
     match open_verified_child_directory(&parent, &leaf) {
-        Ok(_) => Ok(PreparedSourceV1::Directory),
+        Ok(_directory) if !recursive => Ok(PreparedSourceV1::Directory(None)),
+        Ok(directory) => {
+            let mut state = CopyPreflightStateV1 { visited: 1 };
+            let tree = prepare_copy_directory(directory, 0, &mut state, &display, cancellation)?;
+            Ok(PreparedSourceV1::Directory(Some(
+                PreparedSourceDirectoryV1 {
+                    display,
+                    resolved,
+                    basename: leaf,
+                    tree,
+                },
+            )))
+        }
         Err(DirectoryAccessErrorV1::ReparsePoint) => Err(CpPreflightFailureV1::KnownSafety {
             display,
             message: "reparse sources are not allowed",
@@ -309,6 +715,103 @@ fn prepare_source(
             }
         }
     }
+}
+
+fn prepare_copy_directory(
+    handle: File,
+    depth: usize,
+    state: &mut CopyPreflightStateV1,
+    display: &str,
+    cancellation: &RunnerCancellationV1,
+) -> Result<PreparedCopyDirectoryV1, CpPreflightFailureV1> {
+    if cancellation.is_cancelled() {
+        return Err(CpPreflightFailureV1::Cancelled);
+    }
+    if depth > MAX_COPY_DEPTH || state.visited > MAX_COPY_ENTRIES {
+        return Err(CpPreflightFailureV1::KnownSafety {
+            display: display.to_string(),
+            message: "recursive copy exceeds a resource limit",
+        });
+    }
+    let identity =
+        capture_file_identity(&handle).map_err(|_| CpPreflightFailureV1::Unavailable {
+            display: display.to_string(),
+        })?;
+    let listed =
+        list_verified_directory(&handle).map_err(|_| CpPreflightFailureV1::Unavailable {
+            display: display.to_string(),
+        })?;
+    let mut entries = Vec::with_capacity(listed.len());
+    for entry in listed {
+        if cancellation.is_cancelled() {
+            return Err(CpPreflightFailureV1::Cancelled);
+        }
+        state.visited = state.visited.saturating_add(1);
+        if state.visited > MAX_COPY_ENTRIES {
+            return Err(CpPreflightFailureV1::KnownSafety {
+                display: display.to_string(),
+                message: "recursive copy exceeds a resource limit",
+            });
+        }
+        match entry.kind {
+            VerifiedDirectoryEntryKindV1::ReparsePoint => {
+                return Err(CpPreflightFailureV1::KnownSafety {
+                    display: display.to_string(),
+                    message: "recursive source contains a reparse point",
+                });
+            }
+            VerifiedDirectoryEntryKindV1::File => {
+                let file =
+                    open_verified_child_file_for_read(&handle, &entry.name).map_err(|error| {
+                        match error {
+                            FileAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
+                                display: display.to_string(),
+                                message: "recursive source contains a reparse point",
+                            },
+                            _ => CpPreflightFailureV1::Unavailable {
+                                display: display.to_string(),
+                            },
+                        }
+                    })?;
+                let identity = capture_file_identity(&file).map_err(|_| {
+                    CpPreflightFailureV1::Unavailable {
+                        display: display.to_string(),
+                    }
+                })?;
+                entries.push(PreparedCopyEntryV1::File {
+                    name: entry.name,
+                    display_name: entry.display_name,
+                    handle: file,
+                    identity,
+                });
+            }
+            VerifiedDirectoryEntryKindV1::Directory => {
+                let directory = open_verified_child_directory(&handle, &entry.name).map_err(
+                    |error| match error {
+                        DirectoryAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
+                            display: display.to_string(),
+                            message: "recursive source contains a reparse point",
+                        },
+                        _ => CpPreflightFailureV1::Unavailable {
+                            display: display.to_string(),
+                        },
+                    },
+                )?;
+                let directory =
+                    prepare_copy_directory(directory, depth + 1, state, display, cancellation)?;
+                entries.push(PreparedCopyEntryV1::Directory {
+                    name: entry.name,
+                    display_name: entry.display_name,
+                    directory,
+                });
+            }
+        }
+    }
+    Ok(PreparedCopyDirectoryV1 {
+        handle,
+        identity,
+        entries,
+    })
 }
 
 fn prepare_destination(
@@ -488,6 +991,7 @@ fn report_preflight_failure<E: Write>(
             )?;
             Ok(1)
         }
+        CpPreflightFailureV1::Cancelled => Ok(130),
     }
 }
 

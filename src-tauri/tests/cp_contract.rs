@@ -139,6 +139,103 @@ fn same_file_hard_link_and_reparse_destination_are_no_mutation_rejections() {
     cleanup(&outside);
 }
 
+#[test]
+fn recursive_copy_commits_a_complete_nested_tree_without_merging() {
+    let sandbox = sandbox();
+    let source = sandbox.join("source tree");
+    let destination = sandbox.join("한글 destination");
+    fs::create_dir_all(source.join("nested").join("empty")).unwrap();
+    fs::write(source.join("root.txt"), b"root").unwrap();
+    fs::write(source.join("nested").join("child.txt"), b"child").unwrap();
+
+    let outcome = execute_prepared(request_recursive(
+        &source,
+        &destination,
+        ExistingDestinationPolicyV1::Replace,
+    ))
+    .expect("recursive copy");
+
+    assert_eq!(outcome.exit_code, 0, "{:?}", outcome.stderr);
+    assert!(outcome.stderr.is_empty());
+    assert_eq!(fs::read(destination.join("root.txt")).unwrap(), b"root");
+    assert_eq!(
+        fs::read(destination.join("nested").join("child.txt")).unwrap(),
+        b"child"
+    );
+    assert!(destination.join("nested").join("empty").is_dir());
+    assert_no_staging_artifacts(&sandbox);
+    cleanup(&sandbox);
+}
+
+#[test]
+fn recursive_copy_rejects_destination_inside_source_before_staging() {
+    let sandbox = sandbox();
+    let source = sandbox.join("source");
+    let destination = source.join("nested").join("copy");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("keep.txt"), b"keep").unwrap();
+
+    let outcome = execute_prepared(request_recursive(
+        &source,
+        &destination,
+        ExistingDestinationPolicyV1::Replace,
+    ))
+    .expect("reject contained destination");
+
+    assert_eq!(outcome.exit_code, 2);
+    assert!(!destination.exists());
+    assert_eq!(fs::read(source.join("keep.txt")).unwrap(), b"keep");
+    assert_no_staging_artifacts(&source);
+    cleanup(&sandbox);
+}
+
+#[test]
+fn recursive_source_reparse_prevents_every_destination_mutation() {
+    let sandbox = sandbox();
+    let outside = sandbox.with_extension("outside-recursive");
+    let source = sandbox.join("source");
+    let destination = sandbox.join("destination.txt");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(source.join("safe.txt"), b"safe").unwrap();
+    fs::write(&destination, b"old destination").unwrap();
+    create_directory_reparse(&outside, &source.join("late-link"));
+
+    let outcome = execute_prepared(request_recursive(
+        &source,
+        &destination,
+        ExistingDestinationPolicyV1::Replace,
+    ))
+    .expect("reject recursive reparse");
+
+    assert_eq!(outcome.exit_code, 2);
+    assert_eq!(fs::read(&destination).unwrap(), b"old destination");
+    assert_no_staging_artifacts(&sandbox);
+    fs::remove_dir(source.join("late-link")).unwrap();
+    cleanup(&sandbox);
+    cleanup(&outside);
+}
+
+#[test]
+fn directory_source_without_recursive_option_is_an_operational_failure() {
+    let sandbox = sandbox();
+    let source = sandbox.join("source");
+    let destination = sandbox.join("destination");
+    fs::create_dir(&source).unwrap();
+
+    let outcome = execute_prepared(request(
+        &source,
+        &destination,
+        ExistingDestinationPolicyV1::Replace,
+    ))
+    .expect("require recursive option");
+
+    assert_eq!(outcome.exit_code, 1);
+    assert!(!destination.exists());
+    assert_no_staging_artifacts(&sandbox);
+    cleanup(&sandbox);
+}
+
 fn request(
     source: &Path,
     destination: &Path,
@@ -159,6 +256,22 @@ fn request(
             },
         },
     }
+}
+
+fn request_recursive(
+    source: &Path,
+    destination: &Path,
+    policy: ExistingDestinationPolicyV1,
+) -> PreparedRequestV1 {
+    let mut request = request(source, destination, policy);
+    let PreparedRequestKindV1::Execute { plan } = &mut request.kind else {
+        unreachable!();
+    };
+    let [StagePlanV1::CopyPath { recursive, .. }] = plan.stages.as_mut_slice() else {
+        unreachable!();
+    };
+    *recursive = true;
+    request
 }
 
 fn assert_no_staging_artifacts(path: &Path) {
