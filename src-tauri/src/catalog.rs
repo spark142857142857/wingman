@@ -49,6 +49,8 @@ pub fn build_execution_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Ca
             stages.push(build_cp(command)?);
         } else if command.name.eq_ignore_ascii_case("mv") {
             stages.push(build_mv(command)?);
+        } else if command.name.eq_ignore_ascii_case("rm") {
+            stages.push(build_rm(command)?);
         } else if command.name.eq_ignore_ascii_case("cat") {
             if index != 0 {
                 return Err(CatalogErrorV1::InvalidSourceShape);
@@ -302,6 +304,50 @@ fn build_mv(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
         source: arguments.source,
         destination: arguments.destination,
         existing_destination: arguments.existing_destination,
+    })
+}
+
+fn build_rm(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let mut recursive = false;
+    let mut force = false;
+    let mut parse_options = true;
+    let mut paths = Vec::new();
+    for argument in &command.arguments {
+        if parse_options && argument == "--" {
+            parse_options = false;
+        } else if parse_options {
+            if let Some(long) = argument.strip_prefix("--") {
+                match long {
+                    "recursive" => recursive = true,
+                    "force" => force = true,
+                    _ => return Err(CatalogErrorV1::UnsupportedOption),
+                }
+            } else if let Some(shorts) = argument.strip_prefix('-') {
+                if shorts.is_empty() {
+                    paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+                    continue;
+                }
+                for short in shorts.chars() {
+                    match short {
+                        'r' | 'R' => recursive = true,
+                        'f' => force = true,
+                        _ => return Err(CatalogErrorV1::UnsupportedOption),
+                    }
+                }
+            } else {
+                paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+            }
+        } else {
+            paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+        }
+    }
+    if paths.is_empty() {
+        return Err(CatalogErrorV1::MissingOperand);
+    }
+    Ok(StagePlanV1::RemovePaths {
+        paths,
+        recursive,
+        force,
     })
 }
 

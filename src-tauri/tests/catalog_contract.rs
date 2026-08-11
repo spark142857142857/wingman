@@ -344,6 +344,90 @@ fn runner_revalidates_the_move_wire_shape() {
 }
 
 #[test]
+fn rm_builds_one_bounded_non_composable_removal_plan() {
+    for (line, recursive, force, paths) in [
+        ("rm notes.txt", false, false, vec!["notes.txt"]),
+        ("rm -r temp", true, false, vec!["temp"]),
+        ("rm -Rf dist cache", true, true, vec!["dist", "cache"]),
+        ("rm --recursive --force output", true, true, vec!["output"]),
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert_eq!(
+            build_execution_plan(&parsed).unwrap(),
+            ExecutionPlanV1 {
+                stages: vec![StagePlanV1::RemovePaths {
+                    paths: paths
+                        .into_iter()
+                        .map(|path| validate_path_value(path).unwrap())
+                        .collect(),
+                    recursive,
+                    force,
+                }],
+                redirect: None,
+            },
+            "line: {line}"
+        );
+    }
+
+    let parsed = parse_p0_tokens(&lex_p0_line("rm -- -file.txt").unwrap()).unwrap();
+    assert_eq!(
+        build_execution_plan(&parsed).unwrap().stages,
+        vec![StagePlanV1::RemovePaths {
+            paths: vec![validate_path_value("-file.txt").unwrap()],
+            recursive: false,
+            force: false,
+        }]
+    );
+}
+
+#[test]
+fn rm_rejects_unsupported_options_missing_targets_and_composition() {
+    for line in [
+        "rm",
+        "rm -i file.txt",
+        "rm --no-preserve-root path",
+        "rm *.txt",
+        "rm file.txt | wc -l",
+        "rm file.txt > result.txt",
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
+    }
+}
+
+#[test]
+fn runner_revalidates_the_bounded_rm_wire_shape() {
+    let valid = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::RemovePaths {
+            paths: vec![validate_path_value("one").unwrap()],
+            recursive: true,
+            force: true,
+        }],
+        redirect: None,
+    };
+    assert_eq!(validate_execution_plan(&valid), Ok(()));
+
+    let empty = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::RemovePaths {
+            paths: Vec::new(),
+            recursive: false,
+            force: false,
+        }],
+        redirect: None,
+    };
+    assert!(validate_execution_plan(&empty).is_err());
+
+    let pipeline = ExecutionPlanV1 {
+        stages: vec![
+            valid.stages[0].clone(),
+            StagePlanV1::CountLines { path: None },
+        ],
+        redirect: None,
+    };
+    assert!(validate_execution_plan(&pipeline).is_err());
+}
+
+#[test]
 fn cat_head_and_redirect_build_one_typed_shell_independent_plan() {
     let parsed =
         parse_p0_tokens(&lex_p0_line(r#"cat -n "app log.txt" | head -n 5 > out.txt"#).unwrap())

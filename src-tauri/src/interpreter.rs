@@ -97,6 +97,11 @@ pub enum StagePlanV1 {
         destination: ValidatedPathSpecV1,
         existing_destination: ExistingDestinationPolicyV1,
     },
+    RemovePaths {
+        paths: Vec<ValidatedPathSpecV1>,
+        recursive: bool,
+        force: bool,
+    },
     ListEntries {
         path: Option<ValidatedPathSpecV1>,
         include_hidden: bool,
@@ -407,6 +412,19 @@ pub fn validate_execution_plan(
         return Ok(());
     }
 
+    if let [StagePlanV1::RemovePaths { paths, .. }] = plan.stages.as_slice() {
+        if plan.redirect.is_some() || paths.is_empty() {
+            return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+        }
+        if paths.len() > MAX_PATH_OPERANDS {
+            return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
+        }
+        for path in paths {
+            validate_serialized_path(path)?;
+        }
+        return Ok(());
+    }
+
     let mut saw_recursive_search = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
@@ -416,7 +434,8 @@ pub fn validate_execution_plan(
             | StagePlanV1::CreateDirectories { .. }
             | StagePlanV1::TouchFiles { .. }
             | StagePlanV1::CopyPath { .. }
-            | StagePlanV1::MovePath { .. } => {
+            | StagePlanV1::MovePath { .. }
+            | StagePlanV1::RemovePaths { .. } => {
                 return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
             }
             StagePlanV1::ListEntries {
