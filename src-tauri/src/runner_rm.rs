@@ -1,13 +1,14 @@
 use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
-use crate::runner_cp::path_is_same_or_descendant;
 use crate::runner_io::{
     capture_file_identity, delete_open_file_with_force, file_matches_identity,
     list_verified_directory, open_child_for_removal, open_verified_child_directory,
     open_verified_root_directory, DirectoryAccessErrorV1, FileIdentityV1, RemovalEntryKindV1,
     VerifiedDirectoryEntryKindV1,
 };
-use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
+use crate::runner_mutation::{
+    path_is_same_or_descendant, write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1,
+};
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
 use std::ffi::OsString;
 use std::fs::File;

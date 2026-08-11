@@ -37,6 +37,7 @@ mod runner_ordered_fault;
 pub mod runner_readonly;
 mod runner_rm;
 mod runner_touch;
+mod runner_transfer;
 pub mod runner_which;
 pub mod session_runtime;
 pub mod shell_adapter;

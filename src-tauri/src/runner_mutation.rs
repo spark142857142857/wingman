@@ -1,4 +1,6 @@
+use crate::runner_ls::names_equal_ignore_case;
 use std::io::{self, Write};
+use std::path::Path;
 
 const MAX_MUTATION_DIAGNOSTICS: usize = 16;
 
@@ -37,4 +39,16 @@ pub(crate) fn write_diagnostic(
         .and_then(|()| writer.write_all(b"\r\n"))
         .and_then(|()| writer.flush())
         .map_err(|error| MutationExecutionErrorV1::Output { kind: error.kind() })
+}
+
+pub(crate) fn path_is_same_or_descendant(candidate: &Path, ancestor: &Path) -> bool {
+    let candidate = candidate.components().collect::<Vec<_>>();
+    let ancestor = ancestor.components().collect::<Vec<_>>();
+    candidate.len() >= ancestor.len()
+        && candidate.iter().zip(ancestor).all(|(left, right)| {
+            names_equal_ignore_case(
+                &left.as_os_str().to_string_lossy(),
+                &right.as_os_str().to_string_lossy(),
+            )
+        })
 }
