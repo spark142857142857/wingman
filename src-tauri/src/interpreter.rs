@@ -788,6 +788,8 @@ fn claimed_p0_command(raw_line: &str) -> Option<&'static str> {
         Some("uniq")
     } else if candidate.eq_ignore_ascii_case("sort") {
         Some("sort")
+    } else if candidate.eq_ignore_ascii_case("mkdir") {
+        Some("mkdir")
     } else {
         None
     }
@@ -817,6 +819,7 @@ fn p0_catalog_diagnostic(command_name: &str, error: CatalogErrorV1) -> String {
     let message = match error {
         CatalogErrorV1::UnsupportedCommand => "pipeline contains an unsupported command",
         CatalogErrorV1::UnsupportedOption => "unsupported option",
+        CatalogErrorV1::MissingOperand if command_name == "mkdir" => "missing directory operand",
         CatalogErrorV1::MissingOperand => "missing file operand",
         CatalogErrorV1::InvalidCount => "invalid line count",
         CatalogErrorV1::InvalidSourceShape => "invalid pipeline source shape",

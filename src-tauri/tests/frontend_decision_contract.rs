@@ -6,6 +6,70 @@ use wingman_lib::interpreter::{
 use wingman_lib::windows_path::validate_path_value;
 
 #[test]
+fn reliable_familiar_mkdir_is_stored_as_a_typed_mutation_plan() {
+    let mut session = InterpreterSession::new(41, 6, ActiveShell::WindowsPowerShell);
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 41,
+            command_sequence: 6,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: "mkdir -p one two\\three".to_string(),
+        })
+        .expect("classify mkdir");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared mkdir plan, got {other:?}"),
+    };
+    assert_eq!(
+        session.consume_prepared(&request_id),
+        Some(PreparedRequestV1 {
+            protocol: "wingman.run".to_string(),
+            version: 1,
+            kind: PreparedRequestKindV1::Execute {
+                plan: ExecutionPlanV1 {
+                    stages: vec![StagePlanV1::CreateDirectories {
+                        paths: vec![
+                            validate_path_value("one").unwrap(),
+                            validate_path_value("two\\three").unwrap(),
+                        ],
+                        parents: true,
+                    }],
+                    redirect: None,
+                },
+            },
+        })
+    );
+}
+
+#[test]
+fn claimed_invalid_mkdir_is_rejected_without_native_fallback() {
+    let mut session = InterpreterSession::new(41, 5, ActiveShell::WindowsPowerShell);
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 41,
+            command_sequence: 5,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: "mkdir -m 755 output".to_string(),
+        })
+        .expect("classify invalid mkdir");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared mkdir rejection, got {other:?}"),
+    };
+    assert_eq!(
+        session.consume_prepared(&request_id).unwrap().kind,
+        PreparedRequestKindV1::Reject {
+            diagnostic: "wingman mkdir: unsupported option".to_string(),
+            exit_code: 2,
+        }
+    );
+}
+
+#[test]
 fn native_command_is_returned_as_authoritative_pass_through_line() {
     let request = PrepareSubmissionV1 {
         session_id: 41,
