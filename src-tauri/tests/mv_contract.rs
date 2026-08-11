@@ -180,6 +180,44 @@ fn missing_source_does_not_mask_an_unsafe_destination() {
     cleanup(&outside);
 }
 
+#[test]
+#[ignore = "requires WINGMAN_TEST_SECOND_VOLUME to name a writable distinct volume"]
+fn actual_cross_volume_move_commits_then_removes_the_source() {
+    let second_root = PathBuf::from(
+        std::env::var_os("WINGMAN_TEST_SECOND_VOLUME")
+            .expect("set WINGMAN_TEST_SECOND_VOLUME to a writable distinct volume"),
+    );
+    let destination_sandbox = second_root.join(format!(
+        "wingman-mv-cross-volume-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&destination_sandbox).unwrap();
+    let source_sandbox = sandbox();
+    let source = source_sandbox.join("source.txt");
+    let destination = destination_sandbox.join("destination.txt");
+    fs::write(&source, b"cross-volume").unwrap();
+
+    let outcome = execute_prepared(request(
+        &source,
+        &destination,
+        ExistingDestinationPolicyV1::Replace,
+    ))
+    .expect("move across actual volumes");
+
+    assert_eq!(
+        outcome.exit_code,
+        0,
+        "{}",
+        String::from_utf8_lossy(&outcome.stderr)
+    );
+    assert!(!source.exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"cross-volume");
+    cleanup(&source_sandbox);
+    assert!(destination_sandbox.starts_with(&second_root));
+    fs::remove_dir_all(&destination_sandbox).unwrap();
+}
+
 fn request(
     source: &Path,
     destination: &Path,

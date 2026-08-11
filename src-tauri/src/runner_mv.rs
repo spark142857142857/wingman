@@ -365,6 +365,7 @@ fn report_preflight_failure<E: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner_io::delete_open_file_with_force;
     use crate::windows_path::validate_path_value;
     use uuid::Uuid;
 
@@ -482,6 +483,53 @@ mod tests {
         assert_eq!(std::fs::read(&destination).unwrap(), b"original");
         assert_eq!(std::fs::read(&source).unwrap(), b"replacement");
         assert!(!moved_original.exists());
+        std::fs::remove_dir_all(&sandbox).unwrap();
+    }
+
+    #[test]
+    fn copy_fallback_keeps_both_copies_when_source_removal_fails() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "wingman-mv-source-removal-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ));
+        std::fs::create_dir(&sandbox).unwrap();
+        let source = sandbox.join("source.txt");
+        let destination = sandbox.join("destination.txt");
+        std::fs::write(&source, b"complete").unwrap();
+        let mut permissions = std::fs::metadata(&source).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&source, permissions).unwrap();
+        let mut stderr = Vec::new();
+
+        let exit = execute(
+            &validate_path_value(&source.display().to_string()).unwrap(),
+            &validate_path_value(&destination.display().to_string()).unwrap(),
+            ExistingDestinationPolicyV1::Replace,
+            &mut stderr,
+            &RunnerCancellationV1::new(),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(exit, 1);
+        assert_eq!(std::fs::read(&source).unwrap(), b"complete");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"complete");
+        assert!(String::from_utf8(stderr)
+            .unwrap()
+            .contains("destination committed; source removal incomplete"));
+        let prepared = match prepare_source(
+            &validate_path_value(&source.display().to_string()).unwrap(),
+            &std::env::current_dir().unwrap().display().to_string(),
+            true,
+            TransferSourceAccessV1::Move,
+            &RunnerCancellationV1::new(),
+        ) {
+            Ok(PreparedSourceV1::File(source)) => source,
+            _ => panic!("reopen readonly source for cleanup"),
+        };
+        delete_open_file_with_force(&prepared.handle, true).unwrap();
+        drop(prepared);
         std::fs::remove_dir_all(&sandbox).unwrap();
     }
 }
