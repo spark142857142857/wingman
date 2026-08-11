@@ -30,7 +30,8 @@ pub(crate) struct PreparedSourceFileV1 {
 
 pub(crate) enum PreparedSourceV1 {
     File(PreparedSourceFileV1),
-    Missing,
+    Missing { basename: OsString },
+    DirectoryWithoutRecursive { basename: OsString },
     Directory(Option<PreparedSourceDirectoryV1>),
 }
 
@@ -169,13 +170,33 @@ fn execute<E: Write>(
         Ok(source) => source,
         Err(failure) => return report_preflight_failure(stderr, failure),
     };
+    let basename = match &source {
+        PreparedSourceV1::File(source) => source.basename.clone(),
+        PreparedSourceV1::Missing { basename }
+        | PreparedSourceV1::DirectoryWithoutRecursive { basename } => basename.clone(),
+        PreparedSourceV1::Directory(Some(source)) => source.basename.clone(),
+        PreparedSourceV1::Directory(None) => {
+            let mut diagnostics = MutationDiagnosticsV1::default();
+            diagnostics.operand(
+                stderr,
+                "cp",
+                &source_spec.original,
+                "directory source requires recursive copy",
+            )?;
+            return Ok(1);
+        }
+    };
+    let destination = match prepare_destination(destination_spec, &cwd, &basename) {
+        Ok(destination) => destination,
+        Err(failure) => return report_preflight_failure(stderr, failure),
+    };
     match source {
-        PreparedSourceV1::Missing => {
+        PreparedSourceV1::Missing { .. } => {
             let mut diagnostics = MutationDiagnosticsV1::default();
             diagnostics.operand(stderr, "cp", &source_spec.original, "source does not exist")?;
             Ok(1)
         }
-        PreparedSourceV1::Directory(None) => {
+        PreparedSourceV1::DirectoryWithoutRecursive { .. } => {
             let mut diagnostics = MutationDiagnosticsV1::default();
             diagnostics.operand(
                 stderr,
@@ -185,31 +206,19 @@ fn execute<E: Write>(
             )?;
             Ok(1)
         }
-        PreparedSourceV1::Directory(Some(mut source)) => execute_directory_copy(
-            &mut source,
-            destination_spec,
-            &cwd,
-            policy,
-            "cp",
-            stderr,
-            cancellation,
-        ),
-        PreparedSourceV1::File(mut source) => execute_file_copy(
-            &mut source,
-            destination_spec,
-            &cwd,
-            policy,
-            "cp",
-            stderr,
-            cancellation,
-        ),
+        PreparedSourceV1::Directory(None) => unreachable!("root handled before destination"),
+        PreparedSourceV1::Directory(Some(mut source)) => {
+            execute_directory_copy(&mut source, destination, policy, "cp", stderr, cancellation)
+        }
+        PreparedSourceV1::File(mut source) => {
+            execute_file_copy(&mut source, destination, policy, "cp", stderr, cancellation)
+        }
     }
 }
 
 pub(crate) fn execute_file_copy<E: Write>(
     source: &mut PreparedSourceFileV1,
-    destination_spec: &ValidatedPathSpecV1,
-    cwd: &str,
+    destination: PreparedDestinationV1,
     policy: ExistingDestinationPolicyV1,
     command: &str,
     stderr: &mut E,
@@ -218,10 +227,6 @@ pub(crate) fn execute_file_copy<E: Write>(
     if cancellation.is_cancelled() {
         return Ok(130);
     }
-    let destination = match prepare_destination(destination_spec, cwd, &source.basename) {
-        Ok(destination) => destination,
-        Err(failure) => return report_preflight_failure(stderr, failure),
-    };
     if names_equal_ignore_case(
         &source.resolved.display().to_string(),
         &destination.resolved.display().to_string(),
@@ -385,8 +390,7 @@ pub(crate) fn execute_file_copy<E: Write>(
 
 pub(crate) fn execute_directory_copy<E: Write>(
     source: &mut PreparedSourceDirectoryV1,
-    destination_spec: &ValidatedPathSpecV1,
-    cwd: &str,
+    destination: PreparedDestinationV1,
     policy: ExistingDestinationPolicyV1,
     command: &str,
     stderr: &mut E,
@@ -395,10 +399,6 @@ pub(crate) fn execute_directory_copy<E: Write>(
     if cancellation.is_cancelled() {
         return Ok(130);
     }
-    let destination = match prepare_destination(destination_spec, cwd, &source.basename) {
-        Ok(destination) => destination,
-        Err(failure) => return report_preflight_failure(stderr, failure),
-    };
     if path_is_same_or_descendant(&destination.resolved, &source.resolved) {
         write_diagnostic(
             stderr,
@@ -857,14 +857,16 @@ pub(crate) fn prepare_source(
         };
     };
     let Some(parent) = traverse_parent(root, &components, &display)? else {
-        return Ok(PreparedSourceV1::Missing);
+        return Ok(PreparedSourceV1::Missing { basename: leaf });
     };
     let opened_directory = match access {
         TransferSourceAccessV1::Copy => open_verified_child_directory(&parent, &leaf),
         TransferSourceAccessV1::Move => open_verified_child_directory_for_move(&parent, &leaf),
     };
     match opened_directory {
-        Ok(_directory) if !recursive => Ok(PreparedSourceV1::Directory(None)),
+        Ok(_directory) if !recursive => {
+            Ok(PreparedSourceV1::DirectoryWithoutRecursive { basename: leaf })
+        }
         Ok(directory) => {
             let mut state = CopyPreflightStateV1 { visited: 1 };
             let tree =
@@ -905,7 +907,7 @@ pub(crate) fn prepare_source(
                         identity,
                     }))
                 }
-                Err(FileAccessErrorV1::Missing) => Ok(PreparedSourceV1::Missing),
+                Err(FileAccessErrorV1::Missing) => Ok(PreparedSourceV1::Missing { basename: leaf }),
                 Err(FileAccessErrorV1::ReparsePoint) => Err(CpPreflightFailureV1::KnownSafety {
                     display,
                     message: "reparse sources are not allowed",

@@ -236,6 +236,38 @@ fn directory_source_without_recursive_option_is_an_operational_failure() {
     cleanup(&sandbox);
 }
 
+#[test]
+fn missing_and_nonrecursive_directory_sources_do_not_mask_an_unsafe_destination() {
+    let sandbox = sandbox();
+    let outside = sandbox.with_extension("outside");
+    let source_directory = sandbox.join("source-directory");
+    let missing_source = sandbox.join("missing.txt");
+    let link = sandbox.join("destination-link");
+    fs::create_dir(&outside).unwrap();
+    fs::create_dir(&source_directory).unwrap();
+    create_directory_reparse(&outside, &link);
+    let unsafe_destination = link.join("destination.txt");
+
+    for source in [&missing_source, &source_directory] {
+        let outcome = execute_prepared(request(
+            source,
+            &unsafe_destination,
+            ExistingDestinationPolicyV1::Replace,
+        ))
+        .expect("inspect destination before source operational result");
+        assert_eq!(outcome.exit_code, 2, "source: {}", source.display());
+        assert!(String::from_utf8(outcome.stderr)
+            .unwrap()
+            .contains("reparse ancestors are not allowed"));
+    }
+
+    assert!(source_directory.is_dir());
+    assert!(!outside.join("destination.txt").exists());
+    fs::remove_dir(&link).unwrap();
+    cleanup(&sandbox);
+    cleanup(&outside);
+}
+
 fn request(
     source: &Path,
     destination: &Path,

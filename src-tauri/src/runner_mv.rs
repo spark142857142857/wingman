@@ -4,8 +4,8 @@ use crate::runner_cp::{
     close_prepared_source_children, delete_prepared_source_directory, destination_still_matches,
     execute_directory_copy, execute_file_copy, path_is_same_or_descendant, prepare_destination,
     prepare_source, recheck_source_directory, CpPreflightFailureV1, PreparedDestinationStateV1,
-    PreparedSourceDeleteResultV1, PreparedSourceDirectoryV1, PreparedSourceFileV1,
-    PreparedSourceV1, SourceDirectoryRecheckResultV1, TransferSourceAccessV1,
+    PreparedDestinationV1, PreparedSourceDeleteResultV1, PreparedSourceDirectoryV1,
+    PreparedSourceFileV1, PreparedSourceV1, SourceDirectoryRecheckResultV1, TransferSourceAccessV1,
 };
 use crate::runner_io::{
     capture_file_identity, delete_open_file, file_matches_identity, identities_share_volume,
@@ -19,6 +19,7 @@ use std::io::Write;
 enum PreparedMoveSourceV1 {
     File(PreparedSourceFileV1),
     Directory(PreparedSourceDirectoryV1),
+    Missing { basename: std::ffi::OsString },
 }
 
 pub(crate) fn execute_mv_to<E: Write>(
@@ -72,21 +73,19 @@ fn execute<E: Write>(
         TransferSourceAccessV1::Move,
         cancellation,
     ) {
-        Ok(PreparedSourceV1::Missing) => {
-            let mut diagnostics = MutationDiagnosticsV1::default();
-            diagnostics.operand(stderr, "mv", &source_spec.original, "source does not exist")?;
-            return Ok(1);
-        }
+        Ok(PreparedSourceV1::Missing { basename }) => PreparedMoveSourceV1::Missing { basename },
         Ok(PreparedSourceV1::File(source)) => PreparedMoveSourceV1::File(source),
         Ok(PreparedSourceV1::Directory(Some(source))) => PreparedMoveSourceV1::Directory(source),
+        Ok(PreparedSourceV1::DirectoryWithoutRecursive { .. }) => {
+            unreachable!("move always preflights directories recursively")
+        }
         Ok(PreparedSourceV1::Directory(None)) => unreachable!("move always preflights trees"),
         Err(failure) => return report_preflight_failure(stderr, failure),
     };
-    let (source_resolved, source_basename, source_identity) = match &source {
-        PreparedMoveSourceV1::File(source) => (&source.resolved, &source.basename, source.identity),
-        PreparedMoveSourceV1::Directory(source) => {
-            (&source.resolved, &source.basename, source.tree.identity)
-        }
+    let source_basename = match &source {
+        PreparedMoveSourceV1::File(source) => &source.basename,
+        PreparedMoveSourceV1::Directory(source) => &source.basename,
+        PreparedMoveSourceV1::Missing { basename } => basename,
     };
     if cancellation.is_cancelled() {
         return Ok(130);
@@ -94,6 +93,16 @@ fn execute<E: Write>(
     let destination = match prepare_destination(destination_spec, &cwd, source_basename) {
         Ok(destination) => destination,
         Err(failure) => return report_preflight_failure(stderr, failure),
+    };
+    if matches!(source, PreparedMoveSourceV1::Missing { .. }) {
+        let mut diagnostics = MutationDiagnosticsV1::default();
+        diagnostics.operand(stderr, "mv", &source_spec.original, "source does not exist")?;
+        return Ok(1);
+    }
+    let (source_resolved, source_identity) = match &source {
+        PreparedMoveSourceV1::File(source) => (&source.resolved, source.identity),
+        PreparedMoveSourceV1::Directory(source) => (&source.resolved, source.tree.identity),
+        PreparedMoveSourceV1::Missing { .. } => unreachable!("missing source returned"),
     };
     if names_equal_ignore_case(
         &source_resolved.display().to_string(),
@@ -149,9 +158,12 @@ fn execute<E: Write>(
         }
         PreparedDestinationStateV1::Missing | PreparedDestinationStateV1::ExistingFile { .. } => {}
     }
-    let parent = destination.parent.expect("prepared destination parent");
-    let leaf = destination.leaf.expect("prepared destination leaf");
-    let parent_identity = match capture_file_identity(&parent) {
+    let parent_identity = match capture_file_identity(
+        destination
+            .parent
+            .as_ref()
+            .expect("prepared destination parent"),
+    ) {
         Ok(identity) => identity,
         Err(_) => {
             let mut diagnostics = MutationDiagnosticsV1::default();
@@ -165,8 +177,10 @@ fn execute<E: Write>(
         }
     };
     if force_copy_fallback || !identities_share_volume(source_identity, parent_identity) {
-        return execute_copy_fallback(source, destination_spec, policy, stderr, cancellation);
+        return execute_copy_fallback(source, destination, policy, stderr, cancellation);
     }
+    let parent = destination.parent.expect("prepared destination parent");
+    let leaf = destination.leaf.expect("prepared destination leaf");
     if cancellation.is_cancelled() {
         return Ok(130);
     }
@@ -181,6 +195,7 @@ fn execute<E: Write>(
         PreparedMoveSourceV1::Directory(source) => {
             recheck_source_directory(&source.tree, cancellation)
         }
+        PreparedMoveSourceV1::Missing { .. } => unreachable!("missing source returned"),
     };
     if source_recheck == SourceDirectoryRecheckResultV1::Cancelled {
         return Ok(130);
@@ -203,6 +218,7 @@ fn execute<E: Write>(
     let source_handle = match source {
         PreparedMoveSourceV1::File(source) => source.handle,
         PreparedMoveSourceV1::Directory(source) => close_prepared_source_children(source.tree),
+        PreparedMoveSourceV1::Missing { .. } => unreachable!("missing source returned"),
     };
     if rename_open_file_relative(
         &source_handle,
@@ -222,37 +238,19 @@ fn execute<E: Write>(
 
 fn execute_copy_fallback<E: Write>(
     mut source: PreparedMoveSourceV1,
-    destination_spec: &ValidatedPathSpecV1,
+    destination: PreparedDestinationV1,
     policy: ExistingDestinationPolicyV1,
     stderr: &mut E,
     cancellation: &RunnerCancellationV1,
 ) -> Result<u8, MutationExecutionErrorV1> {
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd.display().to_string(),
-        Err(_) => {
-            write_diagnostic(stderr, "wingman mv: current directory cannot be resolved")?;
-            return Ok(1);
-        }
-    };
     let copy_result = match &mut source {
-        PreparedMoveSourceV1::File(source) => execute_file_copy(
-            source,
-            destination_spec,
-            &cwd,
-            policy,
-            "mv",
-            stderr,
-            cancellation,
-        )?,
-        PreparedMoveSourceV1::Directory(source) => execute_directory_copy(
-            source,
-            destination_spec,
-            &cwd,
-            policy,
-            "mv",
-            stderr,
-            cancellation,
-        )?,
+        PreparedMoveSourceV1::File(source) => {
+            execute_file_copy(source, destination, policy, "mv", stderr, cancellation)?
+        }
+        PreparedMoveSourceV1::Directory(source) => {
+            execute_directory_copy(source, destination, policy, "mv", stderr, cancellation)?
+        }
+        PreparedMoveSourceV1::Missing { .. } => unreachable!("missing source returned"),
     };
     if copy_result == 130 {
         return Ok(130);
@@ -264,6 +262,7 @@ fn execute_copy_fallback<E: Write>(
     let source_display = match &source {
         PreparedMoveSourceV1::File(source) => source.display.clone(),
         PreparedMoveSourceV1::Directory(source) => source.display.clone(),
+        PreparedMoveSourceV1::Missing { .. } => unreachable!("missing source returned"),
     };
     if cancellation.is_cancelled() {
         write_diagnostic(
@@ -285,6 +284,7 @@ fn execute_copy_fallback<E: Write>(
         PreparedMoveSourceV1::Directory(source) => {
             recheck_source_directory(&source.tree, cancellation)
         }
+        PreparedMoveSourceV1::Missing { .. } => unreachable!("missing source returned"),
     };
     if source_recheck == SourceDirectoryRecheckResultV1::Cancelled {
         write_diagnostic(
@@ -317,6 +317,7 @@ fn execute_copy_fallback<E: Write>(
         PreparedMoveSourceV1::Directory(source) => {
             delete_prepared_source_directory(source.tree, cancellation)
         }
+        PreparedMoveSourceV1::Missing { .. } => unreachable!("missing source returned"),
     };
     match removal {
         PreparedSourceDeleteResultV1::Success => Ok(0),
@@ -456,13 +457,21 @@ mod tests {
         let PreparedSourceV1::File(prepared) = prepared else {
             panic!("expected a prepared file");
         };
+        let prepared_destination = match prepare_destination(
+            &validate_path_value(&destination.display().to_string()).unwrap(),
+            &cwd,
+            &prepared.basename,
+        ) {
+            Ok(destination) => destination,
+            Err(_) => panic!("prepare destination"),
+        };
         std::fs::rename(&source, &moved_original).unwrap();
         std::fs::write(&source, b"replacement").unwrap();
         let mut stderr = Vec::new();
 
         let exit = execute_copy_fallback(
             PreparedMoveSourceV1::File(prepared),
-            &validate_path_value(&destination.display().to_string()).unwrap(),
+            prepared_destination,
             ExistingDestinationPolicyV1::Replace,
             &mut stderr,
             &RunnerCancellationV1::new(),

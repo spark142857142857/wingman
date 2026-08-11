@@ -153,6 +153,33 @@ fn same_file_contained_destination_and_reparse_tree_are_no_mutation_rejections()
     cleanup(&outside);
 }
 
+#[test]
+fn missing_source_does_not_mask_an_unsafe_destination() {
+    let sandbox = sandbox();
+    let outside = sandbox.with_extension("outside");
+    let missing_source = sandbox.join("missing.txt");
+    let link = sandbox.join("destination-link");
+    fs::create_dir(&outside).unwrap();
+    create_directory_reparse(&outside, &link);
+    let unsafe_destination = link.join("destination.txt");
+
+    let outcome = execute_prepared(request(
+        &missing_source,
+        &unsafe_destination,
+        ExistingDestinationPolicyV1::Replace,
+    ))
+    .expect("inspect destination before missing-source result");
+
+    assert_eq!(outcome.exit_code, 2);
+    assert!(String::from_utf8(outcome.stderr)
+        .unwrap()
+        .contains("reparse ancestors are not allowed"));
+    assert!(!outside.join("destination.txt").exists());
+    fs::remove_dir(&link).unwrap();
+    cleanup(&sandbox);
+    cleanup(&outside);
+}
+
 fn request(
     source: &Path,
     destination: &Path,
