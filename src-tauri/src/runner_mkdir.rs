@@ -4,6 +4,7 @@ use crate::runner_io::{
     create_verified_child_directory, open_verified_child_directory, open_verified_root_directory,
     DirectoryAccessErrorV1,
 };
+use crate::runner_ls::names_equal_ignore_case;
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
 use std::ffi::OsString;
 use std::fs::File;
@@ -20,10 +21,20 @@ pub(crate) enum MutationExecutionErrorV1 {
 enum PreparedMkdirStateV1 {
     Ready {
         parent: File,
-        missing: Vec<OsString>,
+        missing: Vec<MissingDirectoryV1>,
     },
     ExistingDirectory,
     PathComponentIsNotDirectory,
+}
+
+struct MissingDirectoryV1 {
+    name: OsString,
+    resolved: String,
+}
+
+struct CreatedDirectoryV1 {
+    resolved: String,
+    handle: File,
 }
 
 struct PreparedMkdirOperandV1 {
@@ -95,6 +106,7 @@ fn execute<E: Write>(
 
     let mut operational_failure = false;
     let mut diagnostics_emitted = 0usize;
+    let mut created_directories = Vec::<CreatedDirectoryV1>::new();
     for operand in prepared {
         if cancellation.is_cancelled() {
             return Ok(130);
@@ -119,27 +131,73 @@ fn execute<E: Write>(
                     "a path component is not a directory",
                 )?;
             }
-            PreparedMkdirStateV1::Ready { parent: _, missing }
-                if !parents && missing.len() != 1 =>
-            {
-                operational_failure = true;
-                write_bounded_operand_diagnostic(
-                    stderr,
-                    &mut diagnostics_emitted,
-                    &operand.display,
-                    "parent directory does not exist",
-                )?;
-            }
             PreparedMkdirStateV1::Ready {
                 mut parent,
                 missing,
             } => {
-                for component in missing {
+                let missing_count = missing.len();
+                for (index, component) in missing.into_iter().enumerate() {
                     if cancellation.is_cancelled() {
                         return Ok(130);
                     }
-                    match create_verified_child_directory(&parent, &component) {
-                        Ok(created) => parent = created,
+                    let is_leaf = index + 1 == missing_count;
+                    if let Some(created) = created_directories.iter().find(|created| {
+                        names_equal_ignore_case(&created.resolved, &component.resolved)
+                    }) {
+                        if is_leaf && !parents {
+                            operational_failure = true;
+                            write_bounded_operand_diagnostic(
+                                stderr,
+                                &mut diagnostics_emitted,
+                                &operand.display,
+                                "directory already exists",
+                            )?;
+                            break;
+                        }
+                        parent = match created.handle.try_clone() {
+                            Ok(handle) => handle,
+                            Err(_) => {
+                                write_bounded_operand_diagnostic(
+                                    stderr,
+                                    &mut diagnostics_emitted,
+                                    &operand.display,
+                                    "path safety cannot be rechecked",
+                                )?;
+                                return Ok(1);
+                            }
+                        };
+                        continue;
+                    }
+                    if !parents && !is_leaf {
+                        operational_failure = true;
+                        write_bounded_operand_diagnostic(
+                            stderr,
+                            &mut diagnostics_emitted,
+                            &operand.display,
+                            "parent directory does not exist",
+                        )?;
+                        break;
+                    }
+                    match create_verified_child_directory(&parent, &component.name) {
+                        Ok(created) => {
+                            let registry_handle = match created.try_clone() {
+                                Ok(handle) => handle,
+                                Err(_) => {
+                                    write_bounded_operand_diagnostic(
+                                        stderr,
+                                        &mut diagnostics_emitted,
+                                        &operand.display,
+                                        "created directory identity cannot be retained",
+                                    )?;
+                                    return Ok(1);
+                                }
+                            };
+                            created_directories.push(CreatedDirectoryV1 {
+                                resolved: component.resolved,
+                                handle: registry_handle,
+                            });
+                            parent = created;
+                        }
                         Err(DirectoryAccessErrorV1::ReparsePoint)
                         | Err(DirectoryAccessErrorV1::Missing)
                         | Err(DirectoryAccessErrorV1::NotDirectory) => {
@@ -205,12 +263,23 @@ fn prepare_operand(
         match open_verified_child_directory(&parent, component) {
             Ok(child) => parent = child,
             Err(DirectoryAccessErrorV1::Missing) => {
+                let mut missing_path = root.to_path_buf();
+                for existing in &components[..index] {
+                    missing_path.push(existing);
+                }
+                let missing = components[index..]
+                    .iter()
+                    .map(|component| {
+                        missing_path.push(component);
+                        MissingDirectoryV1 {
+                            name: component.clone(),
+                            resolved: missing_path.display().to_string(),
+                        }
+                    })
+                    .collect();
                 return Ok(PreparedMkdirOperandV1 {
                     display,
-                    state: PreparedMkdirStateV1::Ready {
-                        parent,
-                        missing: components[index..].to_vec(),
-                    },
+                    state: PreparedMkdirStateV1::Ready { parent, missing },
                 });
             }
             Err(DirectoryAccessErrorV1::NotDirectory) => {

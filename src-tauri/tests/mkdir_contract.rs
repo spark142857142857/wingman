@@ -54,6 +54,43 @@ fn mkdir_parents_creates_missing_components_and_accepts_existing_directories() {
 }
 
 #[test]
+fn overlapping_mkdir_operands_reuse_directories_created_earlier_in_the_request() {
+    let sandbox = sandbox();
+    let parent = sandbox.join("parent");
+    let child = parent.join("child");
+
+    let plain = execute_prepared(request([&parent, &child], false))
+        .expect("plain overlapping mkdir operands");
+    assert_eq!(plain.exit_code, 0);
+    assert!(plain.stderr.is_empty());
+    assert!(child.is_dir());
+
+    let parents_root = sandbox.join("parents-root");
+    let parents_child = parents_root.join("child");
+    let recursive = execute_prepared(request([&parents_root, &parents_child], true))
+        .expect("parents overlapping mkdir operands");
+    assert_eq!(recursive.exit_code, 0);
+    assert!(recursive.stderr.is_empty());
+    assert!(parents_child.is_dir());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn duplicate_plain_mkdir_operand_reports_the_directory_created_by_the_first() {
+    let sandbox = sandbox();
+    let target = sandbox.join("duplicate");
+
+    let outcome = execute_prepared(request([&target, &target], false)).expect("duplicate mkdir");
+
+    assert_eq!(outcome.exit_code, 1);
+    assert!(target.is_dir());
+    assert!(String::from_utf8(outcome.stderr)
+        .unwrap()
+        .contains("directory already exists"));
+    cleanup(&sandbox);
+}
+
+#[test]
 fn mkdir_without_parents_does_not_create_a_partial_ancestor_chain() {
     let sandbox = sandbox();
     let nested = sandbox.join("missing").join("leaf");
