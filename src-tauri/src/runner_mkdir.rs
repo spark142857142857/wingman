@@ -1,0 +1,299 @@
+use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
+use crate::runner_cancel::RunnerCancellationV1;
+use crate::runner_io::{
+    create_verified_child_directory, open_verified_child_directory, open_verified_root_directory,
+    DirectoryAccessErrorV1,
+};
+use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
+use std::ffi::OsString;
+use std::fs::File;
+use std::io::{self, Write};
+use std::path::{Component, Path};
+
+const MAX_MUTATION_DIAGNOSTICS: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MutationExecutionErrorV1 {
+    Output { kind: io::ErrorKind },
+}
+
+enum PreparedMkdirStateV1 {
+    Ready {
+        parent: File,
+        missing: Vec<OsString>,
+    },
+    ExistingDirectory,
+    PathComponentIsNotDirectory,
+}
+
+struct PreparedMkdirOperandV1 {
+    display: String,
+    state: PreparedMkdirStateV1,
+}
+
+enum MkdirPreflightFailureV1 {
+    KnownSafety { display: String },
+    Unavailable { display: String },
+}
+
+pub(crate) fn execute_mkdir_to<E: Write>(
+    plan: &ExecutionPlanV1,
+    stderr: &mut E,
+    cancellation: &RunnerCancellationV1,
+) -> Option<Result<u8, MutationExecutionErrorV1>> {
+    let [StagePlanV1::CreateDirectories { paths, parents }] = plan.stages.as_slice() else {
+        return None;
+    };
+    if plan.redirect.is_some() {
+        return None;
+    }
+    Some(execute(paths, *parents, stderr, cancellation))
+}
+
+fn execute<E: Write>(
+    paths: &[ValidatedPathSpecV1],
+    parents: bool,
+    stderr: &mut E,
+    cancellation: &RunnerCancellationV1,
+) -> Result<u8, MutationExecutionErrorV1> {
+    if cancellation.is_cancelled() {
+        return Ok(130);
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd.display().to_string(),
+        Err(_) => {
+            write_diagnostic(
+                stderr,
+                "wingman mkdir: current directory cannot be resolved",
+            )?;
+            return Ok(1);
+        }
+    };
+    let mut prepared = Vec::with_capacity(paths.len());
+    for path in paths {
+        if cancellation.is_cancelled() {
+            return Ok(130);
+        }
+        match prepare_operand(path, &cwd) {
+            Ok(operand) => prepared.push(operand),
+            Err(MkdirPreflightFailureV1::KnownSafety { display }) => {
+                write_diagnostic(
+                    stderr,
+                    &format!("wingman mkdir: {display}: reparse paths are not allowed"),
+                )?;
+                return Ok(2);
+            }
+            Err(MkdirPreflightFailureV1::Unavailable { display }) => {
+                write_diagnostic(
+                    stderr,
+                    &format!("wingman mkdir: {display}: path safety cannot be inspected"),
+                )?;
+                return Ok(1);
+            }
+        }
+    }
+
+    let mut operational_failure = false;
+    let mut diagnostics_emitted = 0usize;
+    for operand in prepared {
+        if cancellation.is_cancelled() {
+            return Ok(130);
+        }
+        match operand.state {
+            PreparedMkdirStateV1::ExistingDirectory if parents => {}
+            PreparedMkdirStateV1::ExistingDirectory => {
+                operational_failure = true;
+                write_bounded_operand_diagnostic(
+                    stderr,
+                    &mut diagnostics_emitted,
+                    &operand.display,
+                    "directory already exists",
+                )?;
+            }
+            PreparedMkdirStateV1::PathComponentIsNotDirectory => {
+                operational_failure = true;
+                write_bounded_operand_diagnostic(
+                    stderr,
+                    &mut diagnostics_emitted,
+                    &operand.display,
+                    "a path component is not a directory",
+                )?;
+            }
+            PreparedMkdirStateV1::Ready { parent: _, missing }
+                if !parents && missing.len() != 1 =>
+            {
+                operational_failure = true;
+                write_bounded_operand_diagnostic(
+                    stderr,
+                    &mut diagnostics_emitted,
+                    &operand.display,
+                    "parent directory does not exist",
+                )?;
+            }
+            PreparedMkdirStateV1::Ready {
+                mut parent,
+                missing,
+            } => {
+                for component in missing {
+                    if cancellation.is_cancelled() {
+                        return Ok(130);
+                    }
+                    match create_verified_child_directory(&parent, &component) {
+                        Ok(created) => parent = created,
+                        Err(DirectoryAccessErrorV1::ReparsePoint)
+                        | Err(DirectoryAccessErrorV1::Missing)
+                        | Err(DirectoryAccessErrorV1::NotDirectory) => {
+                            write_bounded_operand_diagnostic(
+                                stderr,
+                                &mut diagnostics_emitted,
+                                &operand.display,
+                                "path changed during directory creation",
+                            )?;
+                            return Ok(1);
+                        }
+                        Err(DirectoryAccessErrorV1::Io {
+                            kind: io::ErrorKind::AlreadyExists,
+                        }) => {
+                            write_bounded_operand_diagnostic(
+                                stderr,
+                                &mut diagnostics_emitted,
+                                &operand.display,
+                                "path changed during directory creation",
+                            )?;
+                            return Ok(1);
+                        }
+                        Err(DirectoryAccessErrorV1::Io { .. }) => {
+                            operational_failure = true;
+                            write_bounded_operand_diagnostic(
+                                stderr,
+                                &mut diagnostics_emitted,
+                                &operand.display,
+                                "directory creation failed",
+                            )?;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(if operational_failure { 1 } else { 0 })
+}
+
+fn prepare_operand(
+    spec: &ValidatedPathSpecV1,
+    cwd: &str,
+) -> Result<PreparedMkdirOperandV1, MkdirPreflightFailureV1> {
+    let display = spec.original.clone();
+    let resolved = resolve_path_spec(spec, cwd).map_err(|error| match error {
+        PathResolutionErrorV1::TraversalAboveRoot
+        | PathResolutionErrorV1::TooLong
+        | PathResolutionErrorV1::InvalidSpec => MkdirPreflightFailureV1::KnownSafety {
+            display: display.clone(),
+        },
+        PathResolutionErrorV1::InvalidCurrentDirectory => MkdirPreflightFailureV1::Unavailable {
+            display: display.clone(),
+        },
+    })?;
+    let (root, components) =
+        split_absolute_path(&resolved).ok_or_else(|| MkdirPreflightFailureV1::KnownSafety {
+            display: display.clone(),
+        })?;
+    let mut parent = map_directory_preflight(open_verified_root_directory(root), &display, false)?
+        .expect("verified root is present");
+    for (index, component) in components.iter().enumerate() {
+        match open_verified_child_directory(&parent, component) {
+            Ok(child) => parent = child,
+            Err(DirectoryAccessErrorV1::Missing) => {
+                return Ok(PreparedMkdirOperandV1 {
+                    display,
+                    state: PreparedMkdirStateV1::Ready {
+                        parent,
+                        missing: components[index..].to_vec(),
+                    },
+                });
+            }
+            Err(DirectoryAccessErrorV1::NotDirectory) => {
+                return Ok(PreparedMkdirOperandV1 {
+                    display,
+                    state: PreparedMkdirStateV1::PathComponentIsNotDirectory,
+                });
+            }
+            error => {
+                map_directory_preflight(error, &display, true)?;
+                unreachable!();
+            }
+        }
+    }
+    Ok(PreparedMkdirOperandV1 {
+        display,
+        state: PreparedMkdirStateV1::ExistingDirectory,
+    })
+}
+
+fn map_directory_preflight(
+    result: Result<File, DirectoryAccessErrorV1>,
+    display: &str,
+    missing_is_operational: bool,
+) -> Result<Option<File>, MkdirPreflightFailureV1> {
+    match result {
+        Ok(directory) => Ok(Some(directory)),
+        Err(DirectoryAccessErrorV1::ReparsePoint) => Err(MkdirPreflightFailureV1::KnownSafety {
+            display: display.to_string(),
+        }),
+        Err(DirectoryAccessErrorV1::Missing) if missing_is_operational => Ok(None),
+        Err(DirectoryAccessErrorV1::Missing)
+        | Err(DirectoryAccessErrorV1::NotDirectory)
+        | Err(DirectoryAccessErrorV1::Io { .. }) => Err(MkdirPreflightFailureV1::Unavailable {
+            display: display.to_string(),
+        }),
+    }
+}
+
+fn split_absolute_path(path: &Path) -> Option<(&Path, Vec<OsString>)> {
+    let root = path
+        .ancestors()
+        .last()
+        .filter(|candidate| !candidate.as_os_str().is_empty())?;
+    let relative = path.strip_prefix(root).ok()?;
+    let components = relative
+        .components()
+        .map(|component| match component {
+            Component::Normal(value) => Some(value.to_os_string()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((root, components))
+}
+
+fn write_operand_diagnostic(
+    writer: &mut impl Write,
+    display: &str,
+    detail: &str,
+) -> Result<(), MutationExecutionErrorV1> {
+    write_diagnostic(writer, &format!("wingman mkdir: {display}: {detail}"))
+}
+
+fn write_bounded_operand_diagnostic(
+    writer: &mut impl Write,
+    emitted: &mut usize,
+    display: &str,
+    detail: &str,
+) -> Result<(), MutationExecutionErrorV1> {
+    if *emitted < MAX_MUTATION_DIAGNOSTICS {
+        write_operand_diagnostic(writer, display, detail)?;
+        *emitted += 1;
+    }
+    Ok(())
+}
+
+fn write_diagnostic(
+    writer: &mut impl Write,
+    diagnostic: &str,
+) -> Result<(), MutationExecutionErrorV1> {
+    writer
+        .write_all(diagnostic.as_bytes())
+        .and_then(|()| writer.write_all(b"\r\n"))
+        .and_then(|()| writer.flush())
+        .map_err(|error| MutationExecutionErrorV1::Output { kind: error.kind() })
+}

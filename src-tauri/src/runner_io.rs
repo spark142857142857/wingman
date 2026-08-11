@@ -45,6 +45,14 @@ pub(crate) struct FileIdentityV1 {
     file_index: u64,
 }
 
+#[derive(Debug)]
+pub(crate) enum DirectoryAccessErrorV1 {
+    Missing,
+    NotDirectory,
+    ReparsePoint,
+    Io { kind: io::ErrorKind },
+}
+
 pub struct PreparedInputV1 {
     file: File,
     identity: FileIdentityV1,
@@ -296,6 +304,121 @@ fn open_regular_input(path: &Path) -> io::Result<PreparedInputV1> {
 }
 
 #[cfg(windows)]
+pub(crate) fn open_verified_root_directory(root: &Path) -> Result<File, DirectoryAccessErrorV1> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    let directory = options.open(root).map_err(map_directory_open_error)?;
+    verify_directory_handle(&directory)?;
+    Ok(directory)
+}
+
+#[cfg(windows)]
+pub(crate) fn open_verified_child_directory(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, SYNCHRONIZE};
+
+    let directory = open_relative_to_directory(
+        parent,
+        name,
+        FILE_GENERIC_READ | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_directory_open_error)?;
+    verify_directory_handle(&directory)?;
+    Ok(directory)
+}
+
+#[cfg(windows)]
+pub(crate) fn create_verified_child_directory(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_CREATE, FILE_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_GENERIC_READ, FILE_GENERIC_WRITE, SYNCHRONIZE,
+    };
+
+    let directory = open_relative_to_directory(
+        parent,
+        name,
+        FILE_GENERIC_READ | FILE_GENERIC_WRITE | SYNCHRONIZE,
+        FILE_CREATE,
+        FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_directory_open_error)?;
+    verify_directory_handle(&directory)?;
+    Ok(directory)
+}
+
+#[cfg(windows)]
+fn verify_directory_handle(directory: &File) -> Result<(), DirectoryAccessErrorV1> {
+    if is_reparse_handle(directory)
+        .map_err(|error| DirectoryAccessErrorV1::Io { kind: error.kind() })?
+    {
+        return Err(DirectoryAccessErrorV1::ReparsePoint);
+    }
+    if !directory
+        .metadata()
+        .map_err(|error| DirectoryAccessErrorV1::Io { kind: error.kind() })?
+        .is_dir()
+    {
+        return Err(DirectoryAccessErrorV1::NotDirectory);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn map_directory_open_error(error: io::Error) -> DirectoryAccessErrorV1 {
+    match error.kind() {
+        io::ErrorKind::NotFound => DirectoryAccessErrorV1::Missing,
+        io::ErrorKind::NotADirectory => DirectoryAccessErrorV1::NotDirectory,
+        kind => DirectoryAccessErrorV1::Io { kind },
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open_verified_root_directory(_root: &Path) -> Result<File, DirectoryAccessErrorV1> {
+    Err(DirectoryAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open_verified_child_directory(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    Err(DirectoryAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn create_verified_child_directory(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, DirectoryAccessErrorV1> {
+    Err(DirectoryAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(windows)]
 fn open_output_without_truncation(spec: &RedirectSpecV1) -> Result<File, OutputOpenErrorV1> {
     open_output_after_parent_is_pinned(spec, || {})
 }
@@ -485,13 +608,19 @@ fn open_relative_to_directory(
 
 #[cfg(windows)]
 fn reject_reparse_handle(file: &File) -> Result<(), OutputOpenErrorV1> {
-    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-
-    if file_information(file)?.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+    if is_reparse_handle(file)? {
         Err(OutputOpenErrorV1::ReparsePoint)
     } else {
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn is_reparse_handle(file: &File) -> io::Result<bool> {
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    file_information(file)
+        .map(|information| information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
 }
 
 #[cfg(not(windows))]
@@ -587,6 +716,34 @@ mod tests {
 
         assert!(pinned_parent.join("out.txt").is_file());
         assert!(!alternate_target.join("out.txt").exists());
+        fs::remove_dir(&requested_parent).unwrap();
+        fs::remove_dir_all(&sandbox).unwrap();
+    }
+
+    #[test]
+    fn pinned_directory_handle_prevents_a_late_mkdir_junction_swap() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "wingman-mkdir-race-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ));
+        let requested_parent = sandbox.join("requested");
+        let pinned_parent = sandbox.join("pinned");
+        let alternate_target = sandbox.join("alternate");
+        fs::create_dir_all(&requested_parent).unwrap();
+        fs::create_dir(&alternate_target).unwrap();
+
+        let parent = open_verified_root_directory(&requested_parent)
+            .expect("pin the verified requested directory");
+        fs::rename(&requested_parent, &pinned_parent).unwrap();
+        create_directory_reparse(&alternate_target, &requested_parent);
+        let created = create_verified_child_directory(&parent, std::ffi::OsStr::new("child"))
+            .expect("create relative to the pinned directory");
+        drop(created);
+        drop(parent);
+
+        assert!(pinned_parent.join("child").is_dir());
+        assert!(!alternate_target.join("child").exists());
         fs::remove_dir(&requested_parent).unwrap();
         fs::remove_dir_all(&sandbox).unwrap();
     }
