@@ -1,8 +1,9 @@
 use crate::find_pattern::FindPatternV1;
 use crate::grep_pattern::GrepPatternV1;
 use crate::interpreter::{
-    validate_execution_plan, ExecutionPlanV1, FindEntryTypeV1, RedirectModeV1,
-    RunnerRequestValidationErrorV1, StagePlanV1, ValidatedRedirectPlanV1, MAX_FIND_DEPTH_VALUE,
+    validate_execution_plan, ExecutionPlanV1, ExistingDestinationPolicyV1, FindEntryTypeV1,
+    RedirectModeV1, RunnerRequestValidationErrorV1, StagePlanV1, ValidatedRedirectPlanV1,
+    MAX_FIND_DEPTH_VALUE,
 };
 use crate::parser::{ParsedCommandV1, ParsedLineV1, ParsedRedirectModeV1};
 use crate::windows_path::{validate_executable_name, validate_path_value, PathValidationErrorV1};
@@ -42,6 +43,8 @@ pub fn build_execution_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Ca
             stages.push(build_mkdir(command)?);
         } else if command.name.eq_ignore_ascii_case("touch") {
             stages.push(build_touch(command)?);
+        } else if command.name.eq_ignore_ascii_case("cp") {
+            stages.push(build_cp(command)?);
         } else if command.name.eq_ignore_ascii_case("cat") {
             if index != 0 {
                 return Err(CatalogErrorV1::InvalidSourceShape);
@@ -277,6 +280,67 @@ fn build_touch(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1>
         return Err(CatalogErrorV1::MissingOperand);
     }
     Ok(StagePlanV1::TouchFiles { paths })
+}
+
+fn build_cp(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let mut recursive = false;
+    let mut force = false;
+    let mut no_clobber = false;
+    let mut parse_options = true;
+    let mut paths = Vec::new();
+    for argument in &command.arguments {
+        if parse_options && argument == "--" {
+            parse_options = false;
+        } else if parse_options {
+            if let Some(long) = argument.strip_prefix("--") {
+                match long {
+                    "recursive" => recursive = true,
+                    "force" => force = true,
+                    "no-clobber" => no_clobber = true,
+                    _ => return Err(CatalogErrorV1::UnsupportedOption),
+                }
+            } else if let Some(shorts) = argument.strip_prefix('-') {
+                if shorts.is_empty() {
+                    paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+                    continue;
+                }
+                for short in shorts.chars() {
+                    match short {
+                        'r' | 'R' => recursive = true,
+                        'f' => force = true,
+                        'n' => no_clobber = true,
+                        _ => return Err(CatalogErrorV1::UnsupportedOption),
+                    }
+                }
+            } else {
+                paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+            }
+        } else {
+            paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+        }
+    }
+    if force && no_clobber {
+        return Err(CatalogErrorV1::UnsupportedOption);
+    }
+    let [source, destination] = paths.as_slice() else {
+        return if paths.len() < 2 {
+            Err(CatalogErrorV1::MissingOperand)
+        } else {
+            Err(CatalogErrorV1::InvalidSourceShape)
+        };
+    };
+    Ok(StagePlanV1::CopyPath {
+        source: source.clone(),
+        destination: destination.clone(),
+        recursive,
+        existing_destination: if force {
+            ExistingDestinationPolicyV1::Force
+        } else if no_clobber {
+            ExistingDestinationPolicyV1::NoClobber
+        } else {
+            ExistingDestinationPolicyV1::Replace
+        },
+    })
 }
 
 fn build_sort(

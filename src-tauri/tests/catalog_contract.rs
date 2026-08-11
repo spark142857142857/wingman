@@ -1,7 +1,7 @@
 use wingman_lib::catalog::{build_execution_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
-    validate_execution_plan, ExecutionPlanV1, RedirectModeV1, StagePlanV1, ValidatedRedirectPlanV1,
-    MAX_PATH_OPERANDS, MAX_PIPELINE_STAGES,
+    validate_execution_plan, ExecutionPlanV1, ExistingDestinationPolicyV1, RedirectModeV1,
+    StagePlanV1, ValidatedRedirectPlanV1, MAX_PATH_OPERANDS, MAX_PIPELINE_STAGES,
 };
 use wingman_lib::lexer::lex_p0_line;
 use wingman_lib::parser::parse_p0_tokens;
@@ -141,6 +141,115 @@ fn runner_revalidates_the_bounded_touch_wire_shape() {
         }),
     };
     assert!(validate_execution_plan(&redirected).is_err());
+}
+
+#[test]
+fn cp_builds_one_non_composable_typed_copy_plan() {
+    for (line, source, destination, recursive, policy) in [
+        (
+            "cp source.txt destination.txt",
+            "source.txt",
+            "destination.txt",
+            false,
+            ExistingDestinationPolicyV1::Replace,
+        ),
+        (
+            "cp -rf source destination",
+            "source",
+            "destination",
+            true,
+            ExistingDestinationPolicyV1::Force,
+        ),
+        (
+            "cp -Rn source destination",
+            "source",
+            "destination",
+            true,
+            ExistingDestinationPolicyV1::NoClobber,
+        ),
+        (
+            "cp --recursive --no-clobber source destination",
+            "source",
+            "destination",
+            true,
+            ExistingDestinationPolicyV1::NoClobber,
+        ),
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert_eq!(
+            build_execution_plan(&parsed).unwrap(),
+            ExecutionPlanV1 {
+                stages: vec![StagePlanV1::CopyPath {
+                    source: validate_path_value(source).unwrap(),
+                    destination: validate_path_value(destination).unwrap(),
+                    recursive,
+                    existing_destination: policy,
+                }],
+                redirect: None,
+            },
+            "line: {line}"
+        );
+    }
+
+    let parsed = parse_p0_tokens(&lex_p0_line("cp -- -source -destination").unwrap()).unwrap();
+    assert_eq!(
+        build_execution_plan(&parsed).unwrap().stages,
+        vec![StagePlanV1::CopyPath {
+            source: validate_path_value("-source").unwrap(),
+            destination: validate_path_value("-destination").unwrap(),
+            recursive: false,
+            existing_destination: ExistingDestinationPolicyV1::Replace,
+        }]
+    );
+}
+
+#[test]
+fn cp_rejects_invalid_options_counts_and_composition() {
+    for line in [
+        "cp",
+        "cp only-source",
+        "cp one two three",
+        "cp -a source destination",
+        "cp -fn source destination",
+        "cp source destination | wc -l",
+        "cp source destination > result.txt",
+        "cp *.txt destination",
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
+    }
+}
+
+#[test]
+fn runner_revalidates_the_copy_wire_shape() {
+    let valid = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::CopyPath {
+            source: validate_path_value("source").unwrap(),
+            destination: validate_path_value("destination").unwrap(),
+            recursive: true,
+            existing_destination: ExistingDestinationPolicyV1::Replace,
+        }],
+        redirect: None,
+    };
+    assert_eq!(validate_execution_plan(&valid), Ok(()));
+
+    let redirected = ExecutionPlanV1 {
+        stages: valid.stages.clone(),
+        redirect: Some(ValidatedRedirectPlanV1 {
+            mode: RedirectModeV1::Overwrite,
+            path: validate_path_value("out.txt").unwrap(),
+        }),
+    };
+    assert!(validate_execution_plan(&redirected).is_err());
+
+    let pipeline = ExecutionPlanV1 {
+        stages: vec![
+            valid.stages[0].clone(),
+            StagePlanV1::CountLines { path: None },
+        ],
+        redirect: None,
+    };
+    assert!(validate_execution_plan(&pipeline).is_err());
 }
 
 #[test]

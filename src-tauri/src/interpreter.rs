@@ -86,6 +86,12 @@ pub enum StagePlanV1 {
     TouchFiles {
         paths: Vec<ValidatedPathSpecV1>,
     },
+    CopyPath {
+        source: ValidatedPathSpecV1,
+        destination: ValidatedPathSpecV1,
+        recursive: bool,
+        existing_destination: ExistingDestinationPolicyV1,
+    },
     ListEntries {
         path: Option<ValidatedPathSpecV1>,
         include_hidden: bool,
@@ -146,6 +152,13 @@ pub enum StagePlanV1 {
 pub enum FindEntryTypeV1 {
     File,
     Directory,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ExistingDestinationPolicyV1 {
+    Replace,
+    Force,
+    NoClobber,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -361,6 +374,20 @@ pub fn validate_execution_plan(
         return Ok(());
     }
 
+    if let [StagePlanV1::CopyPath {
+        source,
+        destination,
+        ..
+    }] = plan.stages.as_slice()
+    {
+        if plan.redirect.is_some() {
+            return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+        }
+        validate_serialized_path(source)?;
+        validate_serialized_path(destination)?;
+        return Ok(());
+    }
+
     let mut saw_recursive_search = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
@@ -368,7 +395,8 @@ pub fn validate_execution_plan(
             | StagePlanV1::ClearTerminal
             | StagePlanV1::FindExecutable { .. }
             | StagePlanV1::CreateDirectories { .. }
-            | StagePlanV1::TouchFiles { .. } => {
+            | StagePlanV1::TouchFiles { .. }
+            | StagePlanV1::CopyPath { .. } => {
                 return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
             }
             StagePlanV1::ListEntries {
