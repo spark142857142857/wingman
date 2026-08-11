@@ -228,7 +228,7 @@ P0 is ready only when all are true:
 [ ] path, reparse, destructive, WebView, broker, paste, and elevation security tests pass
 [ ] performance release ceilings pass on the reference machine
 [ ] README, support matrix, installer, and observed behavior agree
-[ ] no legacy compatibility parser or writable temporary profile remains
+[x] no legacy compatibility parser or writable temporary profile remains
 [ ] final consolidated review is presented
 [ ] user explicitly approves implementation start and later P0 acceptance
 ```

@@ -206,7 +206,7 @@ UI/PTY/security smoke test를 적용한다.
 [ ] path, reparse, 파괴 동작, WebView, broker, paste, 관리자 권한 보안 test 통과
 [ ] 기준 장비에서 성능 배포 상한 통과
 [ ] README, 지원 matrix, installer, 실제 동작 일치
-[ ] legacy 호환 parser와 쓰기 가능한 임시 profile 제거
+[x] legacy 호환 parser와 쓰기 가능한 임시 profile 제거
 [ ] 최종 통합 검토 제시
 [ ] 사용자가 구현 시작과 이후 P0 합격을 각각 명시적으로 승인
 ```
