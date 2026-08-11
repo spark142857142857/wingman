@@ -36,3 +36,20 @@ All one-second deltas were below the process CPU-time measurement resolution.
 The component therefore passes the release ceilings of median 0.5% and p95 2%.
 The full app, WebView2, PTY, shell, and child-process tree still requires the
 separate ETW/WPR release measurement on the reference matrix.
+
+### Revalidation after filesystem safety refactoring
+
+The same release test was repeated at commit
+`180e44d5343b72dc553f2a13400a4b48ac85a366` after the transfer, verified-path,
+and access-mode modules were refactored. The OS, CPU, power plan, toolchain,
+build profile, settle period, and sample procedure were unchanged.
+
+| Independent run | Median CPU | p95 CPU | Result |
+| --- | ---: | ---: | --- |
+| 1 | 0.000% | 0.000% | Pass |
+| 2 | 0.000% | 0.000% | Pass |
+| 3 | 0.000% | 0.098% | Pass |
+
+All three runs exited `130` after process-group cancellation. The revalidation
+passes the component ceilings of median 0.5% and p95 2%; it does not change the
+separate whole-process-tree requirement.

@@ -35,3 +35,18 @@ logical processor 16개 기준으로 정규화하고, 정상 process-group 취�
 모든 1초 delta가 process CPU-time 측정 해상도보다 작았다. 따라서 이 component는
 배포 상한 median 0.5%, p95 2%를 통과한다. 전체 app·WebView2·PTY·shell·child process
 tree는 reference matrix에서 별도 ETW/WPR 배포 측정을 수행해야 한다.
+
+### 파일시스템 안전성 리팩터링 뒤 재검증
+
+Transfer, 검증 경로, access-mode module 리팩터링 뒤 commit
+`180e44d5343b72dc553f2a13400a4b48ac85a366`에서 같은 release test를 다시 실행했다.
+OS, CPU, 전원 구성표, toolchain, build profile, 안정화 시간과 표본 절차는 동일했다.
+
+| 독립 실행 | Median CPU | p95 CPU | 결과 |
+| --- | ---: | ---: | --- |
+| 1 | 0.000% | 0.000% | 통과 |
+| 2 | 0.000% | 0.000% | 통과 |
+| 3 | 0.000% | 0.098% | 통과 |
+
+세 실행 모두 process-group 취소 뒤 `130`으로 종료했다. 재검증은 component 상한인
+median 0.5%, p95 2%를 통과하며, 별도의 전체 process-tree 측정 요구는 바꾸지 않는다.
