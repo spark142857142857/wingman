@@ -83,6 +83,9 @@ pub enum StagePlanV1 {
         paths: Vec<ValidatedPathSpecV1>,
         parents: bool,
     },
+    TouchFiles {
+        paths: Vec<ValidatedPathSpecV1>,
+    },
     ListEntries {
         path: Option<ValidatedPathSpecV1>,
         include_hidden: bool,
@@ -345,13 +348,27 @@ pub fn validate_execution_plan(
         return Ok(());
     }
 
+    if let [StagePlanV1::TouchFiles { paths }] = plan.stages.as_slice() {
+        if plan.redirect.is_some() || paths.is_empty() {
+            return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+        }
+        if paths.len() > MAX_PATH_OPERANDS {
+            return Err(RunnerRequestValidationErrorV1::InvalidPathCount);
+        }
+        for path in paths {
+            validate_serialized_path(path)?;
+        }
+        return Ok(());
+    }
+
     let mut saw_recursive_search = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
             StagePlanV1::PrintWorkingDirectory
             | StagePlanV1::ClearTerminal
             | StagePlanV1::FindExecutable { .. }
-            | StagePlanV1::CreateDirectories { .. } => {
+            | StagePlanV1::CreateDirectories { .. }
+            | StagePlanV1::TouchFiles { .. } => {
                 return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
             }
             StagePlanV1::ListEntries {

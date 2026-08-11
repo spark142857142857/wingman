@@ -79,6 +79,71 @@ fn runner_revalidates_the_bounded_mkdir_wire_shape() {
 }
 
 #[test]
+fn touch_builds_one_bounded_non_composable_mutation_plan() {
+    let parsed = parse_p0_tokens(&lex_p0_line("touch one.txt two\\three.txt").unwrap()).unwrap();
+    assert_eq!(
+        build_execution_plan(&parsed).unwrap(),
+        ExecutionPlanV1 {
+            stages: vec![StagePlanV1::TouchFiles {
+                paths: vec![
+                    validate_path_value("one.txt").unwrap(),
+                    validate_path_value("two\\three.txt").unwrap(),
+                ],
+            }],
+            redirect: None,
+        }
+    );
+
+    let dash_path = parse_p0_tokens(&lex_p0_line("touch -- -stamp").unwrap()).unwrap();
+    assert_eq!(
+        build_execution_plan(&dash_path).unwrap().stages,
+        vec![StagePlanV1::TouchFiles {
+            paths: vec![validate_path_value("-stamp").unwrap()],
+        }]
+    );
+}
+
+#[test]
+fn touch_rejects_options_or_composed_shapes_before_execution() {
+    for line in [
+        "touch",
+        "touch -m output.txt",
+        "touch *.txt",
+        "touch output.txt | wc -l",
+        "touch output.txt > result.txt",
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
+    }
+}
+
+#[test]
+fn runner_revalidates_the_bounded_touch_wire_shape() {
+    let valid = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::TouchFiles {
+            paths: vec![validate_path_value("one.txt").unwrap()],
+        }],
+        redirect: None,
+    };
+    assert_eq!(validate_execution_plan(&valid), Ok(()));
+
+    let empty = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::TouchFiles { paths: Vec::new() }],
+        redirect: None,
+    };
+    assert!(validate_execution_plan(&empty).is_err());
+
+    let redirected = ExecutionPlanV1 {
+        stages: valid.stages,
+        redirect: Some(ValidatedRedirectPlanV1 {
+            mode: RedirectModeV1::Overwrite,
+            path: validate_path_value("out.txt").unwrap(),
+        }),
+    };
+    assert!(validate_execution_plan(&redirected).is_err());
+}
+
+#[test]
 fn cat_head_and_redirect_build_one_typed_shell_independent_plan() {
     let parsed =
         parse_p0_tokens(&lex_p0_line(r#"cat -n "app log.txt" | head -n 5 > out.txt"#).unwrap())
