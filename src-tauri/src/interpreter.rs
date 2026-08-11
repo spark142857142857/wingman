@@ -880,6 +880,8 @@ fn claimed_p0_command(raw_line: &str) -> Option<&'static str> {
         Some("cp")
     } else if candidate.eq_ignore_ascii_case("mv") {
         Some("mv")
+    } else if candidate.eq_ignore_ascii_case("rm") {
+        Some("rm")
     } else {
         None
     }

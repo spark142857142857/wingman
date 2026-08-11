@@ -132,6 +132,71 @@ fn claimed_invalid_mv_is_rejected_without_native_fallback() {
 }
 
 #[test]
+fn reliable_familiar_rm_is_stored_as_a_typed_mutation_plan() {
+    let mut session = InterpreterSession::new(43, 11, ActiveShell::WindowsPowerShell);
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 43,
+            command_sequence: 11,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: "rm -rf dist cache".to_string(),
+        })
+        .expect("classify rm");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared rm plan, got {other:?}"),
+    };
+    assert_eq!(
+        session.consume_prepared(&request_id),
+        Some(PreparedRequestV1 {
+            protocol: "wingman.run".to_string(),
+            version: 1,
+            kind: PreparedRequestKindV1::Execute {
+                plan: ExecutionPlanV1 {
+                    stages: vec![StagePlanV1::RemovePaths {
+                        paths: vec![
+                            validate_path_value("dist").unwrap(),
+                            validate_path_value("cache").unwrap(),
+                        ],
+                        recursive: true,
+                        force: true,
+                    }],
+                    redirect: None,
+                },
+            },
+        })
+    );
+}
+
+#[test]
+fn claimed_invalid_rm_is_rejected_without_native_fallback() {
+    let mut session = InterpreterSession::new(43, 12, ActiveShell::WindowsPowerShell);
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 43,
+            command_sequence: 12,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: "rm -i important.txt".to_string(),
+        })
+        .expect("classify invalid rm");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared rm rejection, got {other:?}"),
+    };
+    assert_eq!(
+        session.consume_prepared(&request_id).unwrap().kind,
+        PreparedRequestKindV1::Reject {
+            diagnostic: "wingman rm: unsupported option".to_string(),
+            exit_code: 2,
+        }
+    );
+}
+
+#[test]
 fn reliable_familiar_touch_is_stored_as_a_typed_mutation_plan() {
     let mut session = InterpreterSession::new(41, 7, ActiveShell::WindowsPowerShell);
     let decision = session
