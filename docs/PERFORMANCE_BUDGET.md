@@ -149,6 +149,10 @@ must remain cancellable, obey memory/resource limits, and not busy-poll while
 idle. `tail -f` must satisfy the normal idle CPU ceiling when the file is
 unchanged.
 
+Reproducible component measurements are recorded in
+[PERFORMANCE_BASELINES.md](PERFORMANCE_BASELINES.md); they do not replace the
+whole process-tree release gate.
+
 ### Endurance
 
 A 30-minute scenario repeatedly emits output, clears, resizes, starts and

@@ -138,6 +138,9 @@ storage 속도와 관계없이 모든 경우가 취소 가능하고 자원 제�
 busy polling하지 않아야 한다. 파일 변화가 없는 `tail -f`는 일반 idle CPU 상한을
 충족해야 한다.
 
+재현 가능한 component 측정은 [성능 기준 측정 기록](PERFORMANCE_BASELINES.ko.md)에
+보관하며 전체 process-tree 배포 게이트를 대신하지 않는다.
+
 ### 지속 실행
 
 30분 동안 출력, clear, resize, P0 시작·취소, shell restart를 반복한다. 메모리
