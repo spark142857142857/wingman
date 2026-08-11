@@ -341,6 +341,63 @@ fn reliable_mkdir_runs_through_the_real_broker_and_sidecar() {
     fs::remove_dir_all(&sandbox).unwrap();
 }
 
+#[test]
+fn reliable_touch_runs_through_the_real_broker_and_sidecar() {
+    let sandbox = std::env::temp_dir().join(format!(
+        "wingman-runtime-touch-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&sandbox).unwrap();
+    let target = sandbox.join("한글 파일.txt");
+
+    let mut session = TerminalSessionV1::new(607, ActiveShell::WindowsPowerShell);
+    let marker = format!(
+        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
+        session.integration_nonce()
+    );
+    assert_eq!(session.ingest_pty_output(&marker), "");
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-runtime-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start session broker");
+    let mut terminal_wire = Vec::new();
+    let line = format!("touch \"{}\"\r", display_path(&target));
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &broker,
+        &mut terminal_wire,
+        &line,
+        true,
+    )
+    .expect("dispatch reliable touch");
+    let TerminalExecutionOutcomeV1::Prepared { request_id, .. } = outcome else {
+        panic!("expected a prepared touch dispatch");
+    };
+    assert!(String::from_utf8(terminal_wire)
+        .expect("UTF-8 terminal write")
+        .ends_with(&format!(
+            "Invoke-WingmanPrepared -RequestId '{request_id}'\r"
+        )));
+
+    let process = Command::new(env!("CARGO_BIN_EXE_wingman-runner"))
+        .arg(&request_id)
+        .env("WINGMAN_BROKER_PIPE", &pipe_name)
+        .output()
+        .expect("start packaged runner binary");
+    assert_eq!(process.status.code(), Some(0));
+    assert!(process.stdout.is_empty());
+    assert!(process.stderr.is_empty());
+    assert!(target.is_file());
+    assert!(fs::read(&target).unwrap().is_empty());
+
+    broker.stop().expect("stop session broker");
+    fs::remove_dir_all(&sandbox).unwrap();
+}
+
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
