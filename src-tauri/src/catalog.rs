@@ -6,7 +6,9 @@ use crate::interpreter::{
     MAX_FIND_DEPTH_VALUE,
 };
 use crate::parser::{ParsedCommandV1, ParsedLineV1, ParsedRedirectModeV1};
-use crate::windows_path::{validate_executable_name, validate_path_value, PathValidationErrorV1};
+use crate::windows_path::{
+    validate_executable_name, validate_path_value, PathValidationErrorV1, ValidatedPathSpecV1,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CatalogErrorV1 {
@@ -45,6 +47,8 @@ pub fn build_execution_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Ca
             stages.push(build_touch(command)?);
         } else if command.name.eq_ignore_ascii_case("cp") {
             stages.push(build_cp(command)?);
+        } else if command.name.eq_ignore_ascii_case("mv") {
+            stages.push(build_mv(command)?);
         } else if command.name.eq_ignore_ascii_case("cat") {
             if index != 0 {
                 return Err(CatalogErrorV1::InvalidSourceShape);
@@ -283,6 +287,35 @@ fn build_touch(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1>
 }
 
 fn build_cp(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let arguments = parse_transfer_arguments(command, true)?;
+    Ok(StagePlanV1::CopyPath {
+        source: arguments.source,
+        destination: arguments.destination,
+        recursive: arguments.recursive,
+        existing_destination: arguments.existing_destination,
+    })
+}
+
+fn build_mv(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let arguments = parse_transfer_arguments(command, false)?;
+    Ok(StagePlanV1::MovePath {
+        source: arguments.source,
+        destination: arguments.destination,
+        existing_destination: arguments.existing_destination,
+    })
+}
+
+struct TransferArgumentsV1 {
+    source: ValidatedPathSpecV1,
+    destination: ValidatedPathSpecV1,
+    recursive: bool,
+    existing_destination: ExistingDestinationPolicyV1,
+}
+
+fn parse_transfer_arguments(
+    command: &ParsedCommandV1,
+    allow_recursive: bool,
+) -> Result<TransferArgumentsV1, CatalogErrorV1> {
     let mut recursive = false;
     let mut force = false;
     let mut no_clobber = false;
@@ -294,7 +327,7 @@ fn build_cp(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
         } else if parse_options {
             if let Some(long) = argument.strip_prefix("--") {
                 match long {
-                    "recursive" => recursive = true,
+                    "recursive" if allow_recursive => recursive = true,
                     "force" => force = true,
                     "no-clobber" => no_clobber = true,
                     _ => return Err(CatalogErrorV1::UnsupportedOption),
@@ -306,7 +339,7 @@ fn build_cp(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
                 }
                 for short in shorts.chars() {
                     match short {
-                        'r' | 'R' => recursive = true,
+                        'r' | 'R' if allow_recursive => recursive = true,
                         'f' => force = true,
                         'n' => no_clobber = true,
                         _ => return Err(CatalogErrorV1::UnsupportedOption),
@@ -329,7 +362,7 @@ fn build_cp(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
             Err(CatalogErrorV1::InvalidSourceShape)
         };
     };
-    Ok(StagePlanV1::CopyPath {
+    Ok(TransferArgumentsV1 {
         source: source.clone(),
         destination: destination.clone(),
         recursive,

@@ -253,6 +253,97 @@ fn runner_revalidates_the_copy_wire_shape() {
 }
 
 #[test]
+fn mv_builds_one_non_composable_typed_move_plan() {
+    for (line, policy) in [
+        (
+            "mv source destination",
+            ExistingDestinationPolicyV1::Replace,
+        ),
+        (
+            "mv -f source destination",
+            ExistingDestinationPolicyV1::Force,
+        ),
+        (
+            "mv --no-clobber source destination",
+            ExistingDestinationPolicyV1::NoClobber,
+        ),
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert_eq!(
+            build_execution_plan(&parsed).unwrap(),
+            ExecutionPlanV1 {
+                stages: vec![StagePlanV1::MovePath {
+                    source: validate_path_value("source").unwrap(),
+                    destination: validate_path_value("destination").unwrap(),
+                    existing_destination: policy,
+                }],
+                redirect: None,
+            },
+            "line: {line}"
+        );
+    }
+
+    let parsed = parse_p0_tokens(&lex_p0_line("mv -- -source -destination").unwrap()).unwrap();
+    assert_eq!(
+        build_execution_plan(&parsed).unwrap().stages,
+        vec![StagePlanV1::MovePath {
+            source: validate_path_value("-source").unwrap(),
+            destination: validate_path_value("-destination").unwrap(),
+            existing_destination: ExistingDestinationPolicyV1::Replace,
+        }]
+    );
+}
+
+#[test]
+fn mv_rejects_recursive_invalid_counts_and_composition() {
+    for line in [
+        "mv",
+        "mv only-source",
+        "mv one two three",
+        "mv -r source destination",
+        "mv --recursive source destination",
+        "mv -fn source destination",
+        "mv source destination | wc -l",
+        "mv source destination > result.txt",
+        "mv *.txt destination",
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
+    }
+}
+
+#[test]
+fn runner_revalidates_the_move_wire_shape() {
+    let valid = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::MovePath {
+            source: validate_path_value("source").unwrap(),
+            destination: validate_path_value("destination").unwrap(),
+            existing_destination: ExistingDestinationPolicyV1::Replace,
+        }],
+        redirect: None,
+    };
+    assert_eq!(validate_execution_plan(&valid), Ok(()));
+
+    let redirected = ExecutionPlanV1 {
+        stages: valid.stages.clone(),
+        redirect: Some(ValidatedRedirectPlanV1 {
+            mode: RedirectModeV1::Overwrite,
+            path: validate_path_value("out.txt").unwrap(),
+        }),
+    };
+    assert!(validate_execution_plan(&redirected).is_err());
+
+    let pipeline = ExecutionPlanV1 {
+        stages: vec![
+            valid.stages[0].clone(),
+            StagePlanV1::CountLines { path: None },
+        ],
+        redirect: None,
+    };
+    assert!(validate_execution_plan(&pipeline).is_err());
+}
+
+#[test]
 fn cat_head_and_redirect_build_one_typed_shell_independent_plan() {
     let parsed =
         parse_p0_tokens(&lex_p0_line(r#"cat -n "app log.txt" | head -n 5 > out.txt"#).unwrap())

@@ -92,6 +92,11 @@ pub enum StagePlanV1 {
         recursive: bool,
         existing_destination: ExistingDestinationPolicyV1,
     },
+    MovePath {
+        source: ValidatedPathSpecV1,
+        destination: ValidatedPathSpecV1,
+        existing_destination: ExistingDestinationPolicyV1,
+    },
     ListEntries {
         path: Option<ValidatedPathSpecV1>,
         include_hidden: bool,
@@ -388,6 +393,20 @@ pub fn validate_execution_plan(
         return Ok(());
     }
 
+    if let [StagePlanV1::MovePath {
+        source,
+        destination,
+        ..
+    }] = plan.stages.as_slice()
+    {
+        if plan.redirect.is_some() {
+            return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
+        }
+        validate_serialized_path(source)?;
+        validate_serialized_path(destination)?;
+        return Ok(());
+    }
+
     let mut saw_recursive_search = false;
     for (index, stage) in plan.stages.iter().enumerate() {
         match stage {
@@ -396,7 +415,8 @@ pub fn validate_execution_plan(
             | StagePlanV1::FindExecutable { .. }
             | StagePlanV1::CreateDirectories { .. }
             | StagePlanV1::TouchFiles { .. }
-            | StagePlanV1::CopyPath { .. } => {
+            | StagePlanV1::CopyPath { .. }
+            | StagePlanV1::MovePath { .. } => {
                 return Err(RunnerRequestValidationErrorV1::InvalidStageShape);
             }
             StagePlanV1::ListEntries {
