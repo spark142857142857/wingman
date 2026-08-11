@@ -5,6 +5,7 @@
 
 use crate::runner_io::{
     open_verified_child_directory, open_verified_root_directory, DirectoryAccessErrorV1,
+    VerifiedDirectoryOpenModeV1,
 };
 use std::ffi::OsString;
 use std::fs::File;
@@ -44,7 +45,11 @@ pub(crate) fn traverse_verified_directory(
 ) -> Result<VerifiedDirectoryTraversalV1, VerifiedPathAccessErrorV1> {
     let mut parent = map_directory_access(open_verified_root_directory(root))?;
     for (index, component) in components.iter().enumerate() {
-        parent = match open_verified_child_directory(&parent, component) {
+        parent = match open_verified_child_directory(
+            &parent,
+            component,
+            VerifiedDirectoryOpenModeV1::Read,
+        ) {
             Ok(child) => child,
             Err(DirectoryAccessErrorV1::Missing) => {
                 return Ok(VerifiedDirectoryTraversalV1::Missing {

@@ -82,6 +82,32 @@ pub(crate) enum FileAccessErrorV1 {
     Io { kind: io::ErrorKind },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VerifiedDirectoryOpenModeV1 {
+    Read,
+    MoveSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VerifiedDirectoryCreateModeV1 {
+    MutationTarget,
+    Staging,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VerifiedFileOpenModeV1 {
+    TouchTarget,
+    ReadSource,
+    MoveSource,
+    Inspect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VerifiedFileCreateModeV1 {
+    TouchTarget,
+    Staging,
+}
+
 pub struct PreparedInputV1 {
     file: File,
     identity: FileIdentityV1,
@@ -360,38 +386,22 @@ pub(crate) fn open_verified_root_directory(root: &Path) -> Result<File, Director
 pub(crate) fn open_verified_child_directory(
     parent: &File,
     name: &std::ffi::OsStr,
-) -> Result<File, DirectoryAccessErrorV1> {
-    use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, SYNCHRONIZE};
-
-    let directory = open_relative_to_directory(
-        parent,
-        name,
-        FILE_GENERIC_READ | SYNCHRONIZE,
-        FILE_OPEN,
-        FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )
-    .map_err(map_directory_open_error)?;
-    verify_directory_handle(&directory)?;
-    Ok(directory)
-}
-
-#[cfg(windows)]
-pub(crate) fn open_verified_child_directory_for_move(
-    parent: &File,
-    name: &std::ffi::OsStr,
+    mode: VerifiedDirectoryOpenModeV1,
 ) -> Result<File, DirectoryAccessErrorV1> {
     use windows_sys::Wdk::Storage::FileSystem::{
         FILE_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
     };
     use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ, SYNCHRONIZE};
 
+    let desired_access = match mode {
+        VerifiedDirectoryOpenModeV1::Read => FILE_GENERIC_READ | SYNCHRONIZE,
+        VerifiedDirectoryOpenModeV1::MoveSource => FILE_GENERIC_READ | DELETE | SYNCHRONIZE,
+    };
+
     let directory = open_relative_to_directory(
         parent,
         name,
-        FILE_GENERIC_READ | DELETE | SYNCHRONIZE,
+        desired_access,
         FILE_OPEN,
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
     )
@@ -404,30 +414,7 @@ pub(crate) fn open_verified_child_directory_for_move(
 pub(crate) fn create_verified_child_directory(
     parent: &File,
     name: &std::ffi::OsStr,
-) -> Result<File, DirectoryAccessErrorV1> {
-    use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_CREATE, FILE_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_GENERIC_READ, FILE_GENERIC_WRITE, SYNCHRONIZE,
-    };
-
-    let directory = open_relative_to_directory(
-        parent,
-        name,
-        FILE_GENERIC_READ | FILE_GENERIC_WRITE | SYNCHRONIZE,
-        FILE_CREATE,
-        FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )
-    .map_err(map_directory_open_error)?;
-    verify_directory_handle(&directory)?;
-    Ok(directory)
-}
-
-#[cfg(windows)]
-pub(crate) fn create_verified_staging_child_directory(
-    parent: &File,
-    name: &std::ffi::OsStr,
+    mode: VerifiedDirectoryCreateModeV1,
 ) -> Result<File, DirectoryAccessErrorV1> {
     use windows_sys::Wdk::Storage::FileSystem::{
         FILE_CREATE, FILE_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
@@ -436,10 +423,19 @@ pub(crate) fn create_verified_staging_child_directory(
         DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, SYNCHRONIZE,
     };
 
+    let desired_access = match mode {
+        VerifiedDirectoryCreateModeV1::MutationTarget => {
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | SYNCHRONIZE
+        }
+        VerifiedDirectoryCreateModeV1::Staging => {
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | SYNCHRONIZE
+        }
+    };
+
     let directory = open_relative_to_directory(
         parent,
         name,
-        FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | SYNCHRONIZE,
+        desired_access,
         FILE_CREATE,
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
     )
@@ -570,67 +566,37 @@ pub(crate) fn list_verified_directory(
 pub(crate) fn open_verified_child_file(
     parent: &File,
     name: &std::ffi::OsStr,
+    mode: VerifiedFileOpenModeV1,
 ) -> Result<File, FileAccessErrorV1> {
     use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_OPEN, FILE_OPEN_FOR_BACKUP_INTENT, FILE_OPEN_REPARSE_POINT,
+        FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_FOR_BACKUP_INTENT, FILE_OPEN_REPARSE_POINT,
         FILE_SYNCHRONOUS_IO_NONALERT,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
+        DELETE, FILE_GENERIC_READ, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
     };
 
-    let file = open_relative_to_directory(
-        parent,
-        name,
-        FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
-        FILE_OPEN,
-        FILE_OPEN_FOR_BACKUP_INTENT | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )
-    .map_err(map_file_open_error)?;
-    verify_regular_file_handle(&file)?;
-    Ok(file)
-}
-
-#[cfg(windows)]
-pub(crate) fn open_verified_child_file_for_read(
-    parent: &File,
-    name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    let (desired_access, create_options) = match mode {
+        VerifiedFileOpenModeV1::TouchTarget => (
+            FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
+            FILE_OPEN_FOR_BACKUP_INTENT | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+        ),
+        VerifiedFileOpenModeV1::ReadSource => (
+            FILE_GENERIC_READ | SYNCHRONIZE,
+            FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+        ),
+        VerifiedFileOpenModeV1::MoveSource => (
+            FILE_GENERIC_READ | DELETE | SYNCHRONIZE,
+            FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+        ),
+        VerifiedFileOpenModeV1::Inspect => (
+            FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+        ),
     };
-    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, SYNCHRONIZE};
 
-    let file = open_relative_to_directory(
-        parent,
-        name,
-        FILE_GENERIC_READ | SYNCHRONIZE,
-        FILE_OPEN,
-        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )
-    .map_err(map_file_open_error)?;
-    verify_regular_file_handle(&file)?;
-    Ok(file)
-}
-
-#[cfg(windows)]
-pub(crate) fn open_verified_child_file_for_move(
-    parent: &File,
-    name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_READ, SYNCHRONIZE};
-
-    let file = open_relative_to_directory(
-        parent,
-        name,
-        FILE_GENERIC_READ | DELETE | SYNCHRONIZE,
-        FILE_OPEN,
-        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )
-    .map_err(map_file_open_error)?;
+    let file = open_relative_to_directory(parent, name, desired_access, FILE_OPEN, create_options)
+        .map_err(map_file_open_error)?;
     verify_regular_file_handle(&file)?;
     Ok(file)
 }
@@ -671,67 +637,32 @@ pub(crate) fn open_child_for_removal(
 }
 
 #[cfg(windows)]
-pub(crate) fn open_verified_child_file_for_inspection(
-    parent: &File,
-    name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{FILE_READ_ATTRIBUTES, SYNCHRONIZE};
-
-    let file = open_relative_to_directory(
-        parent,
-        name,
-        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-        FILE_OPEN,
-        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )
-    .map_err(map_file_open_error)?;
-    verify_regular_file_handle(&file)?;
-    Ok(file)
-}
-
-#[cfg(windows)]
 pub(crate) fn create_verified_child_file(
     parent: &File,
     name: &std::ffi::OsStr,
+    mode: VerifiedFileCreateModeV1,
 ) -> Result<File, FileAccessErrorV1> {
     use windows_sys::Wdk::Storage::FileSystem::{
         FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, SYNCHRONIZE,
+        DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES,
+        SYNCHRONIZE,
+    };
+
+    let desired_access = match mode {
+        VerifiedFileCreateModeV1::TouchTarget => {
+            FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE
+        }
+        VerifiedFileCreateModeV1::Staging => {
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | SYNCHRONIZE
+        }
     };
 
     let file = open_relative_to_directory(
         parent,
         name,
-        FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE,
-        FILE_CREATE,
-        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
-    )
-    .map_err(map_file_open_error)?;
-    verify_regular_file_handle(&file)?;
-    Ok(file)
-}
-
-#[cfg(windows)]
-pub(crate) fn create_verified_staging_child_file(
-    parent: &File,
-    name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    use windows_sys::Wdk::Storage::FileSystem::{
-        FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{
-        DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, SYNCHRONIZE,
-    };
-
-    let file = open_relative_to_directory(
-        parent,
-        name,
-        FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | SYNCHRONIZE,
+        desired_access,
         FILE_CREATE,
         FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
     )
@@ -909,16 +840,7 @@ pub(crate) fn open_verified_root_directory(_root: &Path) -> Result<File, Directo
 pub(crate) fn open_verified_child_directory(
     _parent: &File,
     _name: &std::ffi::OsStr,
-) -> Result<File, DirectoryAccessErrorV1> {
-    Err(DirectoryAccessErrorV1::Io {
-        kind: io::ErrorKind::Unsupported,
-    })
-}
-
-#[cfg(not(windows))]
-pub(crate) fn open_verified_child_directory_for_move(
-    _parent: &File,
-    _name: &std::ffi::OsStr,
+    _mode: VerifiedDirectoryOpenModeV1,
 ) -> Result<File, DirectoryAccessErrorV1> {
     Err(DirectoryAccessErrorV1::Io {
         kind: io::ErrorKind::Unsupported,
@@ -929,16 +851,7 @@ pub(crate) fn open_verified_child_directory_for_move(
 pub(crate) fn create_verified_child_directory(
     _parent: &File,
     _name: &std::ffi::OsStr,
-) -> Result<File, DirectoryAccessErrorV1> {
-    Err(DirectoryAccessErrorV1::Io {
-        kind: io::ErrorKind::Unsupported,
-    })
-}
-
-#[cfg(not(windows))]
-pub(crate) fn create_verified_staging_child_directory(
-    _parent: &File,
-    _name: &std::ffi::OsStr,
+    _mode: VerifiedDirectoryCreateModeV1,
 ) -> Result<File, DirectoryAccessErrorV1> {
     Err(DirectoryAccessErrorV1::Io {
         kind: io::ErrorKind::Unsupported,
@@ -959,6 +872,7 @@ pub(crate) fn list_verified_directory(
 pub(crate) fn open_verified_child_file(
     _parent: &File,
     _name: &std::ffi::OsStr,
+    _mode: VerifiedFileOpenModeV1,
 ) -> Result<File, FileAccessErrorV1> {
     Err(FileAccessErrorV1::Io {
         kind: io::ErrorKind::Unsupported,
@@ -969,26 +883,7 @@ pub(crate) fn open_verified_child_file(
 pub(crate) fn create_verified_child_file(
     _parent: &File,
     _name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    Err(FileAccessErrorV1::Io {
-        kind: io::ErrorKind::Unsupported,
-    })
-}
-
-#[cfg(not(windows))]
-pub(crate) fn open_verified_child_file_for_read(
-    _parent: &File,
-    _name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    Err(FileAccessErrorV1::Io {
-        kind: io::ErrorKind::Unsupported,
-    })
-}
-
-#[cfg(not(windows))]
-pub(crate) fn open_verified_child_file_for_move(
-    _parent: &File,
-    _name: &std::ffi::OsStr,
+    _mode: VerifiedFileCreateModeV1,
 ) -> Result<File, FileAccessErrorV1> {
     Err(FileAccessErrorV1::Io {
         kind: io::ErrorKind::Unsupported,
@@ -1004,26 +899,6 @@ pub(crate) fn open_child_for_removal(
         io::ErrorKind::Unsupported,
         "Wingman handle-relative removal requires Windows",
     ))
-}
-
-#[cfg(not(windows))]
-pub(crate) fn open_verified_child_file_for_inspection(
-    _parent: &File,
-    _name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    Err(FileAccessErrorV1::Io {
-        kind: io::ErrorKind::Unsupported,
-    })
-}
-
-#[cfg(not(windows))]
-pub(crate) fn create_verified_staging_child_file(
-    _parent: &File,
-    _name: &std::ffi::OsStr,
-) -> Result<File, FileAccessErrorV1> {
-    Err(FileAccessErrorV1::Io {
-        kind: io::ErrorKind::Unsupported,
-    })
 }
 
 #[cfg(not(windows))]
@@ -1375,8 +1250,12 @@ mod tests {
             .expect("pin the verified requested directory");
         fs::rename(&requested_parent, &pinned_parent).unwrap();
         create_directory_reparse(&alternate_target, &requested_parent);
-        let created = create_verified_child_directory(&parent, std::ffi::OsStr::new("child"))
-            .expect("create relative to the pinned directory");
+        let created = create_verified_child_directory(
+            &parent,
+            std::ffi::OsStr::new("child"),
+            VerifiedDirectoryCreateModeV1::MutationTarget,
+        )
+        .expect("create relative to the pinned directory");
         drop(created);
         drop(parent);
 
@@ -1403,8 +1282,12 @@ mod tests {
             .expect("pin the verified requested directory");
         fs::rename(&requested_parent, &pinned_parent).unwrap();
         create_directory_reparse(&alternate_target, &requested_parent);
-        let created = create_verified_child_file(&parent, std::ffi::OsStr::new("file.txt"))
-            .expect("create relative to the pinned directory");
+        let created = create_verified_child_file(
+            &parent,
+            std::ffi::OsStr::new("file.txt"),
+            VerifiedFileCreateModeV1::TouchTarget,
+        )
+        .expect("create relative to the pinned directory");
         drop(created);
         drop(parent);
 
@@ -1425,9 +1308,12 @@ mod tests {
         fs::write(sandbox.join("destination.txt"), b"old").unwrap();
         let parent = open_verified_root_directory(&sandbox).unwrap();
 
-        let mut committed =
-            create_verified_staging_child_file(&parent, std::ffi::OsStr::new(".wingman-a.tmp"))
-                .unwrap();
+        let mut committed = create_verified_child_file(
+            &parent,
+            std::ffi::OsStr::new(".wingman-a.tmp"),
+            VerifiedFileCreateModeV1::Staging,
+        )
+        .unwrap();
         std::io::Write::write_all(&mut committed, b"new").unwrap();
         committed.sync_all().unwrap();
         rename_open_file_relative(
@@ -1441,9 +1327,12 @@ mod tests {
         assert_eq!(fs::read(sandbox.join("destination.txt")).unwrap(), b"new");
         assert!(!sandbox.join(".wingman-a.tmp").exists());
 
-        let discarded =
-            create_verified_staging_child_file(&parent, std::ffi::OsStr::new(".wingman-b.tmp"))
-                .unwrap();
+        let discarded = create_verified_child_file(
+            &parent,
+            std::ffi::OsStr::new(".wingman-b.tmp"),
+            VerifiedFileCreateModeV1::Staging,
+        )
+        .unwrap();
         delete_open_file(&discarded).unwrap();
         drop(discarded);
         assert!(!sandbox.join(".wingman-b.tmp").exists());

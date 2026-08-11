@@ -2,7 +2,8 @@ use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     capture_file_identity, create_verified_child_file, file_matches_identity,
-    open_verified_child_file, FileAccessErrorV1, FileIdentityV1,
+    open_verified_child_file, FileAccessErrorV1, FileIdentityV1, VerifiedFileCreateModeV1,
+    VerifiedFileOpenModeV1,
 };
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
@@ -136,30 +137,33 @@ fn execute<E: Write>(
                 parent,
                 leaf,
                 identity,
-            } => match open_verified_child_file(&parent, &leaf) {
-                Ok(file) if file_matches_identity(&file, identity).unwrap_or(false) => file,
-                Ok(_)
-                | Err(FileAccessErrorV1::Missing)
-                | Err(FileAccessErrorV1::NotRegularFile)
-                | Err(FileAccessErrorV1::ReparsePoint) => {
-                    diagnostics.operand(
-                        stderr,
-                        "touch",
-                        &operand.display,
-                        "path changed before timestamp update",
-                    )?;
-                    return Ok(1);
+            } => {
+                match open_verified_child_file(&parent, &leaf, VerifiedFileOpenModeV1::TouchTarget)
+                {
+                    Ok(file) if file_matches_identity(&file, identity).unwrap_or(false) => file,
+                    Ok(_)
+                    | Err(FileAccessErrorV1::Missing)
+                    | Err(FileAccessErrorV1::NotRegularFile)
+                    | Err(FileAccessErrorV1::ReparsePoint) => {
+                        diagnostics.operand(
+                            stderr,
+                            "touch",
+                            &operand.display,
+                            "path changed before timestamp update",
+                        )?;
+                        return Ok(1);
+                    }
+                    Err(FileAccessErrorV1::Io { .. }) => {
+                        diagnostics.operand(
+                            stderr,
+                            "touch",
+                            &operand.display,
+                            "path safety cannot be rechecked",
+                        )?;
+                        return Ok(1);
+                    }
                 }
-                Err(FileAccessErrorV1::Io { .. }) => {
-                    diagnostics.operand(
-                        stderr,
-                        "touch",
-                        &operand.display,
-                        "path safety cannot be rechecked",
-                    )?;
-                    return Ok(1);
-                }
-            },
+            }
             PreparedTouchStateV1::Missing { parent, leaf } => {
                 if let Some(created) = created_files
                     .iter()
@@ -178,7 +182,11 @@ fn execute<E: Write>(
                         }
                     }
                 } else {
-                    match create_verified_child_file(&parent, &leaf) {
+                    match create_verified_child_file(
+                        &parent,
+                        &leaf,
+                        VerifiedFileCreateModeV1::TouchTarget,
+                    ) {
                         Ok(file) => {
                             let registry_handle = match file.try_clone() {
                                 Ok(handle) => handle,
@@ -278,7 +286,8 @@ fn prepare_operand(
             return Err(TouchPreflightFailureV1::Unavailable { display });
         }
     };
-    let state = match open_verified_child_file(&parent, &leaf) {
+    let state = match open_verified_child_file(&parent, &leaf, VerifiedFileOpenModeV1::TouchTarget)
+    {
         Ok(file) => {
             let identity =
                 capture_file_identity(&file).map_err(|_| TouchPreflightFailureV1::Unavailable {

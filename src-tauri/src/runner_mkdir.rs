@@ -1,6 +1,8 @@
 use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
-use crate::runner_io::{create_verified_child_directory, DirectoryAccessErrorV1};
+use crate::runner_io::{
+    create_verified_child_directory, DirectoryAccessErrorV1, VerifiedDirectoryCreateModeV1,
+};
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
 use crate::runner_path_access::{
@@ -172,7 +174,11 @@ fn execute<E: Write>(
                         )?;
                         break;
                     }
-                    match create_verified_child_directory(&parent, &component.name) {
+                    match create_verified_child_directory(
+                        &parent,
+                        &component.name,
+                        VerifiedDirectoryCreateModeV1::MutationTarget,
+                    ) {
                         Ok(created) => {
                             let registry_handle = match created.try_clone() {
                                 Ok(handle) => handle,

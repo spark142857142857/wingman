@@ -1,12 +1,12 @@
 use crate::interpreter::ExistingDestinationPolicyV1;
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
-    capture_file_identity, create_verified_staging_child_directory,
-    create_verified_staging_child_file, delete_open_file, file_matches_identity,
-    list_verified_directory, open_verified_child_directory, open_verified_child_directory_for_move,
-    open_verified_child_file_for_inspection, open_verified_child_file_for_move,
-    open_verified_child_file_for_read, rename_open_file_relative, DirectoryAccessErrorV1,
-    FileAccessErrorV1, FileIdentityV1, VerifiedDirectoryEntryKindV1,
+    capture_file_identity, create_verified_child_directory, create_verified_child_file,
+    delete_open_file, file_matches_identity, list_verified_directory,
+    open_verified_child_directory, open_verified_child_file, rename_open_file_relative,
+    DirectoryAccessErrorV1, FileAccessErrorV1, FileIdentityV1, VerifiedDirectoryCreateModeV1,
+    VerifiedDirectoryEntryKindV1, VerifiedDirectoryOpenModeV1, VerifiedFileCreateModeV1,
+    VerifiedFileOpenModeV1,
 };
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{
@@ -589,7 +589,11 @@ fn stage_copy_directory(
         }
         match entry {
             PreparedCopyEntryV1::File { name, handle, .. } => {
-                let file = match create_verified_staging_child_file(&staging.handle, name) {
+                let file = match create_verified_child_file(
+                    &staging.handle,
+                    name,
+                    VerifiedFileCreateModeV1::Staging,
+                ) {
                     Ok(file) => file,
                     Err(_) => {
                         return Err(StageCopyFailureV1 {
@@ -615,7 +619,11 @@ fn stage_copy_directory(
             PreparedCopyEntryV1::Directory {
                 name, directory, ..
             } => {
-                let child = match create_verified_staging_child_directory(&staging.handle, name) {
+                let child = match create_verified_child_directory(
+                    &staging.handle,
+                    name,
+                    VerifiedDirectoryCreateModeV1::Staging,
+                ) {
                     Ok(handle) => StagedCopyDirectoryV1 {
                         handle,
                         entries: Vec::new(),
@@ -685,9 +693,11 @@ pub(super) fn recheck_source_directory(
             } if current.kind == VerifiedDirectoryEntryKindV1::File
                 && current.display_name == *display_name =>
             {
-                let Ok(file) =
-                    open_verified_child_file_for_inspection(&directory.handle, &current.name)
-                else {
+                let Ok(file) = open_verified_child_file(
+                    &directory.handle,
+                    &current.name,
+                    VerifiedFileOpenModeV1::Inspect,
+                ) else {
                     return SourceDirectoryRecheckResultV1::Changed;
                 };
                 if !file_matches_identity(&file, *identity).unwrap_or(false) {
@@ -701,8 +711,11 @@ pub(super) fn recheck_source_directory(
             } if current.kind == VerifiedDirectoryEntryKindV1::Directory
                 && current.display_name == *display_name =>
             {
-                let Ok(opened) = open_verified_child_directory(&directory.handle, &current.name)
-                else {
+                let Ok(opened) = open_verified_child_directory(
+                    &directory.handle,
+                    &current.name,
+                    VerifiedDirectoryOpenModeV1::Read,
+                ) else {
                     return SourceDirectoryRecheckResultV1::Changed;
                 };
                 if !file_matches_identity(&opened, child.identity).unwrap_or(false) {
@@ -774,7 +787,11 @@ pub(super) fn delete_prepared_source_directory(
 fn create_staging_directory(parent: &File) -> Result<File, DirectoryAccessErrorV1> {
     for _ in 0..8 {
         let name = format!(".wingman-stage-{}.tmp", Uuid::new_v4().as_simple());
-        match create_verified_staging_child_directory(parent, OsStr::new(&name)) {
+        match create_verified_child_directory(
+            parent,
+            OsStr::new(&name),
+            VerifiedDirectoryCreateModeV1::Staging,
+        ) {
             Err(DirectoryAccessErrorV1::Io {
                 kind: std::io::ErrorKind::AlreadyExists,
             }) => continue,
@@ -827,8 +844,12 @@ pub(super) fn prepare_source(
         return Ok(PreparedSourceV1::Missing { basename: leaf });
     };
     let opened_directory = match access {
-        TransferSourceAccessV1::Copy => open_verified_child_directory(&parent, &leaf),
-        TransferSourceAccessV1::Move => open_verified_child_directory_for_move(&parent, &leaf),
+        TransferSourceAccessV1::Copy => {
+            open_verified_child_directory(&parent, &leaf, VerifiedDirectoryOpenModeV1::Read)
+        }
+        TransferSourceAccessV1::Move => {
+            open_verified_child_directory(&parent, &leaf, VerifiedDirectoryOpenModeV1::MoveSource)
+        }
     };
     match opened_directory {
         Ok(_directory) if !recursive => {
@@ -856,8 +877,12 @@ pub(super) fn prepare_source(
         }
         Err(DirectoryAccessErrorV1::Missing) | Err(DirectoryAccessErrorV1::NotDirectory) => {
             let opened_file = match access {
-                TransferSourceAccessV1::Copy => open_verified_child_file_for_read(&parent, &leaf),
-                TransferSourceAccessV1::Move => open_verified_child_file_for_move(&parent, &leaf),
+                TransferSourceAccessV1::Copy => {
+                    open_verified_child_file(&parent, &leaf, VerifiedFileOpenModeV1::ReadSource)
+                }
+                TransferSourceAccessV1::Move => {
+                    open_verified_child_file(&parent, &leaf, VerifiedFileOpenModeV1::MoveSource)
+                }
             };
             match opened_file {
                 Ok(handle) => {
@@ -933,12 +958,16 @@ fn prepare_copy_directory(
             }
             VerifiedDirectoryEntryKindV1::File => {
                 let opened_file = match access {
-                    TransferSourceAccessV1::Copy => {
-                        open_verified_child_file_for_read(&handle, &entry.name)
-                    }
-                    TransferSourceAccessV1::Move => {
-                        open_verified_child_file_for_move(&handle, &entry.name)
-                    }
+                    TransferSourceAccessV1::Copy => open_verified_child_file(
+                        &handle,
+                        &entry.name,
+                        VerifiedFileOpenModeV1::ReadSource,
+                    ),
+                    TransferSourceAccessV1::Move => open_verified_child_file(
+                        &handle,
+                        &entry.name,
+                        VerifiedFileOpenModeV1::MoveSource,
+                    ),
                 };
                 let file = opened_file.map_err(|error| match error {
                     FileAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
@@ -963,12 +992,16 @@ fn prepare_copy_directory(
             }
             VerifiedDirectoryEntryKindV1::Directory => {
                 let opened_directory = match access {
-                    TransferSourceAccessV1::Copy => {
-                        open_verified_child_directory(&handle, &entry.name)
-                    }
-                    TransferSourceAccessV1::Move => {
-                        open_verified_child_directory_for_move(&handle, &entry.name)
-                    }
+                    TransferSourceAccessV1::Copy => open_verified_child_directory(
+                        &handle,
+                        &entry.name,
+                        VerifiedDirectoryOpenModeV1::Read,
+                    ),
+                    TransferSourceAccessV1::Move => open_verified_child_directory(
+                        &handle,
+                        &entry.name,
+                        VerifiedDirectoryOpenModeV1::MoveSource,
+                    ),
                 };
                 let directory = opened_directory.map_err(|error| match error {
                     DirectoryAccessErrorV1::ReparsePoint => CpPreflightFailureV1::KnownSafety {
@@ -1033,7 +1066,7 @@ pub(super) fn prepare_destination(
             state: PreparedDestinationStateV1::MissingParent,
         });
     };
-    match open_verified_child_directory(&parent, &leaf) {
+    match open_verified_child_directory(&parent, &leaf, VerifiedDirectoryOpenModeV1::Read) {
         Ok(directory) => inspect_effective_destination(
             display,
             resolved.join(source_basename),
@@ -1059,42 +1092,43 @@ fn inspect_effective_destination(
     parent: File,
     leaf: OsString,
 ) -> Result<PreparedDestinationV1, CpPreflightFailureV1> {
-    let state = match open_verified_child_directory(&parent, &leaf) {
-        Ok(_) => PreparedDestinationStateV1::ExistingDirectory,
-        Err(DirectoryAccessErrorV1::ReparsePoint) => {
-            return Err(CpPreflightFailureV1::KnownSafety {
-                display,
-                message: "reparse destinations are not allowed",
-            });
-        }
-        Err(DirectoryAccessErrorV1::Io { .. }) => {
-            return Err(CpPreflightFailureV1::Unavailable { display });
-        }
-        Err(DirectoryAccessErrorV1::Missing) | Err(DirectoryAccessErrorV1::NotDirectory) => {
-            match open_verified_child_file_for_inspection(&parent, &leaf) {
-                Ok(file) => PreparedDestinationStateV1::ExistingFile {
-                    identity: capture_file_identity(&file).map_err(|_| {
-                        CpPreflightFailureV1::Unavailable {
-                            display: display.clone(),
-                        }
-                    })?,
-                },
-                Err(FileAccessErrorV1::Missing) => PreparedDestinationStateV1::Missing,
-                Err(FileAccessErrorV1::ReparsePoint) => {
-                    return Err(CpPreflightFailureV1::KnownSafety {
-                        display,
-                        message: "reparse destinations are not allowed",
-                    });
-                }
-                Err(FileAccessErrorV1::NotRegularFile) => {
-                    PreparedDestinationStateV1::ExistingDirectory
-                }
-                Err(FileAccessErrorV1::Io { .. }) => {
-                    return Err(CpPreflightFailureV1::Unavailable { display });
+    let state =
+        match open_verified_child_directory(&parent, &leaf, VerifiedDirectoryOpenModeV1::Read) {
+            Ok(_) => PreparedDestinationStateV1::ExistingDirectory,
+            Err(DirectoryAccessErrorV1::ReparsePoint) => {
+                return Err(CpPreflightFailureV1::KnownSafety {
+                    display,
+                    message: "reparse destinations are not allowed",
+                });
+            }
+            Err(DirectoryAccessErrorV1::Io { .. }) => {
+                return Err(CpPreflightFailureV1::Unavailable { display });
+            }
+            Err(DirectoryAccessErrorV1::Missing) | Err(DirectoryAccessErrorV1::NotDirectory) => {
+                match open_verified_child_file(&parent, &leaf, VerifiedFileOpenModeV1::Inspect) {
+                    Ok(file) => PreparedDestinationStateV1::ExistingFile {
+                        identity: capture_file_identity(&file).map_err(|_| {
+                            CpPreflightFailureV1::Unavailable {
+                                display: display.clone(),
+                            }
+                        })?,
+                    },
+                    Err(FileAccessErrorV1::Missing) => PreparedDestinationStateV1::Missing,
+                    Err(FileAccessErrorV1::ReparsePoint) => {
+                        return Err(CpPreflightFailureV1::KnownSafety {
+                            display,
+                            message: "reparse destinations are not allowed",
+                        });
+                    }
+                    Err(FileAccessErrorV1::NotRegularFile) => {
+                        PreparedDestinationStateV1::ExistingDirectory
+                    }
+                    Err(FileAccessErrorV1::Io { .. }) => {
+                        return Err(CpPreflightFailureV1::Unavailable { display });
+                    }
                 }
             }
-        }
-    };
+        };
     Ok(PreparedDestinationV1 {
         display,
         resolved,
@@ -1164,7 +1198,11 @@ fn report_preflight_failure<E: Write>(
 fn create_staging_file(parent: &File) -> Result<File, FileAccessErrorV1> {
     for _ in 0..8 {
         let name = format!(".wingman-stage-{}.tmp", Uuid::new_v4().as_simple());
-        match create_verified_staging_child_file(parent, OsStr::new(&name)) {
+        match create_verified_child_file(
+            parent,
+            OsStr::new(&name),
+            VerifiedFileCreateModeV1::Staging,
+        ) {
             Err(FileAccessErrorV1::Io {
                 kind: std::io::ErrorKind::AlreadyExists,
             }) => continue,
@@ -1213,7 +1251,7 @@ pub(super) fn destination_still_matches(
 ) -> bool {
     match (
         expected,
-        open_verified_child_file_for_inspection(parent, leaf),
+        open_verified_child_file(parent, leaf, VerifiedFileOpenModeV1::Inspect),
     ) {
         (PreparedDestinationStateV1::Missing, Err(FileAccessErrorV1::Missing)) => true,
         (PreparedDestinationStateV1::ExistingFile { identity }, Ok(current)) => {
