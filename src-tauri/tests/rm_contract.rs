@@ -5,7 +5,8 @@ use uuid::Uuid;
 use wingman_lib::interpreter::{
     ExecutionPlanV1, PreparedRequestKindV1, PreparedRequestV1, StagePlanV1,
 };
-use wingman_lib::runner::execute_prepared;
+use wingman_lib::runner::{execute_prepared, execute_prepared_to_with_cancellation};
+use wingman_lib::runner_cancel::RunnerCancellationV1;
 use wingman_lib::windows_path::validate_path_value;
 
 #[test]
@@ -69,6 +70,50 @@ fn force_removes_a_readonly_file_without_bypassing_the_typed_plan() {
 
     assert_eq!(outcome.exit_code, 0);
     assert!(!target.exists());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn readonly_file_requires_force_and_remains_after_the_failed_attempt() {
+    let sandbox = sandbox();
+    let target = sandbox.join("readonly.txt");
+    fs::write(&target, b"content").unwrap();
+    let mut permissions = fs::metadata(&target).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&target, permissions).unwrap();
+
+    let refused = execute_prepared(request(&[&target], false, false)).expect("refuse readonly");
+    assert_eq!(refused.exit_code, 1);
+    assert_eq!(fs::read(&target).unwrap(), b"content");
+
+    let forced = execute_prepared(request(&[&target], false, true)).expect("force readonly");
+    assert_eq!(forced.exit_code, 0);
+    assert!(!target.exists());
+    cleanup(&sandbox);
+}
+
+#[test]
+fn cancellation_before_rm_preflight_mutates_and_reports_nothing() {
+    let sandbox = sandbox();
+    let target = sandbox.join("keep.txt");
+    fs::write(&target, b"keep").unwrap();
+    let cancellation = RunnerCancellationV1::new();
+    cancellation.cancel();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let exit_code = execute_prepared_to_with_cancellation(
+        request(&[&target], false, false),
+        &mut stdout,
+        &mut stderr,
+        &cancellation,
+    )
+    .expect("cancel removal");
+
+    assert_eq!(exit_code, 130);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    assert_eq!(fs::read(&target).unwrap(), b"keep");
     cleanup(&sandbox);
 }
 
