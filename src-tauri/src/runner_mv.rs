@@ -2,36 +2,23 @@ use crate::interpreter::{ExecutionPlanV1, ExistingDestinationPolicyV1, StagePlan
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_cp::{
     close_prepared_source_children, delete_prepared_source_directory, destination_still_matches,
-    execute_cp_to, path_is_same_or_descendant, prepare_destination, prepare_source,
-    source_directory_still_matches, CpPreflightFailureV1, PreparedDestinationStateV1,
-    PreparedSourceDeleteResultV1, PreparedSourceV1, TransferSourceAccessV1,
+    execute_directory_copy, execute_file_copy, path_is_same_or_descendant, prepare_destination,
+    prepare_source, source_directory_still_matches, CpPreflightFailureV1,
+    PreparedDestinationStateV1, PreparedSourceDeleteResultV1, PreparedSourceDirectoryV1,
+    PreparedSourceFileV1, PreparedSourceV1, TransferSourceAccessV1,
 };
 use crate::runner_io::{
     capture_file_identity, delete_open_file, file_matches_identity, identities_share_volume,
-    rename_open_file_relative, FileIdentityV1,
+    rename_open_file_relative,
 };
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
 use crate::windows_path::ValidatedPathSpecV1;
-use std::ffi::OsString;
-use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
 
 enum PreparedMoveSourceV1 {
-    File {
-        display: String,
-        resolved: PathBuf,
-        basename: OsString,
-        handle: File,
-        identity: FileIdentityV1,
-    },
-    Directory {
-        display: String,
-        resolved: PathBuf,
-        basename: OsString,
-        tree: crate::runner_cp::PreparedCopyDirectoryV1,
-    },
+    File(PreparedSourceFileV1),
+    Directory(PreparedSourceDirectoryV1),
 }
 
 pub(crate) fn execute_mv_to<E: Write>(
@@ -90,35 +77,16 @@ fn execute<E: Write>(
             diagnostics.operand(stderr, "mv", &source_spec.original, "source does not exist")?;
             return Ok(1);
         }
-        Ok(PreparedSourceV1::File(source)) => PreparedMoveSourceV1::File {
-            display: source.display,
-            resolved: source.resolved,
-            basename: source.basename,
-            handle: source.handle,
-            identity: source.identity,
-        },
-        Ok(PreparedSourceV1::Directory(Some(source))) => PreparedMoveSourceV1::Directory {
-            display: source.display,
-            resolved: source.resolved,
-            basename: source.basename,
-            tree: source.tree,
-        },
+        Ok(PreparedSourceV1::File(source)) => PreparedMoveSourceV1::File(source),
+        Ok(PreparedSourceV1::Directory(Some(source))) => PreparedMoveSourceV1::Directory(source),
         Ok(PreparedSourceV1::Directory(None)) => unreachable!("move always preflights trees"),
         Err(failure) => return report_preflight_failure(stderr, failure),
     };
     let (source_resolved, source_basename, source_identity) = match &source {
-        PreparedMoveSourceV1::File {
-            resolved,
-            basename,
-            identity,
-            ..
-        } => (resolved, basename, *identity),
-        PreparedMoveSourceV1::Directory {
-            resolved,
-            basename,
-            tree,
-            ..
-        } => (resolved, basename, tree.identity),
+        PreparedMoveSourceV1::File(source) => (&source.resolved, &source.basename, source.identity),
+        PreparedMoveSourceV1::Directory(source) => {
+            (&source.resolved, &source.basename, source.tree.identity)
+        }
     };
     if cancellation.is_cancelled() {
         return Ok(130);
@@ -137,7 +105,7 @@ fn execute<E: Write>(
         )?;
         return Ok(2);
     }
-    if matches!(source, PreparedMoveSourceV1::Directory { .. })
+    if matches!(source, PreparedMoveSourceV1::Directory(_))
         && path_is_same_or_descendant(&destination.resolved, source_resolved)
     {
         write_diagnostic(
@@ -197,23 +165,16 @@ fn execute<E: Write>(
         }
     };
     if force_copy_fallback || !identities_share_volume(source_identity, parent_identity) {
-        return execute_copy_fallback(
-            source,
-            source_spec,
-            destination_spec,
-            policy,
-            stderr,
-            cancellation,
-        );
+        return execute_copy_fallback(source, destination_spec, policy, stderr, cancellation);
     }
     if cancellation.is_cancelled() {
         return Ok(130);
     }
     let source_still_matches = match &source {
-        PreparedMoveSourceV1::File {
-            handle, identity, ..
-        } => file_matches_identity(handle, *identity).unwrap_or(false),
-        PreparedMoveSourceV1::Directory { tree, .. } => source_directory_still_matches(tree),
+        PreparedMoveSourceV1::File(source) => {
+            file_matches_identity(&source.handle, source.identity).unwrap_or(false)
+        }
+        PreparedMoveSourceV1::Directory(source) => source_directory_still_matches(&source.tree),
     };
     if !source_still_matches || !destination_still_matches(&parent, &leaf, &destination.state) {
         let mut diagnostics = MutationDiagnosticsV1::default();
@@ -226,8 +187,8 @@ fn execute<E: Write>(
         return Ok(1);
     }
     let source_handle = match source {
-        PreparedMoveSourceV1::File { handle, .. } => handle,
-        PreparedMoveSourceV1::Directory { tree, .. } => close_prepared_source_children(tree),
+        PreparedMoveSourceV1::File(source) => source.handle,
+        PreparedMoveSourceV1::Directory(source) => close_prepared_source_children(source.tree),
     };
     if rename_open_file_relative(
         &source_handle,
@@ -246,36 +207,49 @@ fn execute<E: Write>(
 }
 
 fn execute_copy_fallback<E: Write>(
-    source: PreparedMoveSourceV1,
-    source_spec: &ValidatedPathSpecV1,
+    mut source: PreparedMoveSourceV1,
     destination_spec: &ValidatedPathSpecV1,
     policy: ExistingDestinationPolicyV1,
     stderr: &mut E,
     cancellation: &RunnerCancellationV1,
 ) -> Result<u8, MutationExecutionErrorV1> {
-    let copy_plan = ExecutionPlanV1 {
-        stages: vec![StagePlanV1::CopyPath {
-            source: source_spec.clone(),
-            destination: destination_spec.clone(),
-            recursive: true,
-            existing_destination: policy,
-        }],
-        redirect: None,
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd.display().to_string(),
+        Err(_) => {
+            write_diagnostic(stderr, "wingman mv: current directory cannot be resolved")?;
+            return Ok(1);
+        }
     };
-    let mut copy_diagnostics = Vec::new();
-    let copy_result = execute_cp_to(&copy_plan, &mut copy_diagnostics, cancellation)
-        .expect("validated move fallback is a copy plan")?;
+    let copy_result = match &mut source {
+        PreparedMoveSourceV1::File(source) => execute_file_copy(
+            source,
+            destination_spec,
+            &cwd,
+            policy,
+            "mv",
+            stderr,
+            cancellation,
+        )?,
+        PreparedMoveSourceV1::Directory(source) => execute_directory_copy(
+            source,
+            destination_spec,
+            &cwd,
+            policy,
+            "mv",
+            stderr,
+            cancellation,
+        )?,
+    };
     if copy_result == 130 {
         return Ok(130);
     }
     if copy_result != 0 {
-        write_diagnostic(stderr, "wingman mv: cross-volume staging copy failed")?;
-        return Ok(1);
+        return Ok(copy_result);
     }
 
     let source_display = match &source {
-        PreparedMoveSourceV1::File { display, .. }
-        | PreparedMoveSourceV1::Directory { display, .. } => display.clone(),
+        PreparedMoveSourceV1::File(source) => source.display.clone(),
+        PreparedMoveSourceV1::Directory(source) => source.display.clone(),
     };
     if cancellation.is_cancelled() {
         write_diagnostic(
@@ -287,10 +261,10 @@ fn execute_copy_fallback<E: Write>(
         return Ok(130);
     }
     let source_still_matches = match &source {
-        PreparedMoveSourceV1::File {
-            handle, identity, ..
-        } => file_matches_identity(handle, *identity).unwrap_or(false),
-        PreparedMoveSourceV1::Directory { tree, .. } => source_directory_still_matches(tree),
+        PreparedMoveSourceV1::File(source) => {
+            file_matches_identity(&source.handle, source.identity).unwrap_or(false)
+        }
+        PreparedMoveSourceV1::Directory(source) => source_directory_still_matches(&source.tree),
     };
     if !source_still_matches {
         write_diagnostic(
@@ -302,17 +276,17 @@ fn execute_copy_fallback<E: Write>(
         return Ok(1);
     }
     let removal = match source {
-        PreparedMoveSourceV1::File { handle, .. } => {
+        PreparedMoveSourceV1::File(source) => {
             if cancellation.is_cancelled() {
                 PreparedSourceDeleteResultV1::Cancelled
-            } else if delete_open_file(&handle).is_ok() {
+            } else if delete_open_file(&source.handle).is_ok() {
                 PreparedSourceDeleteResultV1::Success
             } else {
                 PreparedSourceDeleteResultV1::Failed
             }
         }
-        PreparedMoveSourceV1::Directory { tree, .. } => {
-            delete_prepared_source_directory(tree, cancellation)
+        PreparedMoveSourceV1::Directory(source) => {
+            delete_prepared_source_directory(source.tree, cancellation)
         }
     };
     match removal {
@@ -423,6 +397,53 @@ mod tests {
             b"fallback tree"
         );
         assert!(destination.join("nested").join("empty").is_dir());
+        std::fs::remove_dir_all(&sandbox).unwrap();
+    }
+
+    #[test]
+    fn copy_fallback_copies_and_deletes_the_same_preflighted_file() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "wingman-mv-source-swap-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ));
+        std::fs::create_dir(&sandbox).unwrap();
+        let source = sandbox.join("source.txt");
+        let moved_original = sandbox.join("moved-original.txt");
+        let destination = sandbox.join("destination.txt");
+        std::fs::write(&source, b"original").unwrap();
+        let source_spec = validate_path_value(&source.display().to_string()).unwrap();
+        let cwd = std::env::current_dir().unwrap().display().to_string();
+        let prepared = match prepare_source(
+            &source_spec,
+            &cwd,
+            true,
+            TransferSourceAccessV1::Move,
+            &RunnerCancellationV1::new(),
+        ) {
+            Ok(prepared) => prepared,
+            Err(_) => panic!("prepare source"),
+        };
+        let PreparedSourceV1::File(prepared) = prepared else {
+            panic!("expected a prepared file");
+        };
+        std::fs::rename(&source, &moved_original).unwrap();
+        std::fs::write(&source, b"replacement").unwrap();
+        let mut stderr = Vec::new();
+
+        let exit = execute_copy_fallback(
+            PreparedMoveSourceV1::File(prepared),
+            &validate_path_value(&destination.display().to_string()).unwrap(),
+            ExistingDestinationPolicyV1::Replace,
+            &mut stderr,
+            &RunnerCancellationV1::new(),
+        )
+        .unwrap();
+
+        assert_eq!(exit, 0, "{}", String::from_utf8_lossy(&stderr));
+        assert_eq!(std::fs::read(&destination).unwrap(), b"original");
+        assert_eq!(std::fs::read(&source).unwrap(), b"replacement");
+        assert!(!moved_original.exists());
         std::fs::remove_dir_all(&sandbox).unwrap();
     }
 }

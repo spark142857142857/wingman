@@ -178,20 +178,33 @@ fn execute<E: Write>(
             )?;
             Ok(1)
         }
-        PreparedSourceV1::Directory(Some(source)) => {
-            execute_directory_copy(source, destination_spec, &cwd, policy, stderr, cancellation)
-        }
-        PreparedSourceV1::File(source) => {
-            execute_file_copy(source, destination_spec, &cwd, policy, stderr, cancellation)
-        }
+        PreparedSourceV1::Directory(Some(mut source)) => execute_directory_copy(
+            &mut source,
+            destination_spec,
+            &cwd,
+            policy,
+            "cp",
+            stderr,
+            cancellation,
+        ),
+        PreparedSourceV1::File(mut source) => execute_file_copy(
+            &mut source,
+            destination_spec,
+            &cwd,
+            policy,
+            "cp",
+            stderr,
+            cancellation,
+        ),
     }
 }
 
-fn execute_file_copy<E: Write>(
-    mut source: PreparedSourceFileV1,
+pub(crate) fn execute_file_copy<E: Write>(
+    source: &mut PreparedSourceFileV1,
     destination_spec: &ValidatedPathSpecV1,
     cwd: &str,
     policy: ExistingDestinationPolicyV1,
+    command: &str,
     stderr: &mut E,
     cancellation: &RunnerCancellationV1,
 ) -> Result<u8, MutationExecutionErrorV1> {
@@ -208,7 +221,7 @@ fn execute_file_copy<E: Write>(
     ) {
         write_diagnostic(
             stderr,
-            "wingman cp: source and destination are the same path",
+            &format!("wingman {command}: source and destination are the same path"),
         )?;
         return Ok(2);
     }
@@ -216,7 +229,7 @@ fn execute_file_copy<E: Write>(
         if identity == source.identity {
             write_diagnostic(
                 stderr,
-                "wingman cp: source and destination are the same file",
+                &format!("wingman {command}: source and destination are the same file"),
             )?;
             return Ok(2);
         }
@@ -229,7 +242,7 @@ fn execute_file_copy<E: Write>(
             let mut diagnostics = MutationDiagnosticsV1::default();
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &destination.display,
                 "destination directory already exists",
             )?;
@@ -239,7 +252,7 @@ fn execute_file_copy<E: Write>(
             let mut diagnostics = MutationDiagnosticsV1::default();
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &destination.display,
                 "destination parent directory does not exist",
             )?;
@@ -255,7 +268,7 @@ fn execute_file_copy<E: Write>(
         Err(_) => {
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &destination.display,
                 "staging file creation failed",
             )?;
@@ -269,26 +282,48 @@ fn execute_file_copy<E: Write>(
             if cleanup_failed {
                 diagnostics.operand(
                     stderr,
-                    "cp",
+                    command,
                     &destination.display,
                     "staging cleanup failed after cancellation",
                 )?;
             }
             return Ok(130);
         }
-        diagnostics.operand(stderr, "cp", &source.display, "file copy failed")?;
+        diagnostics.operand(stderr, command, &source.display, "file copy failed")?;
         if cleanup_failed {
-            diagnostics.operand(stderr, "cp", &destination.display, "staging cleanup failed")?;
+            diagnostics.operand(
+                stderr,
+                command,
+                &destination.display,
+                "staging cleanup failed",
+            )?;
         }
         return Ok(1);
     }
     if staging.sync_all().is_err() {
-        diagnostics.operand(stderr, "cp", &destination.display, "staging flush failed")?;
-        cleanup_staging(&staging, stderr, &mut diagnostics, &destination.display)?;
+        diagnostics.operand(
+            stderr,
+            command,
+            &destination.display,
+            "staging flush failed",
+        )?;
+        cleanup_staging(
+            &staging,
+            command,
+            stderr,
+            &mut diagnostics,
+            &destination.display,
+        )?;
         return Ok(1);
     }
     if cancellation.is_cancelled() {
-        cleanup_staging(&staging, stderr, &mut diagnostics, &destination.display)?;
+        cleanup_staging(
+            &staging,
+            command,
+            stderr,
+            &mut diagnostics,
+            &destination.display,
+        )?;
         return Ok(130);
     }
     if !file_matches_identity(&source.handle, source.identity).unwrap_or(false)
@@ -296,11 +331,17 @@ fn execute_file_copy<E: Write>(
     {
         diagnostics.operand(
             stderr,
-            "cp",
+            command,
             &destination.display,
             "source or destination changed before commit",
         )?;
-        cleanup_staging(&staging, stderr, &mut diagnostics, &destination.display)?;
+        cleanup_staging(
+            &staging,
+            command,
+            stderr,
+            &mut diagnostics,
+            &destination.display,
+        )?;
         return Ok(1);
     }
     if rename_open_file_relative(
@@ -312,18 +353,25 @@ fn execute_file_copy<E: Write>(
     )
     .is_err()
     {
-        diagnostics.operand(stderr, "cp", &destination.display, "copy commit failed")?;
-        cleanup_staging(&staging, stderr, &mut diagnostics, &destination.display)?;
+        diagnostics.operand(stderr, command, &destination.display, "copy commit failed")?;
+        cleanup_staging(
+            &staging,
+            command,
+            stderr,
+            &mut diagnostics,
+            &destination.display,
+        )?;
         return Ok(1);
     }
     Ok(0)
 }
 
-fn execute_directory_copy<E: Write>(
-    mut source: PreparedSourceDirectoryV1,
+pub(crate) fn execute_directory_copy<E: Write>(
+    source: &mut PreparedSourceDirectoryV1,
     destination_spec: &ValidatedPathSpecV1,
     cwd: &str,
     policy: ExistingDestinationPolicyV1,
+    command: &str,
     stderr: &mut E,
     cancellation: &RunnerCancellationV1,
 ) -> Result<u8, MutationExecutionErrorV1> {
@@ -337,7 +385,7 @@ fn execute_directory_copy<E: Write>(
     if path_is_same_or_descendant(&destination.resolved, &source.resolved) {
         write_diagnostic(
             stderr,
-            "wingman cp: recursive destination cannot be the source or inside it",
+            &format!("wingman {command}: recursive destination cannot be the source or inside it"),
         )?;
         return Ok(2);
     }
@@ -354,7 +402,7 @@ fn execute_directory_copy<E: Write>(
             let mut diagnostics = MutationDiagnosticsV1::default();
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &destination.display,
                 "destination directory already exists",
             )?;
@@ -364,7 +412,7 @@ fn execute_directory_copy<E: Write>(
             let mut diagnostics = MutationDiagnosticsV1::default();
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &destination.display,
                 "destination parent directory does not exist",
             )?;
@@ -383,7 +431,7 @@ fn execute_directory_copy<E: Write>(
         Err(_) => {
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &destination.display,
                 "staging directory creation failed",
             )?;
@@ -398,7 +446,7 @@ fn execute_directory_copy<E: Write>(
                 if cleanup_failed {
                     diagnostics.operand(
                         stderr,
-                        "cp",
+                        command,
                         &destination.display,
                         "staging cleanup failed after cancellation",
                     )?;
@@ -407,14 +455,14 @@ fn execute_directory_copy<E: Write>(
             }
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &source.display,
                 "recursive staging copy failed",
             )?;
             if cleanup_failed {
                 diagnostics.operand(
                     stderr,
-                    "cp",
+                    command,
                     &destination.display,
                     "staging cleanup failed",
                 )?;
@@ -426,7 +474,7 @@ fn execute_directory_copy<E: Write>(
         if cleanup_staged_directory(&staging) {
             diagnostics.operand(
                 stderr,
-                "cp",
+                command,
                 &destination.display,
                 "staging cleanup failed after cancellation",
             )?;
@@ -438,12 +486,17 @@ fn execute_directory_copy<E: Write>(
     {
         diagnostics.operand(
             stderr,
-            "cp",
+            command,
             &destination.display,
             "source or destination changed before commit",
         )?;
         if cleanup_staged_directory(&staging) {
-            diagnostics.operand(stderr, "cp", &destination.display, "staging cleanup failed")?;
+            diagnostics.operand(
+                stderr,
+                command,
+                &destination.display,
+                "staging cleanup failed",
+            )?;
         }
         return Ok(1);
     }
@@ -457,9 +510,14 @@ fn execute_directory_copy<E: Write>(
     )
     .is_err()
     {
-        diagnostics.operand(stderr, "cp", &destination.display, "copy commit failed")?;
+        diagnostics.operand(stderr, command, &destination.display, "copy commit failed")?;
         if delete_open_file(&staging_root).is_err() {
-            diagnostics.operand(stderr, "cp", &destination.display, "staging cleanup failed")?;
+            diagnostics.operand(
+                stderr,
+                command,
+                &destination.display,
+                "staging cleanup failed",
+            )?;
         }
         return Ok(1);
     }
@@ -695,12 +753,13 @@ pub(crate) fn path_is_same_or_descendant(candidate: &Path, ancestor: &Path) -> b
 
 fn cleanup_staging<E: Write>(
     staging: &File,
+    command: &str,
     stderr: &mut E,
     diagnostics: &mut MutationDiagnosticsV1,
     display: &str,
 ) -> Result<(), MutationExecutionErrorV1> {
     if delete_open_file(staging).is_err() {
-        diagnostics.operand(stderr, "cp", display, "staging cleanup failed")?;
+        diagnostics.operand(stderr, command, display, "staging cleanup failed")?;
     }
     Ok(())
 }
