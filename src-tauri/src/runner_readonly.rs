@@ -25,6 +25,80 @@ pub use crate::sort_support::{MAX_SORT_BYTES, MAX_SORT_RECORDS};
 pub const MAX_TAIL_BUFFER_RECORDS: usize = 65_536;
 pub const MAX_TAIL_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const FOLLOW_READ_BUFFER_BYTES: usize = 8192;
+
+struct FollowReaderV1 {
+    decoder: Utf8RecordDecoderV1,
+    read_buffer: [u8; FOLLOW_READ_BUFFER_BYTES],
+    observed_bytes: u64,
+}
+
+enum FollowPollV1 {
+    Records(Vec<RecordFrameV1>),
+    Idle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FollowInputFaultV1 {
+    Read,
+    InvalidText,
+    Metadata,
+    Truncated,
+}
+
+impl FollowInputFaultV1 {
+    fn diagnostic(self, following: bool) -> &'static str {
+        match self {
+            Self::Read if following => "input read failed while following",
+            Self::Read => "input read failed",
+            Self::InvalidText => "input is not valid bounded UTF-8 text",
+            Self::Metadata => "input metadata cannot be read while following",
+            Self::Truncated => "input was truncated while following",
+        }
+    }
+}
+
+impl FollowReaderV1 {
+    fn new() -> Self {
+        Self {
+            decoder: Utf8RecordDecoderV1::new(),
+            read_buffer: [0; FOLLOW_READ_BUFFER_BYTES],
+            observed_bytes: 0,
+        }
+    }
+
+    fn read_available(
+        &mut self,
+        input: &mut PreparedInputV1,
+    ) -> Result<Option<Vec<RecordFrameV1>>, FollowInputFaultV1> {
+        let length = input
+            .file_mut()
+            .read(&mut self.read_buffer)
+            .map_err(|_| FollowInputFaultV1::Read)?;
+        if length == 0 {
+            return Ok(None);
+        }
+        self.observed_bytes = self.observed_bytes.saturating_add(length as u64);
+        self.decoder
+            .push(&self.read_buffer[..length])
+            .map(Some)
+            .map_err(|_| FollowInputFaultV1::InvalidText)
+    }
+
+    fn poll(&mut self, input: &mut PreparedInputV1) -> Result<FollowPollV1, FollowInputFaultV1> {
+        if let Some(records) = self.read_available(input)? {
+            return Ok(FollowPollV1::Records(records));
+        }
+        let metadata = input
+            .file_mut()
+            .metadata()
+            .map_err(|_| FollowInputFaultV1::Metadata)?;
+        if metadata.len() < self.observed_bytes {
+            return Err(FollowInputFaultV1::Truncated);
+        }
+        Ok(FollowPollV1::Idle)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadonlyExecutionErrorV1 {
@@ -324,41 +398,25 @@ fn execute_follow_to<W: Write, E: Write>(
     let mut sink = RecordStreamWriterV1::new(&mut *writer);
     let mut pipeline = OrderedPipelineV1::new(plan, &mut sink, cancellation, &source.paths)
         .map_err(map_ordered_setup_fault)?;
-    let mut decoder = Utf8RecordDecoderV1::new();
+    let mut reader = FollowReaderV1::new();
     let mut initial: VecDeque<RecordFrameV1> = VecDeque::new();
     let mut initial_bytes = 0usize;
-    let mut read_buffer = [0u8; 8192];
-    let mut observed_bytes = 0u64;
     let mut stopped = pipeline.starts_stopped();
     let mut operational_failure = false;
     let mut diagnostics = Vec::new();
     let mut stage_fault = None;
 
     while !stopped && !operational_failure && !cancellation.is_cancelled() {
-        let length = match input.file_mut().read(&mut read_buffer) {
-            Ok(0) => break,
-            Ok(length) => length,
-            Err(_) => {
+        let records = match reader.read_available(input) {
+            Ok(None) => break,
+            Ok(Some(records)) => records,
+            Err(fault) => {
                 operational_failure = true;
                 diagnostics.push(operand_diagnostic(
                     source.kind.command_name(),
                     0,
                     source.paths[0],
-                    "input read failed",
-                ));
-                break;
-            }
-        };
-        observed_bytes = observed_bytes.saturating_add(length as u64);
-        let records = match decoder.push(&read_buffer[..length]) {
-            Ok(records) => records,
-            Err(_) => {
-                operational_failure = true;
-                diagnostics.push(operand_diagnostic(
-                    source.kind.command_name(),
-                    0,
-                    source.paths[0],
-                    "input is not valid bounded UTF-8 text",
+                    fault.diagnostic(false),
                 ));
                 break;
             }
@@ -400,43 +458,9 @@ fn execute_follow_to<W: Write, E: Write>(
 
     while !stopped && !operational_failure && stage_fault.is_none() && !cancellation.is_cancelled()
     {
-        match input.file_mut().read(&mut read_buffer) {
-            Ok(0) => match input.file_mut().metadata() {
-                Ok(metadata) if metadata.len() < observed_bytes => {
-                    operational_failure = true;
-                    diagnostics.push(operand_diagnostic(
-                        source.kind.command_name(),
-                        0,
-                        source.paths[0],
-                        "input was truncated while following",
-                    ));
-                }
-                Ok(_) => thread::sleep(FOLLOW_POLL_INTERVAL),
-                Err(_) => {
-                    operational_failure = true;
-                    diagnostics.push(operand_diagnostic(
-                        source.kind.command_name(),
-                        0,
-                        source.paths[0],
-                        "input metadata cannot be read while following",
-                    ));
-                }
-            },
-            Ok(length) => {
-                observed_bytes = observed_bytes.saturating_add(length as u64);
-                let records = match decoder.push(&read_buffer[..length]) {
-                    Ok(records) => records,
-                    Err(_) => {
-                        operational_failure = true;
-                        diagnostics.push(operand_diagnostic(
-                            source.kind.command_name(),
-                            0,
-                            source.paths[0],
-                            "input is not valid bounded UTF-8 text",
-                        ));
-                        continue;
-                    }
-                };
+        match reader.poll(input) {
+            Ok(FollowPollV1::Idle) => thread::sleep(FOLLOW_POLL_INTERVAL),
+            Ok(FollowPollV1::Records(records)) => {
                 for record in records {
                     match push_follow_record(&mut pipeline, record) {
                         Ok(OrderedFlowV1::Continue) => {}
@@ -451,13 +475,13 @@ fn execute_follow_to<W: Write, E: Write>(
                     }
                 }
             }
-            Err(_) => {
+            Err(fault) => {
                 operational_failure = true;
                 diagnostics.push(operand_diagnostic(
                     source.kind.command_name(),
                     0,
                     source.paths[0],
-                    "input read failed while following",
+                    fault.diagnostic(true),
                 ));
             }
         }
