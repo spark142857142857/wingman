@@ -1,10 +1,82 @@
 use wingman_lib::catalog::{build_execution_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
-    RedirectModeV1, StagePlanV1, ValidatedRedirectPlanV1, MAX_PATH_OPERANDS, MAX_PIPELINE_STAGES,
+    validate_execution_plan, ExecutionPlanV1, RedirectModeV1, StagePlanV1, ValidatedRedirectPlanV1,
+    MAX_PATH_OPERANDS, MAX_PIPELINE_STAGES,
 };
 use wingman_lib::lexer::lex_p0_line;
 use wingman_lib::parser::parse_p0_tokens;
 use wingman_lib::windows_path::validate_path_value;
+
+#[test]
+fn mkdir_builds_one_bounded_non_composable_mutation_plan() {
+    let parsed = parse_p0_tokens(&lex_p0_line("mkdir -p one two\\three").unwrap()).unwrap();
+    assert_eq!(
+        build_execution_plan(&parsed).unwrap(),
+        ExecutionPlanV1 {
+            stages: vec![StagePlanV1::CreateDirectories {
+                paths: vec![
+                    validate_path_value("one").unwrap(),
+                    validate_path_value("two\\three").unwrap(),
+                ],
+                parents: true,
+            }],
+            redirect: None,
+        }
+    );
+
+    let dash_path = parse_p0_tokens(&lex_p0_line("mkdir -- -cache").unwrap()).unwrap();
+    assert_eq!(
+        build_execution_plan(&dash_path).unwrap().stages,
+        vec![StagePlanV1::CreateDirectories {
+            paths: vec![validate_path_value("-cache").unwrap()],
+            parents: false,
+        }]
+    );
+}
+
+#[test]
+fn mkdir_rejects_unsupported_or_composed_shapes_before_execution() {
+    for line in [
+        "mkdir",
+        "mkdir -m 755 output",
+        "mkdir *.cache",
+        "mkdir output | wc -l",
+        "mkdir output > result.txt",
+    ] {
+        let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
+    }
+}
+
+#[test]
+fn runner_revalidates_the_bounded_mkdir_wire_shape() {
+    let valid = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::CreateDirectories {
+            paths: vec![validate_path_value("one").unwrap()],
+            parents: false,
+        }],
+        redirect: None,
+    };
+    assert_eq!(validate_execution_plan(&valid), Ok(()));
+
+    let empty = ExecutionPlanV1 {
+        stages: vec![StagePlanV1::CreateDirectories {
+            paths: Vec::new(),
+            parents: false,
+        }],
+        redirect: None,
+    };
+    assert!(validate_execution_plan(&empty).is_err());
+
+    let redirected = ExecutionPlanV1 {
+        stages: valid.stages,
+        redirect: Some(ValidatedRedirectPlanV1 {
+            mode: RedirectModeV1::Overwrite,
+            path: validate_path_value("out.txt").unwrap(),
+        }),
+    };
+    assert!(validate_execution_plan(&redirected).is_err());
+}
 
 #[test]
 fn cat_head_and_redirect_build_one_typed_shell_independent_plan() {

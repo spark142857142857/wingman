@@ -38,6 +38,8 @@ pub fn build_execution_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, Ca
             stages.push(build_clear(command)?);
         } else if command.name.eq_ignore_ascii_case("which") {
             stages.push(build_which(command)?);
+        } else if command.name.eq_ignore_ascii_case("mkdir") {
+            stages.push(build_mkdir(command)?);
         } else if command.name.eq_ignore_ascii_case("cat") {
             if index != 0 {
                 return Err(CatalogErrorV1::InvalidSourceShape);
@@ -234,6 +236,27 @@ fn build_which(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1>
     };
     let name = validate_executable_name(&arguments[0]).map_err(|_| CatalogErrorV1::InvalidName)?;
     Ok(StagePlanV1::FindExecutable { name })
+}
+
+fn build_mkdir(command: &ParsedCommandV1) -> Result<StagePlanV1, CatalogErrorV1> {
+    let mut parents = false;
+    let mut parse_options = true;
+    let mut paths = Vec::new();
+    for argument in &command.arguments {
+        if parse_options && argument == "--" {
+            parse_options = false;
+        } else if parse_options && matches!(argument.as_str(), "-p" | "--parents") {
+            parents = true;
+        } else if parse_options && argument.starts_with('-') {
+            return Err(CatalogErrorV1::UnsupportedOption);
+        } else {
+            paths.push(validate_path_value(argument).map_err(CatalogErrorV1::Path)?);
+        }
+    }
+    if paths.is_empty() {
+        return Err(CatalogErrorV1::MissingOperand);
+    }
+    Ok(StagePlanV1::CreateDirectories { paths, parents })
 }
 
 fn build_sort(
