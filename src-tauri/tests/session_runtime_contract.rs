@@ -463,6 +463,72 @@ fn reliable_recursive_cp_runs_through_the_real_broker_and_sidecar() {
     fs::remove_dir_all(&sandbox).unwrap();
 }
 
+#[test]
+fn reliable_mv_runs_through_the_real_broker_and_sidecar() {
+    let sandbox = std::env::temp_dir().join(format!(
+        "wingman-runtime-mv-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    let source = sandbox.join("한글 원본");
+    let destination = sandbox.join("옮긴 디렉터리");
+    fs::create_dir_all(source.join("중첩")).unwrap();
+    fs::write(source.join("중첩").join("내용.txt"), b"moved").unwrap();
+
+    let mut session = TerminalSessionV1::new(609, ActiveShell::WindowsPowerShell);
+    let marker = format!(
+        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
+        session.integration_nonce()
+    );
+    assert_eq!(session.ingest_pty_output(&marker), "");
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-runtime-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start session broker");
+    let mut terminal_wire = Vec::new();
+    let line = format!(
+        "mv \"{}\" \"{}\"\r",
+        display_path(&source),
+        display_path(&destination)
+    );
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &broker,
+        &mut terminal_wire,
+        &line,
+        true,
+    )
+    .expect("dispatch reliable mv");
+    let TerminalExecutionOutcomeV1::Prepared { request_id, .. } = outcome else {
+        panic!("expected a prepared mv dispatch");
+    };
+    assert!(String::from_utf8(terminal_wire)
+        .expect("UTF-8 terminal write")
+        .ends_with(&format!(
+            "Invoke-WingmanPrepared -RequestId '{request_id}'\r"
+        )));
+
+    let process = Command::new(env!("CARGO_BIN_EXE_wingman-runner"))
+        .arg(&request_id)
+        .env("WINGMAN_BROKER_PIPE", &pipe_name)
+        .output()
+        .expect("start packaged runner binary");
+    assert_eq!(process.status.code(), Some(0));
+    assert!(process.stdout.is_empty());
+    assert!(process.stderr.is_empty());
+    assert!(!source.exists());
+    assert_eq!(
+        fs::read(destination.join("중첩").join("내용.txt")).unwrap(),
+        b"moved"
+    );
+
+    broker.stop().expect("stop session broker");
+    fs::remove_dir_all(&sandbox).unwrap();
+}
+
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
