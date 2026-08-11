@@ -25,7 +25,10 @@ struct PreparedRemoveTargetV1 {
 enum PreparedRemoveStateV1 {
     Missing,
     DirectoryRequiresRecursive,
-    Ready(PreparedRemoveNodeV1),
+    Ready {
+        parent: File,
+        node: PreparedRemoveNodeV1,
+    },
 }
 
 struct PreparedRemoveNodeV1 {
@@ -145,8 +148,8 @@ fn execute<E: Write>(
                     "is a directory; use -r to remove it",
                 )?;
             }
-            PreparedRemoveStateV1::Ready(node) => {
-                if !node_still_matches(&node) {
+            PreparedRemoveStateV1::Ready { parent, node } => {
+                if !current_name_matches(&parent, &node) || !node_still_matches(&node) {
                     diagnostics.operand(
                         stderr,
                         "rm",
@@ -155,7 +158,14 @@ fn execute<E: Write>(
                     )?;
                     return Ok(1);
                 }
-                match delete_node(node, force, stderr, &mut diagnostics, cancellation)? {
+                match delete_node(
+                    node,
+                    Some(&parent),
+                    force,
+                    stderr,
+                    &mut diagnostics,
+                    cancellation,
+                )? {
                     RemoveExecutionResultV1::Success => {}
                     RemoveExecutionResultV1::OperationalFailure => operational_failure = true,
                     RemoveExecutionResultV1::SafetyMismatch => return Ok(1),
@@ -249,7 +259,7 @@ fn prepare_target(
     )?;
     Ok(PreparedRemoveTargetV1 {
         display,
-        state: PreparedRemoveStateV1::Ready(node),
+        state: PreparedRemoveStateV1::Ready { parent, node },
     })
 }
 
@@ -343,12 +353,22 @@ fn node_still_matches(node: &PreparedRemoveNodeV1) -> bool {
         && listed.iter().zip(children).all(|(entry, child)| {
             entry.name == child.name
                 && entry_kind_matches(entry.kind, prepared_entry_kind(child))
+                && current_name_matches(&node.handle, child)
                 && node_still_matches(child)
         })
 }
 
+fn current_name_matches(parent: &File, node: &PreparedRemoveNodeV1) -> bool {
+    let Ok((current, kind)) = open_child_for_removal(parent, &node.name) else {
+        return false;
+    };
+    kind == prepared_entry_kind(node)
+        && file_matches_identity(&current, node.identity).unwrap_or(false)
+}
+
 fn delete_node<E: Write>(
     node: PreparedRemoveNodeV1,
+    parent: Option<&File>,
     force: bool,
     stderr: &mut E,
     diagnostics: &mut MutationDiagnosticsV1,
@@ -357,14 +377,23 @@ fn delete_node<E: Write>(
     if cancellation.is_cancelled() {
         return Ok(RemoveExecutionResultV1::Cancelled);
     }
-    if !file_matches_identity(&node.handle, node.identity).unwrap_or(false) {
+    if parent.is_some_and(|parent| !current_name_matches(parent, &node))
+        || !file_matches_identity(&node.handle, node.identity).unwrap_or(false)
+    {
         diagnostics.operand(stderr, "rm", &node.display, "path changed during removal")?;
         return Ok(RemoveExecutionResultV1::SafetyMismatch);
     }
     let mut child_failed = false;
     if let PreparedRemoveKindV1::Directory(children) = node.kind {
         for child in children {
-            match delete_node(child, force, stderr, diagnostics, cancellation)? {
+            match delete_node(
+                child,
+                Some(&node.handle),
+                force,
+                stderr,
+                diagnostics,
+                cancellation,
+            )? {
                 RemoveExecutionResultV1::Success => {}
                 RemoveExecutionResultV1::OperationalFailure => child_failed = true,
                 result @ (RemoveExecutionResultV1::SafetyMismatch
@@ -456,4 +485,48 @@ fn split_absolute_path(path: &Path) -> Option<(&Path, Vec<OsString>)> {
         })
         .collect::<Option<Vec<_>>>()?;
     Some((root, components))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::windows_path::validate_path_value;
+    use uuid::Uuid;
+
+    #[test]
+    fn pathname_swap_does_not_match_the_preflighted_removal_target() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "wingman-rm-path-swap-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ));
+        std::fs::create_dir(&sandbox).unwrap();
+        let target = sandbox.join("target.txt");
+        let moved_original = sandbox.join("moved-original.txt");
+        std::fs::write(&target, b"original").unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        let prepared = match prepare_target(
+            &validate_path_value(&target.display().to_string()).unwrap(),
+            &cwd,
+            &cwd.display().to_string(),
+            false,
+            &RunnerCancellationV1::new(),
+        ) {
+            Ok(prepared) => prepared,
+            Err(_) => panic!("prepare removal target"),
+        };
+        let PreparedRemoveStateV1::Ready { parent, node } = prepared.state else {
+            panic!("expected ready removal target");
+        };
+
+        std::fs::rename(&target, &moved_original).unwrap();
+        std::fs::write(&target, b"replacement").unwrap();
+
+        assert!(!current_name_matches(&parent, &node));
+        drop(node);
+        drop(parent);
+        assert_eq!(std::fs::read(&target).unwrap(), b"replacement");
+        assert_eq!(std::fs::read(&moved_original).unwrap(), b"original");
+        std::fs::remove_dir_all(&sandbox).unwrap();
+    }
 }
