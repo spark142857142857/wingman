@@ -7,7 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { classifyTerminalPaste } from "./terminal-paste";
 import { isPasteShortcut } from "./terminal-shortcuts";
-import type { ShellKind } from "./shell-state";
+
+type ShellKind = "powershell" | "cmd";
 
 const termHost = document.getElementById("terminal")!;
 const cwdEl = document.getElementById("cwd")!;
