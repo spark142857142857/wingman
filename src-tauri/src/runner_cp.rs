@@ -102,6 +102,13 @@ pub(crate) enum CpPreflightFailureV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceDirectoryRecheckResultV1 {
+    Matches,
+    Changed,
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TransferSourceAccessV1 {
     Copy,
     Move,
@@ -344,6 +351,16 @@ pub(crate) fn execute_file_copy<E: Write>(
         )?;
         return Ok(1);
     }
+    if cancellation.is_cancelled() {
+        cleanup_staging(
+            &staging,
+            command,
+            stderr,
+            &mut diagnostics,
+            &destination.display,
+        )?;
+        return Ok(130);
+    }
     if rename_open_file_relative(
         &staging,
         &parent,
@@ -481,9 +498,38 @@ pub(crate) fn execute_directory_copy<E: Write>(
         }
         return Ok(130);
     }
-    if !source_directory_still_matches(&source.tree)
-        || !destination_still_matches(&parent, &leaf, &destination.state)
-    {
+    match recheck_source_directory(&source.tree, cancellation) {
+        SourceDirectoryRecheckResultV1::Cancelled => {
+            if cleanup_staged_directory(&staging) {
+                diagnostics.operand(
+                    stderr,
+                    command,
+                    &destination.display,
+                    "staging cleanup failed after cancellation",
+                )?;
+            }
+            return Ok(130);
+        }
+        SourceDirectoryRecheckResultV1::Changed => {
+            diagnostics.operand(
+                stderr,
+                command,
+                &destination.display,
+                "source or destination changed before commit",
+            )?;
+            if cleanup_staged_directory(&staging) {
+                diagnostics.operand(
+                    stderr,
+                    command,
+                    &destination.display,
+                    "staging cleanup failed",
+                )?;
+            }
+            return Ok(1);
+        }
+        SourceDirectoryRecheckResultV1::Matches => {}
+    }
+    if !destination_still_matches(&parent, &leaf, &destination.state) {
         diagnostics.operand(
             stderr,
             command,
@@ -499,6 +545,17 @@ pub(crate) fn execute_directory_copy<E: Write>(
             )?;
         }
         return Ok(1);
+    }
+    if cancellation.is_cancelled() {
+        if cleanup_staged_directory(&staging) {
+            diagnostics.operand(
+                stderr,
+                command,
+                &destination.display,
+                "staging cleanup failed after cancellation",
+            )?;
+        }
+        return Ok(130);
     }
     let staging_root = close_staged_children(staging);
     if rename_open_file_relative(
@@ -621,17 +678,26 @@ fn cleanup_staged_directory(directory: &StagedCopyDirectoryV1) -> bool {
     failed
 }
 
-pub(crate) fn source_directory_still_matches(directory: &PreparedCopyDirectoryV1) -> bool {
+pub(crate) fn recheck_source_directory(
+    directory: &PreparedCopyDirectoryV1,
+    cancellation: &RunnerCancellationV1,
+) -> SourceDirectoryRecheckResultV1 {
+    if cancellation.is_cancelled() {
+        return SourceDirectoryRecheckResultV1::Cancelled;
+    }
     if !file_matches_identity(&directory.handle, directory.identity).unwrap_or(false) {
-        return false;
+        return SourceDirectoryRecheckResultV1::Changed;
     }
     let Ok(current) = list_verified_directory(&directory.handle) else {
-        return false;
+        return SourceDirectoryRecheckResultV1::Changed;
     };
     if current.len() != directory.entries.len() {
-        return false;
+        return SourceDirectoryRecheckResultV1::Changed;
     }
     for (expected, current) in directory.entries.iter().zip(current) {
+        if cancellation.is_cancelled() {
+            return SourceDirectoryRecheckResultV1::Cancelled;
+        }
         match expected {
             PreparedCopyEntryV1::File {
                 display_name,
@@ -643,10 +709,10 @@ pub(crate) fn source_directory_still_matches(directory: &PreparedCopyDirectoryV1
                 let Ok(file) =
                     open_verified_child_file_for_inspection(&directory.handle, &current.name)
                 else {
-                    return false;
+                    return SourceDirectoryRecheckResultV1::Changed;
                 };
                 if !file_matches_identity(&file, *identity).unwrap_or(false) {
-                    return false;
+                    return SourceDirectoryRecheckResultV1::Changed;
                 }
             }
             PreparedCopyEntryV1::Directory {
@@ -658,18 +724,20 @@ pub(crate) fn source_directory_still_matches(directory: &PreparedCopyDirectoryV1
             {
                 let Ok(opened) = open_verified_child_directory(&directory.handle, &current.name)
                 else {
-                    return false;
+                    return SourceDirectoryRecheckResultV1::Changed;
                 };
-                if !file_matches_identity(&opened, child.identity).unwrap_or(false)
-                    || !source_directory_still_matches(child)
-                {
-                    return false;
+                if !file_matches_identity(&opened, child.identity).unwrap_or(false) {
+                    return SourceDirectoryRecheckResultV1::Changed;
+                }
+                match recheck_source_directory(child, cancellation) {
+                    SourceDirectoryRecheckResultV1::Matches => {}
+                    result => return result,
                 }
             }
-            _ => return false,
+            _ => return SourceDirectoryRecheckResultV1::Changed,
         }
     }
-    true
+    SourceDirectoryRecheckResultV1::Matches
 }
 
 pub(crate) fn close_prepared_source_children(directory: PreparedCopyDirectoryV1) -> File {

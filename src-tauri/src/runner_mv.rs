@@ -3,9 +3,9 @@ use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_cp::{
     close_prepared_source_children, delete_prepared_source_directory, destination_still_matches,
     execute_directory_copy, execute_file_copy, path_is_same_or_descendant, prepare_destination,
-    prepare_source, source_directory_still_matches, CpPreflightFailureV1,
-    PreparedDestinationStateV1, PreparedSourceDeleteResultV1, PreparedSourceDirectoryV1,
-    PreparedSourceFileV1, PreparedSourceV1, TransferSourceAccessV1,
+    prepare_source, recheck_source_directory, CpPreflightFailureV1, PreparedDestinationStateV1,
+    PreparedSourceDeleteResultV1, PreparedSourceDirectoryV1, PreparedSourceFileV1,
+    PreparedSourceV1, SourceDirectoryRecheckResultV1, TransferSourceAccessV1,
 };
 use crate::runner_io::{
     capture_file_identity, delete_open_file, file_matches_identity, identities_share_volume,
@@ -170,13 +170,24 @@ fn execute<E: Write>(
     if cancellation.is_cancelled() {
         return Ok(130);
     }
-    let source_still_matches = match &source {
+    let source_recheck = match &source {
         PreparedMoveSourceV1::File(source) => {
-            file_matches_identity(&source.handle, source.identity).unwrap_or(false)
+            if file_matches_identity(&source.handle, source.identity).unwrap_or(false) {
+                SourceDirectoryRecheckResultV1::Matches
+            } else {
+                SourceDirectoryRecheckResultV1::Changed
+            }
         }
-        PreparedMoveSourceV1::Directory(source) => source_directory_still_matches(&source.tree),
+        PreparedMoveSourceV1::Directory(source) => {
+            recheck_source_directory(&source.tree, cancellation)
+        }
     };
-    if !source_still_matches || !destination_still_matches(&parent, &leaf, &destination.state) {
+    if source_recheck == SourceDirectoryRecheckResultV1::Cancelled {
+        return Ok(130);
+    }
+    if source_recheck == SourceDirectoryRecheckResultV1::Changed
+        || !destination_still_matches(&parent, &leaf, &destination.state)
+    {
         let mut diagnostics = MutationDiagnosticsV1::default();
         diagnostics.operand(
             stderr,
@@ -185,6 +196,9 @@ fn execute<E: Write>(
             "source or destination changed before commit",
         )?;
         return Ok(1);
+    }
+    if cancellation.is_cancelled() {
+        return Ok(130);
     }
     let source_handle = match source {
         PreparedMoveSourceV1::File(source) => source.handle,
@@ -260,13 +274,28 @@ fn execute_copy_fallback<E: Write>(
         )?;
         return Ok(130);
     }
-    let source_still_matches = match &source {
+    let source_recheck = match &source {
         PreparedMoveSourceV1::File(source) => {
-            file_matches_identity(&source.handle, source.identity).unwrap_or(false)
+            if file_matches_identity(&source.handle, source.identity).unwrap_or(false) {
+                SourceDirectoryRecheckResultV1::Matches
+            } else {
+                SourceDirectoryRecheckResultV1::Changed
+            }
         }
-        PreparedMoveSourceV1::Directory(source) => source_directory_still_matches(&source.tree),
+        PreparedMoveSourceV1::Directory(source) => {
+            recheck_source_directory(&source.tree, cancellation)
+        }
     };
-    if !source_still_matches {
+    if source_recheck == SourceDirectoryRecheckResultV1::Cancelled {
+        write_diagnostic(
+            stderr,
+            &format!(
+                "wingman mv: {source_display}: destination committed; source removal cancelled"
+            ),
+        )?;
+        return Ok(130);
+    }
+    if source_recheck == SourceDirectoryRecheckResultV1::Changed {
         write_diagnostic(
             stderr,
             &format!(
