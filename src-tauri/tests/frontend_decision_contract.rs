@@ -1,9 +1,73 @@
 use wingman_lib::interpreter::{
-    ActiveShell, ExecutionPlanV1, FrontendDecisionKindV1, FrontendDecisionV1, InterpreterSession,
-    LineEvidence, PrepareSubmissionErrorV1, PrepareSubmissionV1, PreparedRequestKindV1,
-    PreparedRequestV1, RedirectModeV1, StagePlanV1, ValidatedRedirectPlanV1,
+    ActiveShell, ExecutionPlanV1, ExistingDestinationPolicyV1, FrontendDecisionKindV1,
+    FrontendDecisionV1, InterpreterSession, LineEvidence, PrepareSubmissionErrorV1,
+    PrepareSubmissionV1, PreparedRequestKindV1, PreparedRequestV1, RedirectModeV1, StagePlanV1,
+    ValidatedRedirectPlanV1,
 };
 use wingman_lib::windows_path::validate_path_value;
+
+#[test]
+fn reliable_familiar_cp_is_stored_as_a_typed_mutation_plan() {
+    let mut session = InterpreterSession::new(41, 8, ActiveShell::WindowsPowerShell);
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 41,
+            command_sequence: 8,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: "cp -rn source destination".to_string(),
+        })
+        .expect("classify cp");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared cp plan, got {other:?}"),
+    };
+    assert_eq!(
+        session.consume_prepared(&request_id),
+        Some(PreparedRequestV1 {
+            protocol: "wingman.run".to_string(),
+            version: 1,
+            kind: PreparedRequestKindV1::Execute {
+                plan: ExecutionPlanV1 {
+                    stages: vec![StagePlanV1::CopyPath {
+                        source: validate_path_value("source").unwrap(),
+                        destination: validate_path_value("destination").unwrap(),
+                        recursive: true,
+                        existing_destination: ExistingDestinationPolicyV1::NoClobber,
+                    }],
+                    redirect: None,
+                },
+            },
+        })
+    );
+}
+
+#[test]
+fn claimed_invalid_cp_is_rejected_without_native_fallback() {
+    let mut session = InterpreterSession::new(41, 7, ActiveShell::WindowsPowerShell);
+    let decision = session
+        .prepare_submission(PrepareSubmissionV1 {
+            session_id: 41,
+            command_sequence: 7,
+            shell: ActiveShell::WindowsPowerShell,
+            familiar_enabled: true,
+            evidence: LineEvidence::Reliable,
+            raw_line: "cp -fn source destination".to_string(),
+        })
+        .expect("classify invalid cp");
+    let request_id = match decision.decision {
+        FrontendDecisionKindV1::InvokePrepared { request_id, .. } => request_id,
+        other => panic!("expected a prepared cp rejection, got {other:?}"),
+    };
+    assert_eq!(
+        session.consume_prepared(&request_id).unwrap().kind,
+        PreparedRequestKindV1::Reject {
+            diagnostic: "wingman cp: unsupported option".to_string(),
+            exit_code: 2,
+        }
+    );
+}
 
 #[test]
 fn reliable_familiar_touch_is_stored_as_a_typed_mutation_plan() {

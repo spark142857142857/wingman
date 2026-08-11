@@ -837,6 +837,8 @@ fn claimed_p0_command(raw_line: &str) -> Option<&'static str> {
         Some("mkdir")
     } else if candidate.eq_ignore_ascii_case("touch") {
         Some("touch")
+    } else if candidate.eq_ignore_ascii_case("cp") {
+        Some("cp")
     } else {
         None
     }
