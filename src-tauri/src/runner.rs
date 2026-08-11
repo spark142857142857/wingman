@@ -3,6 +3,7 @@ use crate::interpreter::{
     RunnerRequestValidationErrorV1, StagePlanV1,
 };
 use crate::runner_cancel::RunnerCancellationV1;
+use crate::runner_cp::execute_cp_to;
 use crate::runner_find::execute_find_to;
 use crate::runner_grep::execute_recursive_grep_to;
 use crate::runner_ls::execute_ls_to;
@@ -137,6 +138,13 @@ pub fn execute_prepared_to_with_cancellation<W: Write, E: Write>(
                 });
             }
             if let Some(result) = execute_touch_to(&plan, stderr, cancellation) {
+                return result.map_err(|error| match error {
+                    MutationExecutionErrorV1::Output { kind } => {
+                        RunnerDispatchErrorV1::OutputFailure { kind }
+                    }
+                });
+            }
+            if let Some(result) = execute_cp_to(&plan, stderr, cancellation) {
                 return result.map_err(|error| match error {
                     MutationExecutionErrorV1::Output { kind } => {
                         RunnerDispatchErrorV1::OutputFailure { kind }

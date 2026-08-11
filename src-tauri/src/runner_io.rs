@@ -402,6 +402,50 @@ pub(crate) fn open_verified_child_file(
 }
 
 #[cfg(windows)]
+pub(crate) fn open_verified_child_file_for_read(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_READ, SYNCHRONIZE};
+
+    let file = open_relative_to_directory(
+        parent,
+        name,
+        FILE_GENERIC_READ | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_file_open_error)?;
+    verify_regular_file_handle(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+pub(crate) fn open_verified_child_file_for_inspection(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{FILE_READ_ATTRIBUTES, SYNCHRONIZE};
+
+    let file = open_relative_to_directory(
+        parent,
+        name,
+        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_file_open_error)?;
+    verify_regular_file_handle(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
 pub(crate) fn create_verified_child_file(
     parent: &File,
     name: &std::ffi::OsStr,
@@ -423,6 +467,124 @@ pub(crate) fn create_verified_child_file(
     .map_err(map_file_open_error)?;
     verify_regular_file_handle(&file)?;
     Ok(file)
+}
+
+#[cfg(windows)]
+pub(crate) fn create_verified_staging_child_file(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_CREATE, FILE_NON_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        DELETE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, SYNCHRONIZE,
+    };
+
+    let file = open_relative_to_directory(
+        parent,
+        name,
+        FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | SYNCHRONIZE,
+        FILE_CREATE,
+        FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+    )
+    .map_err(map_file_open_error)?;
+    verify_regular_file_handle(&file)?;
+    Ok(file)
+}
+
+#[cfg(windows)]
+pub(crate) fn rename_open_file_relative(
+    file: &File,
+    parent: &File,
+    destination_name: &std::ffi::OsStr,
+    replace: bool,
+    ignore_readonly: bool,
+) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FileRenameInformation, FileRenameInformationEx, NtSetInformationFile,
+        FILE_RENAME_IGNORE_READONLY_ATTRIBUTE, FILE_RENAME_INFORMATION,
+        FILE_RENAME_REPLACE_IF_EXISTS,
+    };
+    use windows_sys::Win32::Foundation::RtlNtStatusToDosError;
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+    let wide = destination_name.encode_wide().collect::<Vec<_>>();
+    let name_bytes = wide
+        .len()
+        .checked_mul(std::mem::size_of::<u16>())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "rename is too long"))?;
+    let total_bytes = std::mem::size_of::<FILE_RENAME_INFORMATION>()
+        .checked_add(name_bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "rename is too long"))?;
+    let word_size = std::mem::size_of::<usize>();
+    let word_count = total_bytes.div_ceil(word_size);
+    let mut storage = vec![0usize; word_count];
+    let info = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+    unsafe {
+        if ignore_readonly {
+            (*info).Anonymous.Flags = if replace {
+                FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_IGNORE_READONLY_ATTRIBUTE
+            } else {
+                FILE_RENAME_IGNORE_READONLY_ATTRIBUTE
+            };
+        } else {
+            (*info).Anonymous.ReplaceIfExists = replace;
+        }
+        (*info).RootDirectory = parent.as_raw_handle().cast();
+        (*info).FileNameLength = u32::try_from(name_bytes)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "rename is too long"))?;
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), (*info).FileName.as_mut_ptr(), wide.len());
+    }
+    let buffer_size = u32::try_from(total_bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "rename is too long"))?;
+    let mut io_status = IO_STATUS_BLOCK::default();
+    let status = unsafe {
+        NtSetInformationFile(
+            file.as_raw_handle().cast(),
+            &mut io_status,
+            info.cast(),
+            buffer_size,
+            if ignore_readonly {
+                FileRenameInformationEx
+            } else {
+                FileRenameInformation
+            },
+        )
+    };
+    if status < 0 {
+        return Err(io::Error::from_raw_os_error(
+            unsafe { RtlNtStatusToDosError(status) } as i32,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn delete_open_file(file: &File) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileDispositionInfoEx, SetFileInformationByHandle, FILE_DISPOSITION_FLAG_DELETE,
+        FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
+    };
+
+    let disposition = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    };
+    if unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle().cast(),
+            FileDispositionInfoEx,
+            (&disposition as *const FILE_DISPOSITION_INFO_EX).cast(),
+            u32::try_from(std::mem::size_of::<FILE_DISPOSITION_INFO_EX>()).unwrap(),
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -522,6 +684,58 @@ pub(crate) fn create_verified_child_file(
     Err(FileAccessErrorV1::Io {
         kind: io::ErrorKind::Unsupported,
     })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open_verified_child_file_for_read(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    Err(FileAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn open_verified_child_file_for_inspection(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    Err(FileAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn create_verified_staging_child_file(
+    _parent: &File,
+    _name: &std::ffi::OsStr,
+) -> Result<File, FileAccessErrorV1> {
+    Err(FileAccessErrorV1::Io {
+        kind: io::ErrorKind::Unsupported,
+    })
+}
+
+#[cfg(not(windows))]
+pub(crate) fn rename_open_file_relative(
+    _file: &File,
+    _parent: &File,
+    _destination_name: &std::ffi::OsStr,
+    _replace: bool,
+    _ignore_readonly: bool,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Wingman handle-relative rename requires Windows",
+    ))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn delete_open_file(_file: &File) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Wingman handle-relative deletion requires Windows",
+    ))
 }
 
 #[cfg(windows)]
@@ -879,6 +1093,44 @@ mod tests {
         assert!(pinned_parent.join("file.txt").is_file());
         assert!(!alternate_target.join("file.txt").exists());
         fs::remove_dir(&requested_parent).unwrap();
+        fs::remove_dir_all(&sandbox).unwrap();
+    }
+
+    #[test]
+    fn staging_file_commits_and_cleans_up_relative_to_the_pinned_parent() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "wingman-stage-file-test-{}-{}",
+            std::process::id(),
+            Uuid::new_v4().as_simple()
+        ));
+        fs::create_dir(&sandbox).unwrap();
+        fs::write(sandbox.join("destination.txt"), b"old").unwrap();
+        let parent = open_verified_root_directory(&sandbox).unwrap();
+
+        let mut committed =
+            create_verified_staging_child_file(&parent, std::ffi::OsStr::new(".wingman-a.tmp"))
+                .unwrap();
+        std::io::Write::write_all(&mut committed, b"new").unwrap();
+        committed.sync_all().unwrap();
+        rename_open_file_relative(
+            &committed,
+            &parent,
+            std::ffi::OsStr::new("destination.txt"),
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(fs::read(sandbox.join("destination.txt")).unwrap(), b"new");
+        assert!(!sandbox.join(".wingman-a.tmp").exists());
+
+        let discarded =
+            create_verified_staging_child_file(&parent, std::ffi::OsStr::new(".wingman-b.tmp"))
+                .unwrap();
+        delete_open_file(&discarded).unwrap();
+        drop(discarded);
+        assert!(!sandbox.join(".wingman-b.tmp").exists());
+        drop(committed);
+        drop(parent);
         fs::remove_dir_all(&sandbox).unwrap();
     }
 
