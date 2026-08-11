@@ -436,10 +436,11 @@ fn execute_follow_to<W: Write, E: Write>(
     let cancelled = cancellation.is_cancelled()
         || matches!(stage_fault, Some(OrderedPipelineFaultV1::Cancelled));
     drop(pipeline);
-    sink.finish().map_err(map_sink_error)?;
     if cancelled {
+        drop(sink);
         return Ok(130);
     }
+    sink.finish().map_err(map_sink_error)?;
     if let Some(fault) = stage_fault {
         match fault {
             OrderedPipelineFaultV1::TailResource => {

@@ -621,6 +621,10 @@ fn follow_keeps_an_unterminated_suffix_pending_until_append_and_cancels_cleanly(
 
     assert_eq!(exit_code, 130);
     assert_eq!(stdout.bytes, b"old\r\npartial\r\n");
+    assert_eq!(
+        stdout.flushes, 2,
+        "cancellation must not trigger a final flush"
+    );
     assert!(stderr.is_empty());
     cleanup(&sandbox);
 }
