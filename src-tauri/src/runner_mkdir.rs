@@ -1,16 +1,16 @@
 use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
-use crate::runner_io::{
-    create_verified_child_directory, open_verified_child_directory, open_verified_root_directory,
-    DirectoryAccessErrorV1,
-};
+use crate::runner_io::{create_verified_child_directory, DirectoryAccessErrorV1};
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
+use crate::runner_path_access::{
+    split_absolute_path, traverse_verified_directory, VerifiedDirectoryTraversalV1,
+    VerifiedPathAccessErrorV1,
+};
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Write};
-use std::path::{Component, Path};
 
 enum PreparedMkdirStateV1 {
     Ready {
@@ -251,80 +251,43 @@ fn prepare_operand(
         split_absolute_path(&resolved).ok_or_else(|| MkdirPreflightFailureV1::KnownSafety {
             display: display.clone(),
         })?;
-    let mut parent = map_directory_preflight(open_verified_root_directory(root), &display, false)?
-        .expect("verified root is present");
-    for (index, component) in components.iter().enumerate() {
-        match open_verified_child_directory(&parent, component) {
-            Ok(child) => parent = child,
-            Err(DirectoryAccessErrorV1::Missing) => {
-                let mut missing_path = root.to_path_buf();
-                for existing in &components[..index] {
-                    missing_path.push(existing);
-                }
-                let missing = components[index..]
-                    .iter()
-                    .map(|component| {
-                        missing_path.push(component);
-                        MissingDirectoryV1 {
-                            name: component.clone(),
-                            resolved: missing_path.display().to_string(),
-                        }
-                    })
-                    .collect();
-                return Ok(PreparedMkdirOperandV1 {
-                    display,
-                    state: PreparedMkdirStateV1::Ready { parent, missing },
-                });
+    match traverse_verified_directory(root, &components) {
+        Ok(VerifiedDirectoryTraversalV1::Existing(_)) => Ok(PreparedMkdirOperandV1 {
+            display,
+            state: PreparedMkdirStateV1::ExistingDirectory,
+        }),
+        Ok(VerifiedDirectoryTraversalV1::Missing {
+            parent,
+            first_missing,
+        }) => {
+            let mut missing_path = root.to_path_buf();
+            for existing in &components[..first_missing] {
+                missing_path.push(existing);
             }
-            Err(DirectoryAccessErrorV1::NotDirectory) => {
-                return Ok(PreparedMkdirOperandV1 {
-                    display,
-                    state: PreparedMkdirStateV1::PathComponentIsNotDirectory,
-                });
-            }
-            error => {
-                map_directory_preflight(error, &display, true)?;
-                unreachable!();
-            }
+            let missing = components[first_missing..]
+                .iter()
+                .map(|component| {
+                    missing_path.push(component);
+                    MissingDirectoryV1 {
+                        name: component.clone(),
+                        resolved: missing_path.display().to_string(),
+                    }
+                })
+                .collect();
+            Ok(PreparedMkdirOperandV1 {
+                display,
+                state: PreparedMkdirStateV1::Ready { parent, missing },
+            })
+        }
+        Ok(VerifiedDirectoryTraversalV1::NotDirectory) => Ok(PreparedMkdirOperandV1 {
+            display,
+            state: PreparedMkdirStateV1::PathComponentIsNotDirectory,
+        }),
+        Err(VerifiedPathAccessErrorV1::ReparsePoint) => {
+            Err(MkdirPreflightFailureV1::KnownSafety { display })
+        }
+        Err(VerifiedPathAccessErrorV1::Unavailable) => {
+            Err(MkdirPreflightFailureV1::Unavailable { display })
         }
     }
-    Ok(PreparedMkdirOperandV1 {
-        display,
-        state: PreparedMkdirStateV1::ExistingDirectory,
-    })
-}
-
-fn map_directory_preflight(
-    result: Result<File, DirectoryAccessErrorV1>,
-    display: &str,
-    missing_is_operational: bool,
-) -> Result<Option<File>, MkdirPreflightFailureV1> {
-    match result {
-        Ok(directory) => Ok(Some(directory)),
-        Err(DirectoryAccessErrorV1::ReparsePoint) => Err(MkdirPreflightFailureV1::KnownSafety {
-            display: display.to_string(),
-        }),
-        Err(DirectoryAccessErrorV1::Missing) if missing_is_operational => Ok(None),
-        Err(DirectoryAccessErrorV1::Missing)
-        | Err(DirectoryAccessErrorV1::NotDirectory)
-        | Err(DirectoryAccessErrorV1::Io { .. }) => Err(MkdirPreflightFailureV1::Unavailable {
-            display: display.to_string(),
-        }),
-    }
-}
-
-fn split_absolute_path(path: &Path) -> Option<(&Path, Vec<OsString>)> {
-    let root = path
-        .ancestors()
-        .last()
-        .filter(|candidate| !candidate.as_os_str().is_empty())?;
-    let relative = path.strip_prefix(root).ok()?;
-    let components = relative
-        .components()
-        .map(|component| match component {
-            Component::Normal(value) => Some(value.to_os_string()),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some((root, components))
 }

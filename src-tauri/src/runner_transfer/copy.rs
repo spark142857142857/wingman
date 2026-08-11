@@ -5,18 +5,22 @@ use crate::runner_io::{
     create_verified_staging_child_file, delete_open_file, file_matches_identity,
     list_verified_directory, open_verified_child_directory, open_verified_child_directory_for_move,
     open_verified_child_file_for_inspection, open_verified_child_file_for_move,
-    open_verified_child_file_for_read, open_verified_root_directory, rename_open_file_relative,
-    DirectoryAccessErrorV1, FileAccessErrorV1, FileIdentityV1, VerifiedDirectoryEntryKindV1,
+    open_verified_child_file_for_read, rename_open_file_relative, DirectoryAccessErrorV1,
+    FileAccessErrorV1, FileIdentityV1, VerifiedDirectoryEntryKindV1,
 };
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{
     path_is_same_or_descendant, write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1,
 };
+use crate::runner_path_access::{
+    split_absolute_path, traverse_verified_directory, VerifiedDirectoryTraversalV1,
+    VerifiedPathAccessErrorV1,
+};
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 const MAX_COPY_ENTRIES: usize = 100_000;
@@ -1011,7 +1015,7 @@ pub(super) fn prepare_destination(
             message: "unsupported destination path",
         })?;
     if components.is_empty() {
-        let parent = open_root(root, &display)?;
+        let parent = traverse_parent(root, &[], &display)?.expect("verified root is present");
         return inspect_effective_destination(
             display,
             resolved.join(source_basename),
@@ -1101,41 +1105,19 @@ fn inspect_effective_destination(
 }
 
 fn traverse_parent(
-    root: &Path,
+    root: &std::path::Path,
     components: &[OsString],
     display: &str,
 ) -> Result<Option<File>, CpPreflightFailureV1> {
-    let mut parent = open_root(root, display)?;
-    for component in components {
-        parent = match open_verified_child_directory(&parent, component) {
-            Ok(child) => child,
-            Err(DirectoryAccessErrorV1::Missing) | Err(DirectoryAccessErrorV1::NotDirectory) => {
-                return Ok(None)
-            }
-            Err(DirectoryAccessErrorV1::ReparsePoint) => {
-                return Err(CpPreflightFailureV1::KnownSafety {
-                    display: display.to_string(),
-                    message: "reparse ancestors are not allowed",
-                });
-            }
-            Err(DirectoryAccessErrorV1::Io { .. }) => {
-                return Err(CpPreflightFailureV1::Unavailable {
-                    display: display.to_string(),
-                });
-            }
-        };
-    }
-    Ok(Some(parent))
-}
-
-fn open_root(root: &Path, display: &str) -> Result<File, CpPreflightFailureV1> {
-    match open_verified_root_directory(root) {
-        Ok(root) => Ok(root),
-        Err(DirectoryAccessErrorV1::ReparsePoint) => Err(CpPreflightFailureV1::KnownSafety {
+    match traverse_verified_directory(root, components) {
+        Ok(VerifiedDirectoryTraversalV1::Existing(parent)) => Ok(Some(parent)),
+        Ok(VerifiedDirectoryTraversalV1::Missing { .. })
+        | Ok(VerifiedDirectoryTraversalV1::NotDirectory) => Ok(None),
+        Err(VerifiedPathAccessErrorV1::ReparsePoint) => Err(CpPreflightFailureV1::KnownSafety {
             display: display.to_string(),
             message: "reparse ancestors are not allowed",
         }),
-        Err(_) => Err(CpPreflightFailureV1::Unavailable {
+        Err(VerifiedPathAccessErrorV1::Unavailable) => Err(CpPreflightFailureV1::Unavailable {
             display: display.to_string(),
         }),
     }
@@ -1239,20 +1221,4 @@ pub(super) fn destination_still_matches(
         }
         _ => false,
     }
-}
-
-fn split_absolute_path(path: &Path) -> Option<(&Path, Vec<OsString>)> {
-    let root = path
-        .ancestors()
-        .last()
-        .filter(|candidate| !candidate.as_os_str().is_empty())?;
-    let relative = path.strip_prefix(root).ok()?;
-    let components = relative
-        .components()
-        .map(|component| match component {
-            Component::Normal(value) => Some(value.to_os_string()),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some((root, components))
 }

@@ -2,16 +2,18 @@ use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     capture_file_identity, create_verified_child_file, file_matches_identity,
-    open_verified_child_directory, open_verified_child_file, open_verified_root_directory,
-    DirectoryAccessErrorV1, FileAccessErrorV1, FileIdentityV1,
+    open_verified_child_file, FileAccessErrorV1, FileIdentityV1,
 };
 use crate::runner_ls::names_equal_ignore_case;
 use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
+use crate::runner_path_access::{
+    split_absolute_path, traverse_verified_directory, VerifiedDirectoryTraversalV1,
+    VerifiedPathAccessErrorV1,
+};
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
 use std::ffi::OsString;
 use std::fs::{File, FileTimes};
 use std::io::Write;
-use std::path::{Component, Path};
 use std::time::SystemTime;
 
 enum PreparedTouchStateV1 {
@@ -259,25 +261,23 @@ fn prepare_operand(
             state: PreparedTouchStateV1::NotRegularFile,
         });
     };
-    let mut parent = map_directory_preflight(open_verified_root_directory(root), &display)?;
-    for component in components {
-        parent = match open_verified_child_directory(&parent, &component) {
-            Ok(child) => child,
-            Err(DirectoryAccessErrorV1::Missing) | Err(DirectoryAccessErrorV1::NotDirectory) => {
-                return Ok(PreparedTouchOperandV1 {
-                    display,
-                    resolved: resolved_display,
-                    state: PreparedTouchStateV1::MissingParent,
-                });
-            }
-            Err(DirectoryAccessErrorV1::ReparsePoint) => {
-                return Err(TouchPreflightFailureV1::KnownSafety { display });
-            }
-            Err(DirectoryAccessErrorV1::Io { .. }) => {
-                return Err(TouchPreflightFailureV1::Unavailable { display });
-            }
-        };
-    }
+    let parent = match traverse_verified_directory(root, &components) {
+        Ok(VerifiedDirectoryTraversalV1::Existing(parent)) => parent,
+        Ok(VerifiedDirectoryTraversalV1::Missing { .. })
+        | Ok(VerifiedDirectoryTraversalV1::NotDirectory) => {
+            return Ok(PreparedTouchOperandV1 {
+                display,
+                resolved: resolved_display,
+                state: PreparedTouchStateV1::MissingParent,
+            });
+        }
+        Err(VerifiedPathAccessErrorV1::ReparsePoint) => {
+            return Err(TouchPreflightFailureV1::KnownSafety { display });
+        }
+        Err(VerifiedPathAccessErrorV1::Unavailable) => {
+            return Err(TouchPreflightFailureV1::Unavailable { display });
+        }
+    };
     let state = match open_verified_child_file(&parent, &leaf) {
         Ok(file) => {
             let identity =
@@ -304,37 +304,4 @@ fn prepare_operand(
         resolved: resolved_display,
         state,
     })
-}
-
-fn map_directory_preflight(
-    result: Result<File, DirectoryAccessErrorV1>,
-    display: &str,
-) -> Result<File, TouchPreflightFailureV1> {
-    match result {
-        Ok(directory) => Ok(directory),
-        Err(DirectoryAccessErrorV1::ReparsePoint) => Err(TouchPreflightFailureV1::KnownSafety {
-            display: display.to_string(),
-        }),
-        Err(DirectoryAccessErrorV1::Missing)
-        | Err(DirectoryAccessErrorV1::NotDirectory)
-        | Err(DirectoryAccessErrorV1::Io { .. }) => Err(TouchPreflightFailureV1::Unavailable {
-            display: display.to_string(),
-        }),
-    }
-}
-
-fn split_absolute_path(path: &Path) -> Option<(&Path, Vec<OsString>)> {
-    let root = path
-        .ancestors()
-        .last()
-        .filter(|candidate| !candidate.as_os_str().is_empty())?;
-    let relative = path.strip_prefix(root).ok()?;
-    let components = relative
-        .components()
-        .map(|component| match component {
-            Component::Normal(value) => Some(value.to_os_string()),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some((root, components))
 }

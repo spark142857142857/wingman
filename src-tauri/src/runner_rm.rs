@@ -2,18 +2,21 @@ use crate::interpreter::{ExecutionPlanV1, StagePlanV1};
 use crate::runner_cancel::RunnerCancellationV1;
 use crate::runner_io::{
     capture_file_identity, delete_open_file_with_force, file_matches_identity,
-    list_verified_directory, open_child_for_removal, open_verified_child_directory,
-    open_verified_root_directory, DirectoryAccessErrorV1, FileIdentityV1, RemovalEntryKindV1,
-    VerifiedDirectoryEntryKindV1,
+    list_verified_directory, open_child_for_removal, open_verified_root_directory, FileIdentityV1,
+    RemovalEntryKindV1, VerifiedDirectoryEntryKindV1,
 };
 use crate::runner_mutation::{
     path_is_same_or_descendant, write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1,
+};
+use crate::runner_path_access::{
+    split_absolute_path, traverse_verified_directory, VerifiedDirectoryTraversalV1,
+    VerifiedPathAccessErrorV1,
 };
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Write;
-use std::path::{Component, Path};
+use std::path::Path;
 
 const MAX_REMOVE_ENTRIES: usize = 100_000;
 const MAX_REMOVE_DEPTH: usize = 256;
@@ -441,51 +444,20 @@ fn traverse_parent(
     components: &[OsString],
     display: &str,
 ) -> Result<Option<File>, RemovePreflightFailureV1> {
-    let mut parent = open_verified_root_directory(root).map_err(|error| match error {
-        DirectoryAccessErrorV1::ReparsePoint => RemovePreflightFailureV1::KnownSafety {
+    match traverse_verified_directory(root, components) {
+        Ok(VerifiedDirectoryTraversalV1::Existing(parent)) => Ok(Some(parent)),
+        Ok(VerifiedDirectoryTraversalV1::Missing { .. })
+        | Ok(VerifiedDirectoryTraversalV1::NotDirectory) => Ok(None),
+        Err(VerifiedPathAccessErrorV1::ReparsePoint) => {
+            Err(RemovePreflightFailureV1::KnownSafety {
+                display: display.to_string(),
+                message: "reparse ancestors are not allowed",
+            })
+        }
+        Err(VerifiedPathAccessErrorV1::Unavailable) => Err(RemovePreflightFailureV1::Unavailable {
             display: display.to_string(),
-            message: "reparse ancestors are not allowed",
-        },
-        _ => RemovePreflightFailureV1::Unavailable {
-            display: display.to_string(),
-        },
-    })?;
-    for component in components {
-        parent = match open_verified_child_directory(&parent, component) {
-            Ok(child) => child,
-            Err(DirectoryAccessErrorV1::Missing) | Err(DirectoryAccessErrorV1::NotDirectory) => {
-                return Ok(None);
-            }
-            Err(DirectoryAccessErrorV1::ReparsePoint) => {
-                return Err(RemovePreflightFailureV1::KnownSafety {
-                    display: display.to_string(),
-                    message: "reparse ancestors are not allowed",
-                });
-            }
-            Err(DirectoryAccessErrorV1::Io { .. }) => {
-                return Err(RemovePreflightFailureV1::Unavailable {
-                    display: display.to_string(),
-                });
-            }
-        };
+        }),
     }
-    Ok(Some(parent))
-}
-
-fn split_absolute_path(path: &Path) -> Option<(&Path, Vec<OsString>)> {
-    let root = path
-        .ancestors()
-        .last()
-        .filter(|candidate| !candidate.as_os_str().is_empty())?;
-    let relative = path.strip_prefix(root).ok()?;
-    let components = relative
-        .components()
-        .map(|component| match component {
-            Component::Normal(value) => Some(value.to_os_string()),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some((root, components))
 }
 
 #[cfg(test)]

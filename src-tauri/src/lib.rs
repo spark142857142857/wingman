@@ -34,6 +34,7 @@ mod runner_mkdir;
 mod runner_mutation;
 mod runner_mv;
 mod runner_ordered_fault;
+mod runner_path_access;
 pub mod runner_readonly;
 mod runner_rm;
 mod runner_touch;
