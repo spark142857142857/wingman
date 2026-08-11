@@ -2,14 +2,19 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Read, Write};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 #[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+#[cfg(windows)]
 use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_BREAK_EVENT};
 #[cfg(windows)]
-use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
+use windows_sys::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, CREATE_NEW_PROCESS_GROUP, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use wingman_lib::interpreter::{
     ExecutionPlanV1, PreparedRequestKindV1, PreparedRequestV1, RedirectModeV1, StagePlanV1,
     ValidatedRedirectPlanV1,
@@ -396,9 +401,63 @@ fn idle_tail_follow_process_observes_group_cancellation() {
         Uuid::new_v4().as_simple()
     ));
     fs::create_dir(&sandbox).unwrap();
+    let child = start_idle_follow_runner(&sandbox);
+    let (status, stdout, stderr) = cancel_idle_follow_runner(child);
+
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    fs::remove_dir_all(&sandbox).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "release performance gate: includes a 10 second settle and 10 second sample"]
+fn idle_tail_follow_runner_stays_below_the_cpu_ceiling() {
+    let sandbox = std::env::temp_dir().join(format!(
+        "wingman-runner-follow-cpu-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&sandbox).unwrap();
+    let child = start_idle_follow_runner(&sandbox);
+    thread::sleep(Duration::from_secs(10));
+
+    let processors = std::thread::available_parallelism().unwrap().get() as f64;
+    let mut samples = Vec::with_capacity(10);
+    for _ in 0..10 {
+        let before = process_cpu_ticks(child.id());
+        let started = Instant::now();
+        thread::sleep(Duration::from_secs(1));
+        let elapsed = started.elapsed().as_secs_f64();
+        let after = process_cpu_ticks(child.id());
+        let cpu_seconds = after.saturating_sub(before) as f64 / 10_000_000.0;
+        samples.push(cpu_seconds / elapsed / processors * 100.0);
+    }
+    samples.sort_by(|left, right| left.total_cmp(right));
+    let median = (samples[4] + samples[5]) / 2.0;
+    let p95 = samples[9];
+    eprintln!("tail-follow-idle-cpu median={median:.3}% p95={p95:.3}% samples={samples:?}");
+
+    let (status, stdout, stderr) = cancel_idle_follow_runner(child);
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    assert!(
+        median <= 0.5,
+        "idle follow runner median CPU {median:.3}% exceeded 0.5%; samples={samples:?}"
+    );
+    assert!(
+        p95 <= 2.0,
+        "idle follow runner p95 CPU {p95:.3}% exceeded 2%; samples={samples:?}"
+    );
+    fs::remove_dir_all(&sandbox).unwrap();
+}
+
+#[cfg(windows)]
+fn start_idle_follow_runner(sandbox: &Path) -> Child {
     let input = sandbox.join("idle.log");
     fs::write(&input, b"").unwrap();
-
     let request_id = Uuid::new_v4().as_simple().to_string();
     let pipe_name = format!(
         r"\\.\pipe\wingman-test-{}-{}",
@@ -422,9 +481,8 @@ fn idle_tail_follow_process_observes_group_cancellation() {
             },
         },
     )
-    .expect("bind follow cancellation broker");
+    .expect("bind idle follow broker");
     let server = thread::spawn(move || broker.serve());
-
     let mut child = Command::new(env!("CARGO_BIN_EXE_wingman-runner"))
         .arg(&request_id)
         .env("WINGMAN_BROKER_PIPE", &pipe_name)
@@ -433,15 +491,17 @@ fn idle_tail_follow_process_observes_group_cancellation() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("start idle follow runner");
-
     server
         .join()
         .expect("broker thread")
-        .expect("serve follow request");
-    assert!(child.try_wait().unwrap().is_none());
+        .expect("serve idle follow request");
     thread::sleep(Duration::from_millis(100));
     assert!(child.try_wait().unwrap().is_none());
+    child
+}
 
+#[cfg(windows)]
+fn cancel_idle_follow_runner(mut child: Child) -> (ExitStatus, Vec<u8>, Vec<u8>) {
     let generated = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
     assert_ne!(
         generated,
@@ -449,7 +509,6 @@ fn idle_tail_follow_process_observes_group_cancellation() {
         "cancel idle follow process: {}",
         std::io::Error::last_os_error()
     );
-
     let deadline = Instant::now() + Duration::from_secs(5);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -476,9 +535,25 @@ fn idle_tail_follow_process_observes_group_cancellation() {
         .unwrap()
         .read_to_end(&mut stderr)
         .unwrap();
+    (status, stdout, stderr)
+}
 
-    assert_eq!(status.code(), Some(130));
-    assert!(stdout.is_empty());
-    assert!(stderr.is_empty());
-    fs::remove_dir_all(&sandbox).unwrap();
+#[cfg(windows)]
+fn process_cpu_ticks(process_id: u32) -> u64 {
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    assert!(!handle.is_null(), "open runner for CPU measurement");
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let measured =
+        unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
+    let _ = unsafe { CloseHandle(handle) };
+    assert_ne!(measured, 0, "measure runner CPU time");
+    filetime_ticks(kernel).saturating_add(filetime_ticks(user))
+}
+
+#[cfg(windows)]
+fn filetime_ticks(value: FILETIME) -> u64 {
+    (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime)
 }
