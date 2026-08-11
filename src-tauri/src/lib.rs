@@ -30,6 +30,7 @@ pub mod runner_grep;
 pub mod runner_io;
 pub mod runner_ls;
 mod runner_mkdir;
+mod runner_mutation;
 mod runner_ordered_fault;
 pub mod runner_readonly;
 pub mod runner_which;

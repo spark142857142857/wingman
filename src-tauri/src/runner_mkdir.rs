@@ -5,18 +5,12 @@ use crate::runner_io::{
     DirectoryAccessErrorV1,
 };
 use crate::runner_ls::names_equal_ignore_case;
+use crate::runner_mutation::{write_diagnostic, MutationDiagnosticsV1, MutationExecutionErrorV1};
 use crate::windows_path::{resolve_path_spec, PathResolutionErrorV1, ValidatedPathSpecV1};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::{Component, Path};
-
-const MAX_MUTATION_DIAGNOSTICS: usize = 16;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MutationExecutionErrorV1 {
-    Output { kind: io::ErrorKind },
-}
 
 enum PreparedMkdirStateV1 {
     Ready {
@@ -105,7 +99,7 @@ fn execute<E: Write>(
     }
 
     let mut operational_failure = false;
-    let mut diagnostics_emitted = 0usize;
+    let mut diagnostics = MutationDiagnosticsV1::default();
     let mut created_directories = Vec::<CreatedDirectoryV1>::new();
     for operand in prepared {
         if cancellation.is_cancelled() {
@@ -115,18 +109,18 @@ fn execute<E: Write>(
             PreparedMkdirStateV1::ExistingDirectory if parents => {}
             PreparedMkdirStateV1::ExistingDirectory => {
                 operational_failure = true;
-                write_bounded_operand_diagnostic(
+                diagnostics.operand(
                     stderr,
-                    &mut diagnostics_emitted,
+                    "mkdir",
                     &operand.display,
                     "directory already exists",
                 )?;
             }
             PreparedMkdirStateV1::PathComponentIsNotDirectory => {
                 operational_failure = true;
-                write_bounded_operand_diagnostic(
+                diagnostics.operand(
                     stderr,
-                    &mut diagnostics_emitted,
+                    "mkdir",
                     &operand.display,
                     "a path component is not a directory",
                 )?;
@@ -146,9 +140,9 @@ fn execute<E: Write>(
                     }) {
                         if is_leaf && !parents {
                             operational_failure = true;
-                            write_bounded_operand_diagnostic(
+                            diagnostics.operand(
                                 stderr,
-                                &mut diagnostics_emitted,
+                                "mkdir",
                                 &operand.display,
                                 "directory already exists",
                             )?;
@@ -157,9 +151,9 @@ fn execute<E: Write>(
                         parent = match created.handle.try_clone() {
                             Ok(handle) => handle,
                             Err(_) => {
-                                write_bounded_operand_diagnostic(
+                                diagnostics.operand(
                                     stderr,
-                                    &mut diagnostics_emitted,
+                                    "mkdir",
                                     &operand.display,
                                     "path safety cannot be rechecked",
                                 )?;
@@ -170,9 +164,9 @@ fn execute<E: Write>(
                     }
                     if !parents && !is_leaf {
                         operational_failure = true;
-                        write_bounded_operand_diagnostic(
+                        diagnostics.operand(
                             stderr,
-                            &mut diagnostics_emitted,
+                            "mkdir",
                             &operand.display,
                             "parent directory does not exist",
                         )?;
@@ -183,9 +177,9 @@ fn execute<E: Write>(
                             let registry_handle = match created.try_clone() {
                                 Ok(handle) => handle,
                                 Err(_) => {
-                                    write_bounded_operand_diagnostic(
+                                    diagnostics.operand(
                                         stderr,
-                                        &mut diagnostics_emitted,
+                                        "mkdir",
                                         &operand.display,
                                         "created directory identity cannot be retained",
                                     )?;
@@ -201,9 +195,9 @@ fn execute<E: Write>(
                         Err(DirectoryAccessErrorV1::ReparsePoint)
                         | Err(DirectoryAccessErrorV1::Missing)
                         | Err(DirectoryAccessErrorV1::NotDirectory) => {
-                            write_bounded_operand_diagnostic(
+                            diagnostics.operand(
                                 stderr,
-                                &mut diagnostics_emitted,
+                                "mkdir",
                                 &operand.display,
                                 "path changed during directory creation",
                             )?;
@@ -212,9 +206,9 @@ fn execute<E: Write>(
                         Err(DirectoryAccessErrorV1::Io {
                             kind: io::ErrorKind::AlreadyExists,
                         }) => {
-                            write_bounded_operand_diagnostic(
+                            diagnostics.operand(
                                 stderr,
-                                &mut diagnostics_emitted,
+                                "mkdir",
                                 &operand.display,
                                 "path changed during directory creation",
                             )?;
@@ -222,9 +216,9 @@ fn execute<E: Write>(
                         }
                         Err(DirectoryAccessErrorV1::Io { .. }) => {
                             operational_failure = true;
-                            write_bounded_operand_diagnostic(
+                            diagnostics.operand(
                                 stderr,
-                                &mut diagnostics_emitted,
+                                "mkdir",
                                 &operand.display,
                                 "directory creation failed",
                             )?;
@@ -333,36 +327,4 @@ fn split_absolute_path(path: &Path) -> Option<(&Path, Vec<OsString>)> {
         })
         .collect::<Option<Vec<_>>>()?;
     Some((root, components))
-}
-
-fn write_operand_diagnostic(
-    writer: &mut impl Write,
-    display: &str,
-    detail: &str,
-) -> Result<(), MutationExecutionErrorV1> {
-    write_diagnostic(writer, &format!("wingman mkdir: {display}: {detail}"))
-}
-
-fn write_bounded_operand_diagnostic(
-    writer: &mut impl Write,
-    emitted: &mut usize,
-    display: &str,
-    detail: &str,
-) -> Result<(), MutationExecutionErrorV1> {
-    if *emitted < MAX_MUTATION_DIAGNOSTICS {
-        write_operand_diagnostic(writer, display, detail)?;
-        *emitted += 1;
-    }
-    Ok(())
-}
-
-fn write_diagnostic(
-    writer: &mut impl Write,
-    diagnostic: &str,
-) -> Result<(), MutationExecutionErrorV1> {
-    writer
-        .write_all(diagnostic.as_bytes())
-        .and_then(|()| writer.write_all(b"\r\n"))
-        .and_then(|()| writer.flush())
-        .map_err(|error| MutationExecutionErrorV1::Output { kind: error.kind() })
 }
