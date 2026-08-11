@@ -32,12 +32,53 @@ pub enum ReadonlyExecutionErrorV1 {
 }
 
 struct ReadonlySourceV1<'a> {
-    command_name: &'static str,
     paths: Vec<&'a ValidatedPathSpecV1>,
-    number_lines: bool,
-    grep_is_final: bool,
-    grep_direct: bool,
-    follow_count: Option<usize>,
+    kind: ReadonlySourceKindV1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadonlySourceKindV1 {
+    Cat { number_lines: bool },
+    Head,
+    Tail,
+    Follow { count: usize },
+    Count,
+    Grep { is_final: bool },
+    Sort,
+    Unique,
+}
+
+impl ReadonlySourceKindV1 {
+    fn command_name(self) -> &'static str {
+        match self {
+            Self::Cat { .. } => "cat",
+            Self::Head => "head",
+            Self::Tail | Self::Follow { .. } => "tail",
+            Self::Count => "wc",
+            Self::Grep { .. } => "grep",
+            Self::Sort => "sort",
+            Self::Unique => "uniq",
+        }
+    }
+
+    fn number_lines(self) -> bool {
+        matches!(self, Self::Cat { number_lines: true })
+    }
+
+    fn follow_count(self) -> Option<usize> {
+        match self {
+            Self::Follow { count } => Some(count),
+            _ => None,
+        }
+    }
+
+    fn is_direct_grep(self) -> bool {
+        matches!(self, Self::Grep { .. })
+    }
+
+    fn final_grep(self) -> bool {
+        matches!(self, Self::Grep { is_final: true })
+    }
 }
 
 pub fn execute_readonly_plan_to<W: Write, E: Write>(
@@ -57,7 +98,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                 stderr,
                 &format!(
                     "wingman {}: unable to read current working directory",
-                    source.command_name
+                    source.kind.command_name()
                 ),
             )?;
             return Ok(1);
@@ -68,7 +109,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
             stderr,
             &format!(
                 "wingman {}: current working directory is not valid Unicode",
-                source.command_name
+                source.kind.command_name()
             ),
         )?;
         return Ok(1);
@@ -95,7 +136,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                 write_diagnostic(
                     stderr,
                     &operand_diagnostic(
-                        source.command_name,
+                        source.kind.command_name(),
                         index,
                         path,
                         "path cannot be resolved safely",
@@ -121,7 +162,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                         stderr,
                         &format!(
                             "wingman {}: redirection target cannot be resolved safely",
-                            source.command_name
+                            source.kind.command_name()
                         ),
                     )?;
                     return Ok(exit_code);
@@ -156,7 +197,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                 write_diagnostic(
                     stderr,
                     &operand_diagnostic(
-                        source.command_name,
+                        source.kind.command_name(),
                         error.index,
                         path,
                         "input cannot be opened",
@@ -170,7 +211,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                 stderr,
                 &format!(
                     "wingman {}: redirection target cannot be opened",
-                    source.command_name
+                    source.kind.command_name()
                 ),
             )?;
             return Ok(1);
@@ -180,7 +221,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                 stderr,
                 &format!(
                     "wingman {}: redirection target is or crosses a reparse point",
-                    source.command_name
+                    source.kind.command_name()
                 ),
             )?;
             return Ok(2);
@@ -190,7 +231,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                 stderr,
                 &format!(
                     "wingman {}: redirection target is the same file as input #{}",
-                    source.command_name,
+                    source.kind.command_name(),
                     input_index + 1
                 ),
             )?;
@@ -204,11 +245,11 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
     let redirected = plan.redirect.is_some();
     let (inputs, output) = prepared.stream_parts_mut();
     let execution = match output {
-        Some(output) if source.follow_count.is_some() => {
+        Some(output) if source.kind.follow_count().is_some() => {
             execute_follow_to(&mut inputs[0], plan, &source, output, stderr, cancellation)
         }
         Some(output) => execute_stream_to(inputs, plan, &source, output, stderr, cancellation),
-        None if source.follow_count.is_some() => {
+        None if source.kind.follow_count().is_some() => {
             execute_follow_to(&mut inputs[0], plan, &source, stdout, stderr, cancellation)
         }
         None => execute_stream_to(inputs, plan, &source, stdout, stderr, cancellation),
@@ -223,7 +264,7 @@ pub fn execute_readonly_plan_to<W: Write, E: Write>(
                 stderr,
                 &format!(
                     "wingman {}: redirection output failed and may be partial",
-                    source.command_name
+                    source.kind.command_name()
                 ),
             )?;
             Ok(1)
@@ -259,7 +300,7 @@ fn execute_stream_to<W: Write, E: Write>(
         write_diagnostic(stderr, &diagnostic)?;
     }
     Ok(
-        if stream.had_operational_failure || (source.grep_is_final && !stream.grep_matched) {
+        if stream.had_operational_failure || (source.kind.final_grep() && !stream.grep_matched) {
             1
         } else {
             0
@@ -276,7 +317,8 @@ fn execute_follow_to<W: Write, E: Write>(
     cancellation: &RunnerCancellationV1,
 ) -> Result<u8, ReadonlyExecutionErrorV1> {
     let count = source
-        .follow_count
+        .kind
+        .follow_count()
         .ok_or(ReadonlyExecutionErrorV1::UnsupportedPlan)?;
     let mut sink = RecordStreamWriterV1::new(&mut *writer);
     let mut pipeline = OrderedPipelineV1::new(plan, &mut sink, cancellation, &source.paths)
@@ -298,7 +340,7 @@ fn execute_follow_to<W: Write, E: Write>(
             Err(_) => {
                 operational_failure = true;
                 diagnostics.push(operand_diagnostic(
-                    source.command_name,
+                    source.kind.command_name(),
                     0,
                     source.paths[0],
                     "input read failed",
@@ -312,7 +354,7 @@ fn execute_follow_to<W: Write, E: Write>(
             Err(_) => {
                 operational_failure = true;
                 diagnostics.push(operand_diagnostic(
-                    source.command_name,
+                    source.kind.command_name(),
                     0,
                     source.paths[0],
                     "input is not valid bounded UTF-8 text",
@@ -362,7 +404,7 @@ fn execute_follow_to<W: Write, E: Write>(
                 Ok(metadata) if metadata.len() < observed_bytes => {
                     operational_failure = true;
                     diagnostics.push(operand_diagnostic(
-                        source.command_name,
+                        source.kind.command_name(),
                         0,
                         source.paths[0],
                         "input was truncated while following",
@@ -372,7 +414,7 @@ fn execute_follow_to<W: Write, E: Write>(
                 Err(_) => {
                     operational_failure = true;
                     diagnostics.push(operand_diagnostic(
-                        source.command_name,
+                        source.kind.command_name(),
                         0,
                         source.paths[0],
                         "input metadata cannot be read while following",
@@ -386,7 +428,7 @@ fn execute_follow_to<W: Write, E: Write>(
                     Err(_) => {
                         operational_failure = true;
                         diagnostics.push(operand_diagnostic(
-                            source.command_name,
+                            source.kind.command_name(),
                             0,
                             source.paths[0],
                             "input is not valid bounded UTF-8 text",
@@ -411,7 +453,7 @@ fn execute_follow_to<W: Write, E: Write>(
             Err(_) => {
                 operational_failure = true;
                 diagnostics.push(operand_diagnostic(
-                    source.command_name,
+                    source.kind.command_name(),
                     0,
                     source.paths[0],
                     "input read failed while following",
@@ -499,28 +541,40 @@ fn readonly_source(
     let Some(first) = plan.stages.first() else {
         return Err(ReadonlyExecutionErrorV1::UnsupportedPlan);
     };
-    let (command_name, paths, number_lines, follow_count) = match first {
+    let (paths, kind) = match first {
         StagePlanV1::ReadTextFiles {
             paths,
             number_lines,
-        } => ("cat", paths.iter().collect::<Vec<_>>(), *number_lines, None),
+        } => (
+            paths.iter().collect::<Vec<_>>(),
+            ReadonlySourceKindV1::Cat {
+                number_lines: *number_lines,
+            },
+        ),
         StagePlanV1::HeadLines {
             path: Some(path), ..
-        } => ("head", vec![path], false, None),
+        } => (vec![path], ReadonlySourceKindV1::Head),
         StagePlanV1::TailLines {
             path: Some(path), ..
-        } => ("tail", vec![path], false, None),
-        StagePlanV1::FollowFile { count, path } => ("tail", vec![path], false, Some(*count)),
-        StagePlanV1::CountLines { path: Some(path) } => ("wc", vec![path], false, None),
+        } => (vec![path], ReadonlySourceKindV1::Tail),
+        StagePlanV1::FollowFile { count, path } => {
+            (vec![path], ReadonlySourceKindV1::Follow { count: *count })
+        }
+        StagePlanV1::CountLines { path: Some(path) } => (vec![path], ReadonlySourceKindV1::Count),
         StagePlanV1::SearchText {
             paths, recursive, ..
-        } if !*recursive && !paths.is_empty() => ("grep", paths.iter().collect(), false, None),
+        } if !*recursive && !paths.is_empty() => (
+            paths.iter().collect(),
+            ReadonlySourceKindV1::Grep {
+                is_final: matches!(plan.stages.last(), Some(StagePlanV1::SearchText { .. })),
+            },
+        ),
         StagePlanV1::UniqueLines {
             path: Some(path), ..
-        } => ("uniq", vec![path], false, None),
+        } => (vec![path], ReadonlySourceKindV1::Unique),
         StagePlanV1::SortLines {
             path: Some(path), ..
-        } => ("sort", vec![path], false, None),
+        } => (vec![path], ReadonlySourceKindV1::Sort),
         _ => return Err(ReadonlyExecutionErrorV1::UnsupportedPlan),
     };
 
@@ -538,14 +592,7 @@ fn readonly_source(
         }
     }
 
-    Ok(ReadonlySourceV1 {
-        command_name,
-        paths,
-        number_lines,
-        grep_is_final: matches!(plan.stages.last(), Some(StagePlanV1::SearchText { .. })),
-        grep_direct: matches!(first, StagePlanV1::SearchText { .. }),
-        follow_count,
-    })
+    Ok(ReadonlySourceV1 { paths, kind })
 }
 
 struct StreamResultV1 {
@@ -595,7 +642,7 @@ fn stream_inputs_ordered<W: Write>(
                         TextReadErrorV1::Io { .. } => "input read failed",
                     };
                     diagnostics.push(operand_diagnostic(
-                        source.command_name,
+                        source.kind.command_name(),
                         index,
                         source.paths[index],
                         message,
@@ -609,7 +656,7 @@ fn stream_inputs_ordered<W: Write>(
                 if combined_length > MAX_RECORD_BYTES {
                     had_operational_failure = true;
                     diagnostics.push(operand_diagnostic(
-                        source.command_name,
+                        source.kind.command_name(),
                         index,
                         source.paths[index],
                         "joined record exceeds the text limit",
@@ -625,7 +672,7 @@ fn stream_inputs_ordered<W: Write>(
 
             if candidate.terminated {
                 let candidate =
-                    number_record(candidate, source.number_lines, &mut next_line_number)?;
+                    number_record(candidate, source.kind.number_lines(), &mut next_line_number)?;
                 match pipeline.push(candidate, index) {
                     Ok(OrderedFlowV1::Continue) => {}
                     Ok(OrderedFlowV1::StopUpstream) => {
@@ -642,9 +689,10 @@ fn stream_inputs_ordered<W: Write>(
             }
         }
 
-        if source.grep_direct {
+        if source.kind.is_direct_grep() {
             if let Some(frame) = pending.take() {
-                let frame = number_record(frame, source.number_lines, &mut next_line_number)?;
+                let frame =
+                    number_record(frame, source.kind.number_lines(), &mut next_line_number)?;
                 match pipeline.push(frame, index) {
                     Ok(OrderedFlowV1::Continue) => {}
                     Ok(OrderedFlowV1::StopUpstream) => {
@@ -662,7 +710,7 @@ fn stream_inputs_ordered<W: Write>(
 
     if !stopped && stage_fault.is_none() && !cancellation.is_cancelled() {
         if let Some(frame) = pending.take() {
-            let frame = number_record(frame, source.number_lines, &mut next_line_number)?;
+            let frame = number_record(frame, source.kind.number_lines(), &mut next_line_number)?;
             if let Err(fault) = pipeline.push(frame, inputs.len().saturating_sub(1)) {
                 stage_fault = Some(fault);
             }
