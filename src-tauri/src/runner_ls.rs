@@ -406,6 +406,10 @@ pub(crate) fn compare_names(left: &str, right: &str) -> Ordering {
     compare_ordinal(left, right, true).then_with(|| compare_ordinal(left, right, false))
 }
 
+pub(crate) fn names_equal_ignore_case(left: &str, right: &str) -> bool {
+    compare_ordinal(left, right, true) == Ordering::Equal
+}
+
 fn compare_ordinal(left: &str, right: &str, ignore_case: bool) -> Ordering {
     let left = left.encode_utf16().collect::<Vec<_>>();
     let right = right.encode_utf16().collect::<Vec<_>>();

@@ -134,6 +134,16 @@ unrequested upstream input, while fatal source failure continues to dominate
 the final stage status. One ordered stage engine owns these semantics; the
 runner no longer flattens a plan into command-specific ordering flags.
 
+Recursive `grep` enumerates one sorted directory frame at a time and opens each
+discovered file only when its turn is reached. It does not prebuild a complete
+file list, so downstream `head` stops before later subdirectories are inspected.
+Explicit root directory handles are opened before redirection. The output is
+then opened without mutation, checked against an existing target inside any
+root, and committed before traversal output begins. A multiply-linked target
+receives an identity-only preflight so a true input alias is rejected without
+truncating an unrelated multiply-linked output. A newly created target inside a
+root is excluded from traversal by its pinned file identity.
+
 The production sidecar now executes validated `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, and `uniq` plans through a
 writer-based streaming entry point, either to normal stdout or to a final `>` or
 `>>` file sink. It opens every explicit input before the output, resolves and

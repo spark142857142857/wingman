@@ -40,7 +40,7 @@ pub enum SinkWriteErrorV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileIdentityV1 {
+pub(crate) struct FileIdentityV1 {
     volume_serial_number: u32,
     file_index: u64,
 }
@@ -75,6 +75,45 @@ impl From<io::Error> for OutputOpenErrorV1 {
 pub struct PreparedFileIoV1 {
     inputs: Vec<PreparedInputV1>,
     output: Option<PreparedOutputV1>,
+}
+
+pub(crate) struct PreparedStreamingOutputV1 {
+    file: File,
+    identity: FileIdentityV1,
+    existed: bool,
+    link_count: u32,
+    mode: RedirectModeV1,
+}
+
+impl PreparedStreamingOutputV1 {
+    pub(crate) fn existed(&self) -> bool {
+        self.existed
+    }
+
+    pub(crate) fn has_multiple_links(&self) -> bool {
+        self.link_count > 1
+    }
+
+    pub(crate) fn identity(&self) -> FileIdentityV1 {
+        self.identity
+    }
+
+    pub(crate) fn commit(&mut self) -> io::Result<()> {
+        if self.mode == RedirectModeV1::Overwrite {
+            self.file
+                .set_len(0)
+                .and_then(|()| self.file.seek(SeekFrom::Start(0)).map(|_| ()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn file_mut(&mut self) -> &mut File {
+        &mut self.file
+    }
+}
+
+pub(crate) fn file_matches_identity(file: &File, identity: FileIdentityV1) -> io::Result<bool> {
+    file_identity(file).map(|candidate| candidate == identity)
 }
 
 impl fmt::Debug for PreparedFileIoV1 {
@@ -217,6 +256,31 @@ pub(crate) fn prepare_discovered_output(
             .map_err(|error| IoPreparationErrorV1::Output { kind: error.kind() })?;
     }
     Ok(output_file)
+}
+
+pub(crate) fn prepare_streaming_discovered_output(
+    spec: &RedirectSpecV1,
+) -> Result<PreparedStreamingOutputV1, IoPreparationErrorV1> {
+    let existed = match std::fs::symlink_metadata(&spec.path) {
+        Ok(_) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    };
+    let file = open_output_without_truncation(spec).map_err(|error| match error {
+        OutputOpenErrorV1::Io(error) => IoPreparationErrorV1::Output { kind: error.kind() },
+        OutputOpenErrorV1::ReparsePoint => IoPreparationErrorV1::OutputReparsePoint,
+    })?;
+    let link_count = file_link_count(&file)
+        .map_err(|error| IoPreparationErrorV1::Output { kind: error.kind() })?;
+    let identity = file_identity(&file)
+        .map_err(|error| IoPreparationErrorV1::Output { kind: error.kind() })?;
+    Ok(PreparedStreamingOutputV1 {
+        file,
+        identity,
+        existed,
+        link_count,
+        mode: spec.mode,
+    })
 }
 
 fn open_regular_input(path: &Path) -> io::Result<PreparedInputV1> {
@@ -467,6 +531,19 @@ fn file_information(
 
 #[cfg(not(windows))]
 fn file_identity(_file: &File) -> io::Result<FileIdentityV1> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Wingman file identity requires Windows",
+    ))
+}
+
+#[cfg(windows)]
+fn file_link_count(file: &File) -> io::Result<u32> {
+    file_information(file).map(|information| information.nNumberOfLinks)
+}
+
+#[cfg(not(windows))]
+fn file_link_count(_file: &File) -> io::Result<u32> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Wingman file identity requires Windows",

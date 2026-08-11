@@ -120,6 +120,14 @@ Unicode glob matcher가 basename 전체에 `-name`/`-iname`을 적용하고, 순
 최종 stage 상태보다 우선한다. 이 의미론은 하나의 ordered stage engine이 소유하며,
 runner는 더 이상 plan을 명령별 순서 보정 flag로 평탄화하지 않는다.
 
+재귀 `grep`은 정렬된 directory frame 하나씩 열거하고 차례가 된 discovered file만 연다.
+전체 file 목록을 미리 만들지 않으므로 downstream `head`가 멈추면 뒤의 하위 directory를
+검사하지 않는다. 명시적 root directory handle은 redirection보다 먼저 연다. 그 뒤 output을
+변경 없이 열어 root 내부의 기존 target인지 검사하고 traversal output 전에 commit한다.
+Link가 여러 개인 target은 identity-only preflight를 거쳐 실제 input alias만 truncate 없이
+거부하며, 관련 없는 multiply-linked output은 허용한다. Root 안에 새로 만든 target은 pinned
+file identity로 traversal에서 제외한다.
+
 Production sidecar는 이제 검증된 `clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq` plan을 writer 기반 streaming entry point로
 실행하고, normal stdout 또는 최종 `>`·`>>` file sink로 출력한다. 모든 명시적 input을
 output보다 먼저 열고, pinned-parent/reparse-safe primitive로 redirection output을 열며,

@@ -138,6 +138,28 @@ fn recursive_grep_uses_the_safe_redirect_sink_and_rejects_an_input_alias() {
         .unwrap()
         .contains("same file as recursive input"));
     assert_eq!(fs::read(&input).unwrap(), unchanged);
+
+    let hard_link_alias = sandbox.join("input-alias.txt");
+    fs::hard_link(&input, &hard_link_alias).unwrap();
+    let hard_link = execute_prepared(request_with_redirect(&root, "TODO", &hard_link_alias))
+        .expect("reject a recursive input hard-link alias");
+    assert_eq!(hard_link.exit_code, 2);
+    assert!(String::from_utf8(hard_link.stderr)
+        .unwrap()
+        .contains("same file as recursive input"));
+    assert_eq!(fs::read(&input).unwrap(), unchanged);
+
+    let unrelated = sandbox.join("unrelated-output.txt");
+    let unrelated_alias = sandbox.join("unrelated-output-alias.txt");
+    fs::write(&unrelated, b"old\n").unwrap();
+    fs::hard_link(&unrelated, &unrelated_alias).unwrap();
+    let unrelated_output = execute_prepared(request_with_redirect(&root, "TODO", &unrelated))
+        .expect("allow a multiply-linked output disjoint from recursive inputs");
+    assert_eq!(unrelated_output.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(fs::read(&unrelated_alias).unwrap()).unwrap(),
+        format!("{display}\\input.txt:TODO redirected\r\n")
+    );
     cleanup(&sandbox);
 }
 
@@ -148,6 +170,64 @@ fn recursive_grep_head_stops_before_opening_a_later_invalid_file() {
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("a-match.txt"), b"TODO first\n").unwrap();
     fs::write(root.join("z-invalid.txt"), [0xff, 0xfe]).unwrap();
+
+    let outcome = execute_prepared(request_with_downstream(
+        &root,
+        "TODO",
+        vec![StagePlanV1::HeadLines {
+            count: 1,
+            path: None,
+        }],
+    ))
+    .unwrap();
+
+    let display = root.display().to_string().replace('/', "\\");
+    assert_eq!(outcome.exit_code, 0);
+    assert_eq!(
+        String::from_utf8(outcome.stdout).unwrap(),
+        format!("{display}\\a-match.txt:TODO first\r\n")
+    );
+    assert!(outcome.stderr.is_empty());
+
+    let output = sandbox.join("head-output.txt");
+    let mut redirected_request = request_with_downstream(
+        &root,
+        "TODO",
+        vec![StagePlanV1::HeadLines {
+            count: 1,
+            path: None,
+        }],
+    );
+    let PreparedRequestKindV1::Execute { plan } = &mut redirected_request.kind else {
+        unreachable!();
+    };
+    plan.redirect = Some(ValidatedRedirectPlanV1 {
+        mode: RedirectModeV1::Overwrite,
+        path: path_spec(&output),
+    });
+    let redirected = execute_prepared(redirected_request).unwrap();
+    assert_eq!(redirected.exit_code, 0);
+    assert!(redirected.stdout.is_empty());
+    assert!(redirected.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(fs::read(output).unwrap()).unwrap(),
+        format!("{display}\\a-match.txt:TODO first\r\n")
+    );
+    cleanup(&sandbox);
+}
+
+#[test]
+fn recursive_grep_head_does_not_traverse_a_later_overdepth_tree() {
+    let sandbox = sandbox();
+    let root = sandbox.join("root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("a-match.txt"), b"TODO first\n").unwrap();
+    let mut deep = root.join("z-deep");
+    fs::create_dir(&deep).unwrap();
+    for depth in 0..=wingman_lib::runner_grep::MAX_RECURSIVE_GREP_DEPTH {
+        deep = deep.join(format!("d{depth}"));
+        fs::create_dir(&deep).unwrap();
+    }
 
     let outcome = execute_prepared(request_with_downstream(
         &root,
