@@ -626,6 +626,46 @@ pub(crate) fn close_prepared_source_children(directory: PreparedCopyDirectoryV1)
     directory.handle
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PreparedSourceDeleteResultV1 {
+    Success,
+    Cancelled,
+    Failed,
+}
+
+pub(crate) fn delete_prepared_source_directory(
+    directory: PreparedCopyDirectoryV1,
+    cancellation: &RunnerCancellationV1,
+) -> PreparedSourceDeleteResultV1 {
+    for entry in directory.entries {
+        if cancellation.is_cancelled() {
+            return PreparedSourceDeleteResultV1::Cancelled;
+        }
+        let result = match entry {
+            PreparedCopyEntryV1::File { handle, .. } => {
+                if delete_open_file(&handle).is_ok() {
+                    PreparedSourceDeleteResultV1::Success
+                } else {
+                    PreparedSourceDeleteResultV1::Failed
+                }
+            }
+            PreparedCopyEntryV1::Directory { directory, .. } => {
+                delete_prepared_source_directory(directory, cancellation)
+            }
+        };
+        if result != PreparedSourceDeleteResultV1::Success {
+            return result;
+        }
+    }
+    if cancellation.is_cancelled() {
+        PreparedSourceDeleteResultV1::Cancelled
+    } else if delete_open_file(&directory.handle).is_ok() {
+        PreparedSourceDeleteResultV1::Success
+    } else {
+        PreparedSourceDeleteResultV1::Failed
+    }
+}
+
 fn create_staging_directory(parent: &File) -> Result<File, DirectoryAccessErrorV1> {
     for _ in 0..8 {
         let name = format!(".wingman-stage-{}.tmp", Uuid::new_v4().as_simple());
