@@ -1,7 +1,7 @@
 use std::process::Command;
 use std::thread;
 use uuid::Uuid;
-use wingman_lib::catalog::{build_readonly_plan, CatalogErrorV1};
+use wingman_lib::catalog::{build_execution_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
     ActiveShell, ExecutionPlanV1, FrontendDecisionKindV1, InterpreterSession, LineEvidence,
     PrepareSubmissionV1, PreparedRequestKindV1, PreparedRequestV1, StagePlanV1,
@@ -12,7 +12,7 @@ use wingman_lib::runner::execute_prepared;
 use wingman_lib::transport::OneShotBrokerV1;
 
 fn parse(line: &str) -> Result<ExecutionPlanV1, CatalogErrorV1> {
-    build_readonly_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
+    build_execution_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use wingman_lib::catalog::{build_readonly_plan, CatalogErrorV1};
+use wingman_lib::catalog::{build_execution_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
     RedirectModeV1, StagePlanV1, ValidatedRedirectPlanV1, MAX_PATH_OPERANDS, MAX_PIPELINE_STAGES,
 };
@@ -11,7 +11,7 @@ fn cat_head_and_redirect_build_one_typed_shell_independent_plan() {
     let parsed =
         parse_p0_tokens(&lex_p0_line(r#"cat -n "app log.txt" | head -n 5 > out.txt"#).unwrap())
             .unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build cat/head plan");
+    let plan = build_execution_plan(&parsed).expect("build cat/head plan");
 
     assert_eq!(
         plan.stages,
@@ -38,7 +38,7 @@ fn cat_head_and_redirect_build_one_typed_shell_independent_plan() {
 #[test]
 fn head_file_and_option_terminator_are_validated_by_the_catalog() {
     let parsed = parse_p0_tokens(&lex_p0_line(r#"head -n 0 -- "-file.txt""#).unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build file head plan");
+    let plan = build_execution_plan(&parsed).expect("build file head plan");
     assert_eq!(
         plan.stages,
         vec![StagePlanV1::HeadLines {
@@ -60,7 +60,7 @@ fn invalid_source_shapes_and_options_are_rejected_before_runner_execution() {
         "cat file.txt | head other.txt",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
-        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
     }
 }
 
@@ -72,7 +72,7 @@ fn host_catalog_applies_the_same_stage_and_path_limits_as_the_runner() {
         .join(" | ");
     let parsed = parse_p0_tokens(&lex_p0_line(&pipeline).unwrap()).unwrap();
     assert_eq!(
-        build_readonly_plan(&parsed),
+        build_execution_plan(&parsed),
         Err(CatalogErrorV1::ResourceLimit)
     );
 
@@ -84,7 +84,7 @@ fn host_catalog_applies_the_same_stage_and_path_limits_as_the_runner() {
     );
     let parsed = parse_p0_tokens(&lex_p0_line(&cat).unwrap()).unwrap();
     assert_eq!(
-        build_readonly_plan(&parsed),
+        build_execution_plan(&parsed),
         Err(CatalogErrorV1::ResourceLimit)
     );
 }
@@ -92,7 +92,7 @@ fn host_catalog_applies_the_same_stage_and_path_limits_as_the_runner() {
 #[test]
 fn wc_lines_accepts_exactly_one_file_or_one_pipeline_input() {
     let parsed = parse_p0_tokens(&lex_p0_line("wc -l input.txt").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build file wc plan");
+    let plan = build_execution_plan(&parsed).expect("build file wc plan");
     assert_eq!(
         plan.stages,
         vec![StagePlanV1::CountLines {
@@ -102,7 +102,7 @@ fn wc_lines_accepts_exactly_one_file_or_one_pipeline_input() {
 
     let parsed =
         parse_p0_tokens(&lex_p0_line("cat input.txt | head -n 2 | wc --lines").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build pipeline wc plan");
+    let plan = build_execution_plan(&parsed).expect("build pipeline wc plan");
     assert_eq!(
         plan.stages,
         vec![
@@ -125,14 +125,14 @@ fn wc_lines_accepts_exactly_one_file_or_one_pipeline_input() {
         "cat input.txt | wc -l other.txt",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
-        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
     }
 }
 
 #[test]
 fn tail_accepts_finite_and_single_file_follow_sources() {
     let parsed = parse_p0_tokens(&lex_p0_line("tail input.txt").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build default tail plan");
+    let plan = build_execution_plan(&parsed).expect("build default tail plan");
     assert_eq!(
         plan.stages,
         vec![StagePlanV1::TailLines {
@@ -144,7 +144,7 @@ fn tail_accepts_finite_and_single_file_follow_sources() {
     let parsed =
         parse_p0_tokens(&lex_p0_line("cat input.txt | head -n 5 | tail -n 2 | wc -l").unwrap())
             .unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build pipeline tail plan");
+    let plan = build_execution_plan(&parsed).expect("build pipeline tail plan");
     assert_eq!(
         plan.stages,
         vec![
@@ -168,7 +168,7 @@ fn tail_accepts_finite_and_single_file_follow_sources() {
         &lex_p0_line("tail --follow -n 3 input.txt | grep ERROR | head -n 1").unwrap(),
     )
     .unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build follow pipeline");
+    let plan = build_execution_plan(&parsed).expect("build follow pipeline");
     assert!(matches!(
         &plan.stages[0],
         StagePlanV1::FollowFile { count: 3, path }
@@ -184,14 +184,14 @@ fn tail_accepts_finite_and_single_file_follow_sources() {
         "cat input.txt | tail other.txt",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
-        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
     }
 }
 
 #[test]
 fn tail_output_can_feed_a_later_head() {
     let parsed = parse_p0_tokens(&lex_p0_line("tail -n 3 input.txt | head -n 2").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect tail output to head input");
+    let plan = build_execution_plan(&parsed).expect("connect tail output to head input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::TailLines { .. }));
     assert!(matches!(
@@ -206,7 +206,7 @@ fn tail_output_can_feed_a_later_head() {
 #[test]
 fn tail_output_can_feed_a_second_tail() {
     let parsed = parse_p0_tokens(&lex_p0_line("tail -n 4 input.txt | tail -n 2").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect tail output to a second tail input");
+    let plan = build_execution_plan(&parsed).expect("connect tail output to a second tail input");
 
     assert_eq!(plan.stages.len(), 2);
     assert!(plan
@@ -218,7 +218,7 @@ fn tail_output_can_feed_a_second_tail() {
 #[test]
 fn grep_builds_typed_file_and_pipeline_search_stages() {
     let parsed = parse_p0_tokens(&lex_p0_line("grep -inv TODO one.txt two.txt").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build multi-file grep plan");
+    let plan = build_execution_plan(&parsed).expect("build multi-file grep plan");
     assert_eq!(
         plan.stages,
         vec![StagePlanV1::SearchText {
@@ -239,7 +239,7 @@ fn grep_builds_typed_file_and_pipeline_search_stages() {
         &lex_p0_line(r#"cat app.log | grep --fixed-strings "[TODO]" | head -n 1"#).unwrap(),
     )
     .unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build pipeline grep plan");
+    let plan = build_execution_plan(&parsed).expect("build pipeline grep plan");
     assert_eq!(
         plan.stages,
         vec![
@@ -275,14 +275,14 @@ fn grep_rejects_unsupported_options_patterns_and_source_shapes() {
         "cat app.log | grep TODO other.log",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
-        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
     }
 }
 
 #[test]
 fn uniq_builds_typed_file_and_pipeline_stages() {
     let parsed = parse_p0_tokens(&lex_p0_line("uniq -cd input.txt").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build file uniq plan");
+    let plan = build_execution_plan(&parsed).expect("build file uniq plan");
     assert_eq!(
         plan.stages,
         vec![StagePlanV1::UniqueLines {
@@ -297,7 +297,7 @@ fn uniq_builds_typed_file_and_pipeline_stages() {
         &lex_p0_line("cat input.txt | grep ERROR | uniq --unique | head -n 2 | wc -l").unwrap(),
     )
     .unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build pipeline uniq plan");
+    let plan = build_execution_plan(&parsed).expect("build pipeline uniq plan");
     assert!(matches!(
         plan.stages[2],
         StagePlanV1::UniqueLines {
@@ -312,7 +312,7 @@ fn uniq_builds_typed_file_and_pipeline_stages() {
 #[test]
 fn uniq_output_can_feed_a_second_uniq() {
     let parsed = parse_p0_tokens(&lex_p0_line("uniq input.txt | uniq -c").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect uniq output to a second uniq input");
+    let plan = build_execution_plan(&parsed).expect("connect uniq output to a second uniq input");
 
     assert_eq!(plan.stages.len(), 2);
     assert!(plan
@@ -324,7 +324,7 @@ fn uniq_output_can_feed_a_second_uniq() {
 #[test]
 fn head_output_can_feed_a_later_uniq() {
     let parsed = parse_p0_tokens(&lex_p0_line("head -n 3 input.txt | uniq -c").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect head output to uniq input");
+    let plan = build_execution_plan(&parsed).expect("connect head output to uniq input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::HeadLines { .. }));
     assert!(matches!(
@@ -340,7 +340,7 @@ fn head_output_can_feed_a_later_uniq() {
 #[test]
 fn tail_output_can_feed_a_later_uniq() {
     let parsed = parse_p0_tokens(&lex_p0_line("tail -n 4 input.txt | uniq -c").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect tail output to uniq input");
+    let plan = build_execution_plan(&parsed).expect("connect tail output to uniq input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::TailLines { .. }));
     assert!(matches!(
@@ -363,14 +363,14 @@ fn uniq_rejects_conflicts_and_invalid_source_shapes() {
         "cat input.txt | uniq other.txt",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
-        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
     }
 }
 
 #[test]
 fn sort_builds_typed_file_and_pipeline_stages() {
     let parsed = parse_p0_tokens(&lex_p0_line("sort -rnu numbers.txt").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build file sort plan");
+    let plan = build_execution_plan(&parsed).expect("build file sort plan");
     assert_eq!(
         plan.stages,
         vec![StagePlanV1::SortLines {
@@ -385,7 +385,7 @@ fn sort_builds_typed_file_and_pipeline_stages() {
         &lex_p0_line("cat input.txt | grep value | sort --reverse | uniq | head -n 2").unwrap(),
     )
     .unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build pipeline sort plan");
+    let plan = build_execution_plan(&parsed).expect("build pipeline sort plan");
     assert!(matches!(
         plan.stages[2],
         StagePlanV1::SortLines {
@@ -400,7 +400,7 @@ fn sort_builds_typed_file_and_pipeline_stages() {
 #[test]
 fn sort_output_can_feed_a_later_text_filter() {
     let parsed = parse_p0_tokens(&lex_p0_line("sort input.txt | grep value").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect sort output to grep input");
+    let plan = build_execution_plan(&parsed).expect("connect sort output to grep input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::SortLines { .. }));
     assert!(matches!(
@@ -416,7 +416,7 @@ fn sort_output_can_feed_a_later_text_filter() {
 #[test]
 fn sort_output_can_feed_a_second_sort() {
     let parsed = parse_p0_tokens(&lex_p0_line("sort -r input.txt | sort -n").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect sort output to a second sort input");
+    let plan = build_execution_plan(&parsed).expect("connect sort output to a second sort input");
 
     assert_eq!(plan.stages.len(), 2);
     assert!(plan
@@ -429,7 +429,7 @@ fn sort_output_can_feed_a_second_sort() {
 fn grep_output_can_feed_a_second_text_filter() {
     let parsed =
         parse_p0_tokens(&lex_p0_line("grep alpha input.txt | grep beta").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect grep output to a second grep input");
+    let plan = build_execution_plan(&parsed).expect("connect grep output to a second grep input");
 
     assert_eq!(plan.stages.len(), 2);
     assert!(plan.stages.iter().all(|stage| matches!(
@@ -444,7 +444,7 @@ fn grep_output_can_feed_a_second_text_filter() {
 #[test]
 fn uniq_output_can_feed_a_later_text_filter() {
     let parsed = parse_p0_tokens(&lex_p0_line("uniq input.txt | grep beta").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect uniq output to grep input");
+    let plan = build_execution_plan(&parsed).expect("connect uniq output to grep input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::UniqueLines { .. }));
     assert!(matches!(
@@ -460,7 +460,7 @@ fn uniq_output_can_feed_a_later_text_filter() {
 #[test]
 fn head_output_can_feed_a_later_text_filter() {
     let parsed = parse_p0_tokens(&lex_p0_line("head -n 2 input.txt | grep keep").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect head output to grep input");
+    let plan = build_execution_plan(&parsed).expect("connect head output to grep input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::HeadLines { .. }));
     assert!(matches!(
@@ -476,7 +476,7 @@ fn head_output_can_feed_a_later_text_filter() {
 #[test]
 fn uniq_output_can_feed_a_later_sort() {
     let parsed = parse_p0_tokens(&lex_p0_line("uniq input.txt | sort").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect uniq output to sort input");
+    let plan = build_execution_plan(&parsed).expect("connect uniq output to sort input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::UniqueLines { .. }));
     assert!(matches!(
@@ -488,7 +488,7 @@ fn uniq_output_can_feed_a_later_sort() {
 #[test]
 fn head_output_can_feed_a_later_sort() {
     let parsed = parse_p0_tokens(&lex_p0_line("head -n 2 input.txt | sort").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect head output to sort input");
+    let plan = build_execution_plan(&parsed).expect("connect head output to sort input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::HeadLines { .. }));
     assert!(matches!(
@@ -500,7 +500,7 @@ fn head_output_can_feed_a_later_sort() {
 #[test]
 fn tail_output_can_feed_a_later_sort() {
     let parsed = parse_p0_tokens(&lex_p0_line("tail -n 3 input.txt | sort").unwrap()).unwrap();
-    let plan = build_readonly_plan(&parsed).expect("connect tail output to sort input");
+    let plan = build_execution_plan(&parsed).expect("connect tail output to sort input");
 
     assert!(matches!(plan.stages[0], StagePlanV1::TailLines { .. }));
     assert!(matches!(
@@ -518,7 +518,7 @@ fn sort_rejects_unsupported_options_and_invalid_source_shapes() {
         "cat input.txt | sort other.txt",
     ] {
         let parsed = parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap();
-        assert!(build_readonly_plan(&parsed).is_err(), "line: {line}");
+        assert!(build_execution_plan(&parsed).is_err(), "line: {line}");
     }
 }
 
@@ -528,7 +528,7 @@ fn recursive_grep_can_feed_the_common_ordered_stages() {
         &lex_p0_line("grep -r value src | grep keep | sort -r | uniq -c | head -n 2").unwrap(),
     )
     .unwrap();
-    let plan = build_readonly_plan(&parsed).expect("build recursive ordered pipeline");
+    let plan = build_execution_plan(&parsed).expect("build recursive ordered pipeline");
     assert_eq!(plan.stages.len(), 5);
     assert!(matches!(
         plan.stages[0],

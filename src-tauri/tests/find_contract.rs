@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use uuid::Uuid;
-use wingman_lib::catalog::{build_readonly_plan, CatalogErrorV1};
+use wingman_lib::catalog::{build_execution_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
     ActiveShell, ExecutionPlanV1, FindEntryTypeV1, FrontendDecisionKindV1, InterpreterSession,
     LineEvidence, PrepareSubmissionV1, PreparedRequestKindV1, RunnerRequestValidationErrorV1,
@@ -14,7 +14,7 @@ use wingman_lib::runner_find::execute_find_with_cwd_to;
 use wingman_lib::windows_path::validate_path_value;
 
 fn parse(line: &str) -> Result<ExecutionPlanV1, CatalogErrorV1> {
-    build_readonly_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
+    build_execution_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
 }
 
 fn fixture() -> std::path::PathBuf {

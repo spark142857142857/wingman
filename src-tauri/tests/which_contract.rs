@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
-use wingman_lib::catalog::{build_readonly_plan, CatalogErrorV1};
+use wingman_lib::catalog::{build_execution_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
     ActiveShell, FrontendDecisionKindV1, InterpreterSession, LineEvidence, PrepareSubmissionV1,
     PreparedRequestKindV1, StagePlanV1,
@@ -13,7 +13,7 @@ use wingman_lib::runner_cancel::RunnerCancellationV1;
 use wingman_lib::runner_which::execute_which_with_snapshot_to;
 
 fn parse(line: &str) -> Result<wingman_lib::interpreter::ExecutionPlanV1, CatalogErrorV1> {
-    build_readonly_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
+    build_execution_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
 }
 
 #[test]

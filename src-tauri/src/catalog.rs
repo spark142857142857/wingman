@@ -20,7 +20,7 @@ pub enum CatalogErrorV1 {
     Path(PathValidationErrorV1),
 }
 
-pub fn build_readonly_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, CatalogErrorV1> {
+pub fn build_execution_plan(parsed: &ParsedLineV1) -> Result<ExecutionPlanV1, CatalogErrorV1> {
     let mut stages = Vec::with_capacity(parsed.stages.len());
     for (index, command) in parsed.stages.iter().enumerate() {
         if command.name.eq_ignore_ascii_case("find") {

@@ -4,7 +4,7 @@ use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 use uuid::Uuid;
 use windows_sys::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_HIDDEN};
-use wingman_lib::catalog::{build_readonly_plan, CatalogErrorV1};
+use wingman_lib::catalog::{build_execution_plan, CatalogErrorV1};
 use wingman_lib::interpreter::{
     ActiveShell, ExecutionPlanV1, FrontendDecisionKindV1, InterpreterSession, LineEvidence,
     PrepareSubmissionV1, PreparedRequestKindV1, StagePlanV1,
@@ -15,7 +15,7 @@ use wingman_lib::runner_cancel::RunnerCancellationV1;
 use wingman_lib::runner_ls::execute_ls_with_cwd_to;
 
 fn parse(line: &str) -> Result<ExecutionPlanV1, CatalogErrorV1> {
-    build_readonly_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
+    build_execution_plan(&parse_p0_tokens(&lex_p0_line(line).unwrap()).unwrap())
 }
 
 fn fixture() -> std::path::PathBuf {

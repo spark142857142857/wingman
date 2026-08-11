@@ -1,4 +1,4 @@
-use crate::catalog::{build_readonly_plan, CatalogErrorV1};
+use crate::catalog::{build_execution_plan, CatalogErrorV1};
 use crate::grep_pattern::GrepPatternV1;
 use crate::lexer::{lex_p0_line, LexErrorV1};
 use crate::parser::{parse_p0_tokens, ParseErrorV1};
@@ -656,7 +656,7 @@ impl InterpreterSession {
         }
 
         if request.familiar_enabled && request.evidence == LineEvidence::Reliable {
-            if let Some(kind) = classify_readonly_submission(&request.raw_line) {
+            if let Some(kind) = classify_p0_submission(&request.raw_line) {
                 return Ok(self.prepare_request(request.command_sequence, request.raw_line, kind));
             }
         }
@@ -715,16 +715,16 @@ impl InterpreterSession {
     }
 }
 
-fn classify_readonly_submission(raw_line: &str) -> Option<PreparedRequestKindV1> {
-    let command_name = claimed_readonly_command(raw_line)?;
+fn classify_p0_submission(raw_line: &str) -> Option<PreparedRequestKindV1> {
+    let command_name = claimed_p0_command(raw_line)?;
     let plan = lex_p0_line(raw_line)
-        .map_err(|error| readonly_lex_diagnostic(command_name, error))
+        .map_err(|error| p0_lex_diagnostic(command_name, error))
         .and_then(|tokens| {
-            parse_p0_tokens(&tokens).map_err(|error| readonly_parse_diagnostic(command_name, error))
+            parse_p0_tokens(&tokens).map_err(|error| p0_parse_diagnostic(command_name, error))
         })
         .and_then(|parsed| {
-            build_readonly_plan(&parsed)
-                .map_err(|error| readonly_catalog_diagnostic(command_name, error))
+            build_execution_plan(&parsed)
+                .map_err(|error| p0_catalog_diagnostic(command_name, error))
         });
 
     Some(match plan {
@@ -736,7 +736,7 @@ fn classify_readonly_submission(raw_line: &str) -> Option<PreparedRequestKindV1>
     })
 }
 
-fn claimed_readonly_command(raw_line: &str) -> Option<&'static str> {
+fn claimed_p0_command(raw_line: &str) -> Option<&'static str> {
     let line = raw_line.trim_start_matches([' ', '\t']);
     let end = line
         .char_indices()
@@ -775,7 +775,7 @@ fn claimed_readonly_command(raw_line: &str) -> Option<&'static str> {
     }
 }
 
-fn readonly_lex_diagnostic(command_name: &str, error: LexErrorV1) -> String {
+fn p0_lex_diagnostic(command_name: &str, error: LexErrorV1) -> String {
     let message = match error {
         LexErrorV1::UnclosedSingleQuote | LexErrorV1::UnclosedDoubleQuote => "unclosed quote",
         LexErrorV1::UnsupportedOperator => "unsupported shell operator",
@@ -785,7 +785,7 @@ fn readonly_lex_diagnostic(command_name: &str, error: LexErrorV1) -> String {
     format!("wingman {command_name}: {message}")
 }
 
-fn readonly_parse_diagnostic(command_name: &str, error: ParseErrorV1) -> String {
+fn p0_parse_diagnostic(command_name: &str, error: ParseErrorV1) -> String {
     let message = match error {
         ParseErrorV1::EmptyPipelineStage => "empty pipeline stage",
         ParseErrorV1::MissingRedirectTarget => "missing redirection target",
@@ -795,7 +795,7 @@ fn readonly_parse_diagnostic(command_name: &str, error: ParseErrorV1) -> String 
     format!("wingman {command_name}: {message}")
 }
 
-fn readonly_catalog_diagnostic(command_name: &str, error: CatalogErrorV1) -> String {
+fn p0_catalog_diagnostic(command_name: &str, error: CatalogErrorV1) -> String {
     let message = match error {
         CatalogErrorV1::UnsupportedCommand => "pipeline contains an unsupported command",
         CatalogErrorV1::UnsupportedOption => "unsupported option",
