@@ -217,10 +217,11 @@ implementation gate; the performance contract does not authorize it.
 
 ## Prototype gaps before measurement
 
-The current prototype lacks authoritative startup/readiness markers,
-whole-process-tree accounting, deterministic PTY load generation, runner timing,
-resource limits, and endurance automation. These are planned measurement needs,
-not permission to add production instrumentation before implementation approval.
+The prototype now has release-only whole-process-tree accounting for the settled
+Windows PowerShell idle case. It still lacks authoritative startup/readiness
+markers, deterministic PTY load generation, runner timing, resource limits, and
+endurance automation. These are planned measurement needs, not permission to add
+production instrumentation before implementation approval.
 
 ## Research basis
 
