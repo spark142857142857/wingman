@@ -223,3 +223,38 @@ All 20 runs now pass the 1.5-second warm hard ceiling. The median is below the
 0.8-second target, while p95 misses that target by 13.0 ms; further attribution
 should use ETW rather than another unprofiled rewrite. The controlled five-cold
 distribution is still pending.
+
+## 2026-08-12: deterministic release PTY bulk-render precheck
+
+- App source: `8b069e849b3a97100f54073655147f1206574ff1`
+- Harness introduced at: `2eb44806bec63152ce319112d15d3c32e3c3d5e3`
+- Build and machine: unchanged from the optimized warm-startup revalidation
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_output.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 30
+```
+
+The environment-gated development probe submits one fixed native PowerShell
+generator through xterm's normal user-input event. It emits 100,000 ordered
+lines containing 55 copies of `é`, for exactly 11,900,000 logical UTF-8 data
+bytes. The frontend retains only marker-sized carry state, removes ConPTY's VT
+screen-update sequences from the verification stream, and validates the full
+payload with an independently pinned FNV-1a hash and exact UTF-8 length. The
+unmodified stream still goes to xterm, and completion is exposed only after the
+end marker is present in the rendered terminal buffer and two animation frames
+have elapsed. The probe flag is removed from the PowerShell child environment.
+
+| Independent run | Launch through validated final render |
+| --- | ---: |
+| 1 | 4,566.2 ms |
+| 2 | 4,892.5 ms |
+| 3 | 4,508.7 ms |
+
+The median was 4,566.2 ms, and all three runs preserved every ordered line and
+kept the GUI and integrated PowerShell process alive. This closes the
+deterministic 100,000-line/10-MiB completeness seam. It is not the complete bulk
+performance gate: matched Windows Terminal elapsed time, at least 100
+input-latency samples during output, retained-memory recovery after clear, and
+an explicit scrollback ceiling measurement remain pending.

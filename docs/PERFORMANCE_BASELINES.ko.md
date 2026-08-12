@@ -207,3 +207,36 @@ Commit `8ff27ae38f3f33c8133546029c97a6a985732937` 뒤 같은 release build와 3+
 20회 모두 warm hard ceiling 1.5초를 통과한다. Median은 목표 0.8초 아래지만 p95는
 목표를 13.0 ms 초과하므로, 추가 개선은 측정 없는 재작성보다 ETW 원인 귀속을 먼저
 해야 한다. 통제된 5회 cold 분포는 아직 남아 있다.
+
+## 2026-08-12: 결정적 release PTY 대용량 렌더 사전 검사
+
+- App source: `8b069e849b3a97100f54073655147f1206574ff1`
+- Harness 최초 도입: `2eb44806bec63152ce319112d15d3c32e3c3d5e3`
+- Build와 machine: 최적화된 warm startup 재검증과 동일
+
+실행 명령:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_output.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 30
+```
+
+환경 플래그로만 켜지는 개발용 probe는 xterm의 정상 사용자 입력 event를 통해 고정된
+native PowerShell generator 하나를 제출한다. Generator는 `é` 55개를 포함하는 순서가
+고정된 100,000줄, 정확히 11,900,000 logical UTF-8 data bytes를 출력한다. Frontend는
+marker 크기의 carry state만 유지하고 검증 stream에서 ConPTY의 VT screen-update
+sequence를 제거한 뒤, 독립적으로 고정한 FNV-1a hash와 정확한 UTF-8 길이로 전체
+payload를 검증한다. 수정하지 않은 원본 stream은 그대로 xterm에 전달하며, 렌더된
+terminal buffer에 end marker가 나타나고 animation frame 두 번이 지난 뒤에만 완료를
+노출한다. Probe 플래그는 PowerShell child 환경에서 제거된다.
+
+| 독립 실행 | 시작부터 검증된 최종 렌더까지 |
+| --- | ---: |
+| 1 | 4,566.2 ms |
+| 2 | 4,892.5 ms |
+| 3 | 4,508.7 ms |
+
+Median은 4,566.2 ms이고 세 실행 모두 모든 순서 줄을 보존했으며 GUI와 통합
+PowerShell process가 살아 있었다. 이 결과로 결정적 100,000줄/10MiB 완전성 seam을
+닫았다. 다만 Windows Terminal과 일치시킨 경과 시간, 출력 중 최소 100개 입력 latency
+표본, clear 후 retained-memory 회수, 명시적 scrollback 상한 측정은 아직 남아 있으므로
+완전한 대용량 성능 gate 통과 결과는 아니다.
