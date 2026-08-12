@@ -199,10 +199,10 @@ renderer 재작성을 검토한다. 재작성도 구현 게이트에 따른 사�
 ## 측정 전 현재 초안의 공백
 
 현재 초안에는 안정화된 Windows PowerShell idle 상태를 위한 release 전용 전체
-process tree 계산과 인증된 editor-readiness marker가 있다. 정상 입력 경로의
-수락·echo startup probe, 결정적인 PTY 부하 생성, runner timing, 자원 제한, 지속 실행
-자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품 계측을
-추가해도 된다는 뜻은 아니다.
+process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 켜지는 정상 입력
+수락·렌더 startup probe가 있다. 결정적인 PTY 부하 생성, runner timing, 자원 제한,
+지속 실행 자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품
+계측을 추가해도 된다는 뜻은 아니다.
 
 ## 조사 근거
 

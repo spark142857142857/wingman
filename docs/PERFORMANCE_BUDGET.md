@@ -218,11 +218,11 @@ implementation gate; the performance contract does not authorize it.
 ## Prototype gaps before measurement
 
 The prototype now has release-only whole-process-tree accounting for the settled
-Windows PowerShell idle case and an authenticated editor-readiness marker. It
-still lacks the accepted-and-echoed normal-input startup probe, deterministic PTY
-load generation, runner timing, resource limits, and endurance automation. These
-are planned measurement needs, not permission to add production instrumentation
-before implementation approval.
+Windows PowerShell idle case, an authenticated editor-readiness marker, and an
+environment-gated accepted-and-rendered normal-input startup probe. It still
+lacks deterministic PTY load generation, runner timing, resource limits, and
+endurance automation. These are planned measurement needs, not permission to add
+production instrumentation before implementation approval.
 
 ## Research basis
 

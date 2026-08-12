@@ -118,6 +118,38 @@ title `Wingman - Ready`를 노출하며, harness는 통합 PowerShell PTY child�
 
 이 marker는 계약의 수락·echo된 PTY probe보다 앞선 시점이므로 완전한 cold 또는 warm
 launch 분포가 아니다. 그럼에도 세 lower-bound 측정이 이미 3.0초 hard launch 상한을
-넘으므로 현재 환경에서 완전한 launch gate는 아직 통과할 수 없다. 정상 입력 echo
-probe를 자동화한 뒤 표준 3회 warmup+20회 warm 표본과 통제된 cold 표본 5회를
-측정해야 한다.
+넘으므로 현재 환경에서 완전한 launch gate는 아직 통과할 수 없다. 다음 사전 검사에서
+정상 입력 echo seam을 실행하며, 표준 3회 warmup+20회 warm 표본과 통제된 cold 표본
+5회 측정은 아직 남아 있다.
+
+## 2026-08-12: 렌더된 PowerShell 입력 echo 사전 검사
+
+- App source: `b921e95de128dc30181940b791bed81e7386477e`
+- Harness 최초 도입: `a9fca85`
+- Build와 machine: 위의 안정화된 process-tree 측정과 같은 공식 Tauri release 및 환경
+
+실행 명령:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_shell_echo.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 15
+```
+
+환경 플래그로만 켜지는 개발용 probe는 인증된 editor readiness를 기다린 뒤, xterm의
+사용자 입력 event를 통해 무해한 고정 PowerShell 주석을 넣는다. 입력은 정상 Tauri 입력
+command, Rust terminal session, PTY, PowerShell echo, PTY output event를 거쳐야 한다.
+xterm이 ANSI stream을 해석하고 렌더된 terminal buffer에 token이 나타난 뒤 animation
+frame 두 번이 지나야 완료로 기록한다. Probe 플래그는 child shell 환경에서 제거되며
+일반 실행에서는 비활성이다.
+
+| 연속 실행 | 수락되고 렌더된 입력 echo |
+| --- | ---: |
+| 1 | 6,441.1 ms |
+| 2 | 6,416.1 ms |
+| 3 | 6,207.4 ms |
+| 4 | 6,203.0 ms |
+| 5 | 6,226.9 ms |
+
+Median은 6,226.9 ms이고 5회 모두 완료됐다. 이 결과로 누락됐던 측정 seam을 닫고
+계약의 startup 완료 경계를 직접 검증하지만, 표준 3회 warmup+20회 warm 및 통제된
+5회 cold 분포를 대신하는 결과는 아니다. 모든 표본이 cold hard ceiling 3.0초와 warm
+hard ceiling 1.5초를 넘으므로, 현재 환경에서 startup 성능은 계속 release blocker다.

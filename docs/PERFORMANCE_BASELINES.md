@@ -127,5 +127,42 @@ This marker is earlier than the contract's accepted-and-echoed PTY probe, so it
 is not a complete cold or warm launch distribution. Nevertheless, all three
 lower-bound measurements already exceed the 3.0-second hard launch ceiling;
 the complete launch gate therefore cannot pass on this environment yet. The
-standard three warmups plus 20 warm samples and five controlled cold samples
-remain pending until the normal-input echo probe is automated.
+normal-input echo seam is exercised in the next precheck; the standard three
+warmups plus 20 warm samples and five controlled cold samples remain pending.
+
+## 2026-08-12: rendered PowerShell input-echo precheck
+
+- App source: `b921e95de128dc30181940b791bed81e7386477e`
+- Harness introduced at: `a9fca85`
+- Build and machine: the same official Tauri release and environment as the
+  settled process-tree measurement above
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_shell_echo.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 15
+```
+
+The environment-gated development probe waits for authenticated editor
+readiness, injects a fixed harmless PowerShell comment through xterm's user
+input event, and requires it to travel through the normal Tauri input command,
+Rust terminal session, PTY, PowerShell echo, and PTY output event. Completion is
+reported only after xterm has parsed the ANSI stream, the token is present in
+the rendered terminal buffer, and two animation frames have elapsed. The probe
+flag is removed from the child-shell environment and is inactive in ordinary
+launches.
+
+| Consecutive run | Accepted and rendered input echo |
+| --- | ---: |
+| 1 | 6,441.1 ms |
+| 2 | 6,416.1 ms |
+| 3 | 6,207.4 ms |
+| 4 | 6,203.0 ms |
+| 5 | 6,226.9 ms |
+
+The median was 6,226.9 ms and all five runs completed. This closes the missing
+measurement seam and directly exercises the contract's startup-completion
+boundary, but it is still a repeatability precheck rather than the required
+three-warmup/20-warm and controlled five-cold distributions. Every sample
+exceeds the 3.0-second cold hard ceiling and the 1.5-second warm hard ceiling,
+so startup performance remains a release blocker on this environment.
