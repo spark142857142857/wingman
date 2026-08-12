@@ -62,6 +62,16 @@ let inputQueue = Promise.resolve();
 let activeSessionId = 0;
 
 const shellReadinessTimeoutMs = 30_000;
+const performanceInputEchoToken = "__WINGMAN_INPUT_ECHO_PROBE__";
+const performanceInputEchoCommand = `# ${performanceInputEchoToken}\r`;
+
+type PerformanceInputEchoProbe = {
+  sessionId: number;
+  outputTail: string;
+  observed: boolean;
+};
+
+let performanceInputEchoProbe: PerformanceInputEchoProbe | null = null;
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
@@ -76,6 +86,18 @@ async function observeEditorReadiness(clientSessionId: number) {
     ).catch(() => ({ accepted: false, editorReady: false }));
     if (!state.accepted || clientSessionId !== activeSessionId) return;
     if (state.editorReady) {
+      const probe = await invoke<{ accepted: boolean; enabled: boolean }>(
+        "performance_input_echo_probe",
+        { clientSessionId },
+      ).catch(() => ({ accepted: false, enabled: false }));
+      if (probe.accepted && probe.enabled && clientSessionId === activeSessionId) {
+        performanceInputEchoProbe = {
+          sessionId: clientSessionId,
+          outputTail: "",
+          observed: false,
+        };
+        term.input(performanceInputEchoCommand, true);
+      }
       return;
     }
     await delay(25);
@@ -112,6 +134,26 @@ async function startSession(shell: ShellKind) {
 
 await listen<{ session_id: number; data: string }>("pty-output", (event) => {
   if (event.payload.session_id === activeSessionId) {
+    const probe = performanceInputEchoProbe;
+    if (probe && probe.sessionId === activeSessionId && !probe.observed) {
+      probe.outputTail = (probe.outputTail + event.payload.data).slice(
+        -performanceInputEchoToken.length * 2,
+      );
+      if (probe.outputTail.includes(performanceInputEchoToken)) {
+        probe.observed = true;
+        term.write(event.payload.data, () => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (probe.sessionId !== activeSessionId) return;
+              void invoke("mark_performance_input_echo", {
+                clientSessionId: probe.sessionId,
+              });
+            });
+          });
+        });
+        return;
+      }
+    }
     term.write(event.payload.data);
   }
 });

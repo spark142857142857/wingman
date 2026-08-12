@@ -15,6 +15,8 @@ use session_runtime::{apply_familiar_effect, execute_terminal_input, write_sessi
 use terminal_session::TerminalSessionV1;
 use transport::{EditorReadinessBrokerV1, SessionBrokerV1};
 
+const PERFORMANCE_INPUT_ECHO_PROBE_ENV: &str = "WINGMAN_PERF_INPUT_ECHO_PROBE";
+
 pub mod app_launch;
 pub mod catalog;
 pub mod find_pattern;
@@ -75,6 +77,13 @@ struct ShellReadinessResult {
     editor_ready: bool,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceProbeResult {
+    accepted: bool,
+    enabled: bool,
+}
+
 struct PtySession {
     id: u64,
     writer: Box<dyn Write + Send>,
@@ -94,11 +103,25 @@ struct PtySession {
 
 struct AppState {
     session: Mutex<Option<PtySession>>,
+    performance_input_echo_probe: bool,
 }
 
 static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
     session: Mutex::new(None),
+    performance_input_echo_probe: performance_input_echo_probe_enabled(
+        std::env::var(PERFORMANCE_INPUT_ECHO_PROBE_ENV)
+            .ok()
+            .as_deref(),
+    ),
 });
+
+fn performance_input_echo_probe_enabled(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+fn remove_performance_probe_environment(cmd: &mut CommandBuilder) {
+    cmd.env_remove(PERFORMANCE_INPUT_ECHO_PROBE_ENV);
+}
 
 fn terminal_pty_size(cols: u16, rows: u16) -> PtySize {
     PtySize {
@@ -316,6 +339,7 @@ fn start_shell(
     cmd.env("WINGMAN_READINESS_PIPE", readiness_pipe_id);
     cmd.env("WINGMAN_RUNNER_PATH", runner_path.as_os_str());
     cmd.env("WINGMAN_BROKER_PIPE", &broker_pipe_name);
+    remove_performance_probe_environment(&mut cmd);
     for arg in args {
         cmd.arg(arg);
     }
@@ -491,6 +515,35 @@ fn poll_shell_readiness(
 }
 
 #[tauri::command]
+fn performance_input_echo_probe(client_session_id: u64) -> Result<PerformanceProbeResult, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = guard
+        .as_ref()
+        .is_some_and(|session| session.id == client_session_id);
+    Ok(PerformanceProbeResult {
+        accepted,
+        enabled: accepted && APP_STATE.performance_input_echo_probe,
+    })
+}
+
+#[tauri::command]
+fn mark_performance_input_echo(app: AppHandle, client_session_id: u64) -> Result<bool, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = APP_STATE.performance_input_echo_probe
+        && guard
+            .as_ref()
+            .is_some_and(|session| session.id == client_session_id);
+    if accepted {
+        if let Some(window) = app.get_webview_window("main") {
+            window
+                .set_title("Wingman - Echoed")
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(accepted)
+}
+
+#[tauri::command]
 fn handle_terminal_input(
     client_session_id: u64,
     data: String,
@@ -559,6 +612,8 @@ pub fn run() {
             get_cwd,
             start_shell,
             poll_shell_readiness,
+            performance_input_echo_probe,
+            mark_performance_input_echo,
             write_native_paste,
             handle_terminal_input,
             resize_shell
@@ -573,6 +628,22 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::mpsc;
+
+    #[test]
+    fn performance_input_probe_requires_exact_opt_in() {
+        assert!(performance_input_echo_probe_enabled(Some("1")));
+        assert!(!performance_input_echo_probe_enabled(None));
+        assert!(!performance_input_echo_probe_enabled(Some("0")));
+        assert!(!performance_input_echo_probe_enabled(Some("true")));
+    }
+
+    #[test]
+    fn performance_input_probe_is_removed_from_shell_environment() {
+        let mut command = CommandBuilder::new("cmd.exe");
+        command.env(PERFORMANCE_INPUT_ECHO_PROBE_ENV, "1");
+        remove_performance_probe_environment(&mut command);
+        assert_eq!(command.get_env(PERFORMANCE_INPUT_ECHO_PROBE_ENV), None);
+    }
 
     #[test]
     fn current_session_exit_is_detected() {
