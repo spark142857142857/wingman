@@ -237,8 +237,8 @@ terminal buffer에 end marker가 나타나고 animation frame 두 번이 지난 
 
 Median은 4,566.2 ms이고 세 실행 모두 모든 순서 줄을 보존했으며 GUI와 통합
 PowerShell process가 살아 있었다. 이 결과로 결정적 100,000줄/10MiB 완전성 seam을
-닫았다. 다만 Windows Terminal과 일치시킨 경과 시간은 아직 남아 있으므로 완전한
-대용량 성능 gate 통과 결과는 아니다. Retained-memory 회수와 명시적 scrollback 상한은
+닫았다. 이 결과 하나만으로 전체 대용량 성능 gate를 통과한 것은 아니다.
+Retained-memory 회수, 명시적 scrollback 상한, Windows Terminal과 일치시킨 경과 시간은
 아래에서 측정한다.
 
 ## 2026-08-12: release 대용량 출력 중 입력 latency 분포
@@ -317,8 +317,7 @@ child 환경에서 제거된다.
 
 세 독립 분포 모두 대용량 출력 중 입력 latency p95 상한 200 ms를 4배가 넘는 여유로
 통과했고 GUI와 통합 PowerShell process도 살아 있었다. 이 결과로 현재 장비의
-PowerShell 측정 seam을 닫았다. 같은 조건의 Windows Terminal 비교와 별도 `cmd.exe`
-release matrix는 아직 남아 있다.
+PowerShell 측정 seam을 닫았다. 별도 `cmd.exe` release matrix는 아직 남아 있다.
 
 ## 2026-08-12: release 대용량 출력 후 retained-memory 분포
 
@@ -426,5 +425,51 @@ Retained 원시 표본 (MiB):
 세 실행 모두 GUI와 통합 PowerShell이 살아 있는 동안 retained-memory release 상한
 50 MiB 아래를 유지했다. 명시적 scrollback 공백은 닫혔다. 재검증에서도 11,900,000
 바이트를 5,105.0 ms에 모두 보존했고 대용량 출력 중 입력 latency는 median 41.8 ms,
-p95 48.6 ms, maximum 50.8 ms였다. 같은 조건의 Windows Terminal 비교는 별도 작업으로
-남는다.
+p95 48.6 ms, maximum 50.8 ms였다. 같은 조건의 Windows Terminal 비교는 아래에서
+측정한다.
+
+## 2026-08-12: Windows Terminal 대량 render 일치 비교
+
+- Harness 최초 도입: `8f004899b4207c3053a1050e8edf238160862fa3`
+- Wingman app source: `90bc57ec0a9d842eaf34c1220308347857a8d626`
+- Windows Terminal: `1.24.11911.0`, x64 stable package
+- Windows: `10.0.26200.0`
+- Windows PowerShell: `5.1.26100.8875`
+
+실행 명령:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_host_comparison.tests.ps1 -WingmanExecutable src-tauri/target/release/wingman.exe -RunCount 3 -TimeoutSeconds 90
+```
+
+각 paired 실행은 같은 작업 디렉터리에서 새 host와 shell process를 시작하고 동일한
+결정적 100,000줄·11,900,000바이트 PowerShell payload를 출력한다. 두 host 모두 탭
+하나와 외곽 1,116 x 759 pixel 창을 사용한다. 비공개 임시 신호로 generator 시작 전에
+Windows Terminal 창 크기를 맞추고 매 실행 뒤 신호를 삭제한다. 설치된 Windows
+Terminal 기본 profile은 Windows PowerShell이며 history, font, 초기 열·행에 사용자
+override가 없으므로 package의 history 기본값 9,001줄이 적용된다. Wingman은 명시적인
+P0 상한 4,000줄을 사용한다.
+
+시간은 host 실행 직전에 측정하기 시작한다. Wingman은 전체 stream hash와 byte 수를
+검증하고 렌더된 xterm buffer에서 끝 marker를 찾은 뒤 animation frame 두 번을 기다려야
+완료된다. Windows Terminal의 고정 완료 title은 flush된 payload 뒤에 console 순서로
+적용되며, harness는 title을 본 뒤 성공한 DWM compositor flush 두 번을 기다린다. 두
+완료 경계 모두 benchmark PowerShell process가 살아 있어야 한다.
+
+| Paired 실행 | Wingman | Windows Terminal | Pair 비율 |
+| --- | ---: | ---: | ---: |
+| 1 | 4,807.9 ms | 3,869.3 ms | 1.2426x |
+| 2 | 4,610.4 ms | 3,894.1 ms | 1.1840x |
+| 3 | 4,712.2 ms | 3,877.3 ms | 1.2153x |
+| Median | 4,712.2 ms | 3,877.3 ms | 1.2153x |
+
+원시 경과 시간 표본 (ms):
+
+```text
+Wingman: 4807.884, 4610.408, 4712.232
+Windows Terminal: 3869.302, 3894.059, 3877.279
+```
+
+Median 비율 1.2153x로 목표 2x와 release 상한 3x를 모두 통과했다. 사용자 Windows
+Terminal 설정을 바꾸거나 benchmark process·신호 파일을 남기지 않고 이 장비의
+Windows Terminal 대량 render 일치 비교 공백을 닫았다.

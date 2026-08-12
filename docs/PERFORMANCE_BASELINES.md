@@ -255,9 +255,8 @@ have elapsed. The probe flag is removed from the PowerShell child environment.
 The median was 4,566.2 ms, and all three runs preserved every ordered line and
 kept the GUI and integrated PowerShell process alive. This closes the
 deterministic 100,000-line/10-MiB completeness seam. It is not the complete bulk
-performance gate: matched Windows Terminal elapsed time remains pending.
-Retained-memory recovery and the explicit scrollback ceiling are measured
-below.
+performance gate by itself. Retained-memory recovery, the explicit scrollback
+ceiling, and the matched Windows Terminal elapsed time are measured below.
 
 ## 2026-08-12: release bulk-output input-latency distribution
 
@@ -338,8 +337,7 @@ Raw samples, run 3 (ms):
 All three independent distributions pass the 200 ms p95 bulk-output input
 latency ceiling with more than 4x headroom, while the GUI and integrated
 PowerShell process remain alive. This closes the PowerShell measurement seam on
-this machine. The matched Windows Terminal comparison and the separate
-`cmd.exe` release matrix remain pending.
+this machine. The separate `cmd.exe` release matrix remains pending.
 
 ## 2026-08-12: release bulk-output retained-memory distribution
 
@@ -456,4 +454,54 @@ All three runs stay below the 50 MiB retained-memory release ceiling while the
 GUI and integrated PowerShell remain alive. The explicit scrollback gap is now
 closed. Revalidation preserved all 11,900,000 bytes in 5,105.0 ms and measured
 bulk-output input latency at 41.8 ms median, 48.6 ms p95, and 50.8 ms maximum.
-The matched Windows Terminal comparison remains separate.
+The matched Windows Terminal comparison is measured below.
+
+## 2026-08-12: matched Windows Terminal bulk-render comparison
+
+- Harness introduced at: `8f004899b4207c3053a1050e8edf238160862fa3`
+- Wingman app source: `90bc57ec0a9d842eaf34c1220308347857a8d626`
+- Windows Terminal: `1.24.11911.0`, x64 stable package
+- Windows: `10.0.26200.0`
+- Windows PowerShell: `5.1.26100.8875`
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_host_comparison.tests.ps1 -WingmanExecutable src-tauri/target/release/wingman.exe -RunCount 3 -TimeoutSeconds 90
+```
+
+Each paired run starts fresh host and shell processes in the same working
+directory and emits the same deterministic 100,000-line, 11,900,000-byte
+PowerShell payload. Both hosts use one tab and an outer window measured at
+1,116 x 759 pixels. A private temporary signal lets the harness resize Windows
+Terminal before its generator starts; the signal is deleted after each run.
+The installed Windows Terminal default profile is Windows PowerShell and has no
+user history, font, initial-column, or initial-row override, so its packaged
+9,001-row history default remains effective. Wingman uses its explicit
+4,000-row P0 ceiling.
+
+Timing starts immediately before host launch. Wingman completes only after it
+validates the full stream hash and byte count, finds the end marker in the
+rendered xterm buffer, and waits two animation frames. Windows Terminal's fixed
+completion title follows the flushed payload in console order; after observing
+that title, the harness waits for two successful DWM compositor flushes. The
+benchmark PowerShell process must still be alive at both completion boundaries.
+
+| Paired run | Wingman | Windows Terminal | Pair ratio |
+| --- | ---: | ---: | ---: |
+| 1 | 4,807.9 ms | 3,869.3 ms | 1.2426x |
+| 2 | 4,610.4 ms | 3,894.1 ms | 1.1840x |
+| 3 | 4,712.2 ms | 3,877.3 ms | 1.2153x |
+| Median | 4,712.2 ms | 3,877.3 ms | 1.2153x |
+
+Raw elapsed samples (ms):
+
+```text
+Wingman: 4807.884, 4610.408, 4712.232
+Windows Terminal: 3869.302, 3894.059, 3877.279
+```
+
+The median ratio of 1.2153x passes both the 2x target and the 3x release
+ceiling. This closes the matched Windows Terminal bulk-render comparison on
+this machine without changing the user's Windows Terminal settings or leaving
+benchmark processes and signal files behind.

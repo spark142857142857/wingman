@@ -202,9 +202,9 @@ renderer 재작성을 검토한다. 재작성도 구현 게이트에 따른 사�
 process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 켜지는 정상 입력
 수락·렌더 startup 및 대용량 출력 중 입력 latency probe, 결정적 100,000줄/10MiB PTY
 완전성 probe, clear 후 release 전체 process-tree retained-memory 분포, 4,000줄 scrollback
-상한의 release 측정이 있다. 같은 조건의 Windows Terminal 비교, runner timing, 자원 제한,
-지속 실행 자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품 계측을
-추가해도 된다는 뜻은 아니다.
+상한의 release 측정이 있다. 같은 release workload를 단일 탭 Windows Terminal과도
+비교한다. runner timing, 자원 제한, 지속 실행 자동화는 아직 없다. 이는 계획된 측정
+요구사항이며 구현 승인 전에 제품 계측을 추가해도 된다는 뜻은 아니다.
 
 ## 조사 근거
 

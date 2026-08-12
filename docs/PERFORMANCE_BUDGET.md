@@ -222,10 +222,11 @@ Windows PowerShell idle case, an authenticated editor-readiness marker,
 environment-gated accepted-and-rendered normal-input and bulk input-latency
 probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release
 whole-process-tree retained-memory distribution after clear, and a release
-measurement of the 4,000-row scrollback ceiling. It still lacks a matched
-Windows Terminal comparison, runner timing, resource limits, and endurance
-automation. These are planned measurement needs, not permission to add
-production instrumentation before implementation approval.
+measurement of the 4,000-row scrollback ceiling. The same release workload is
+also measured against a one-tab Windows Terminal baseline. It still lacks
+runner timing, resource limits, and endurance automation. These are planned
+measurement needs, not permission to add production instrumentation before
+implementation approval.
 
 ## Research basis
 
