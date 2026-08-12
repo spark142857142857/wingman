@@ -473,3 +473,71 @@ Windows Terminal: 3869.302, 3894.059, 3877.279
 Median 비율 1.2153x로 목표 2x와 release 상한 3x를 모두 통과했다. 사용자 Windows
 Terminal 설정을 바꾸거나 benchmark process·신호 파일을 남기지 않고 이 장비의
 Windows Terminal 대량 render 일치 비교 공백을 닫았다.
+
+## 2026-08-12: warm-cache release runner timing
+
+- Runner source: `d9ef6c557e31c9468d6df2ae41ab217be9ece4f6`
+- Harness와 수락 목표: `dc46478fd6b4a6194fa5be8b41f55e70ad9b96db`
+- OS: Microsoft Windows 11 Home `10.0.26200`
+- CPU: AMD Ryzen 7 9700X, physical 8 core, logical processor 16개
+- Power: Windows 균형 조정 (`381b4222-f694-41f0-9685-ff5bb260df2e`)
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`
+- Build: 최적화된 Cargo `release`
+
+실행 명령:
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
+```
+
+각 독립 실행은 고정 128바이트 LF record 819,200개로 정확히 100 MiB인 UTF-8 corpus,
+정확히 항목 20,000개인 tree, 역순의 고정 32바이트 sort record 200,000개가 든 비공개
+sandbox를 만든다. 측정하지 않는 pass로 각 작업을 warm-up한다. 이어지는 세 timed pass는
+실제 `wingman-runner`를 시작하고 one-shot broker로 typed request 하나를 가져와 데이터를
+처리하며 결과와 종료 상태를 검증한 뒤 sandbox 전체를 제거한다.
+
+`grep`은 100 MiB corpus 전체를 읽어 마지막 record의 고정 match 하나를 찾는다. `find`는
+항목 20,000개를 모두 출력하고 검증한다. `cat`은 renderer 비용을 제외하도록 100 MiB
+corpus의 정규화 출력을 redirect한다. `sort`는 200,000개 record를 모두 materialize하고
+redirect한다. Corpus 생성, warm-up, 결과 검증, 정리는 기록 시간 밖이며 broker fetch,
+process 시작, runner 검증, 파일 작업, 출력 완료, process 종료는 기록 시간 안이다.
+
+| 독립 분포 | `grep` median | `find` median | Redirect `cat` median | Redirect `sort` median |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 825.8 ms | 442.8 ms | 3,070.8 ms | 663.2 ms |
+| 2 | 832.3 ms | 439.0 ms | 3,081.2 ms | 653.7 ms |
+| 3 | 818.7 ms | 442.8 ms | 3,093.1 ms | 654.7 ms |
+| Outer median | 825.8 ms | 442.8 ms | 3,081.2 ms | 654.7 ms |
+| 수락 목표 | 1,000 ms | 535 ms | 3,700 ms | 790 ms |
+
+Outer-median throughput은 `grep` 121.09 MiB/s, `find` 45,166.9 entries/s, redirect
+`cat` 32.45 MiB/s, redirect `sort` 305,483.5 records/s였다. 수락 목표는 첫 outer
+median에 정책의 runner-throughput 회귀 조사선 20%를 더하고 올림한 값이다. 이제 ignored
+release test가 이 목표를 검사한다.
+
+원시 표본 (ms):
+
+```text
+분포 1
+grep: 825.849, 827.105, 824.290
+find: 446.221, 442.802, 436.071
+redirect cat: 3121.691, 3061.706, 3070.828
+redirect sort: 666.742, 663.203, 650.044
+
+분포 2
+grep: 813.251, 832.275, 838.572
+find: 439.243, 438.975, 438.469
+redirect cat: 3122.941, 3081.241, 3065.282
+redirect sort: 652.718, 656.612, 653.664
+
+분포 3
+grep: 841.868, 812.706, 818.675
+find: 438.766, 461.041, 442.828
+redirect cat: 3143.331, 3087.476, 3093.148
+redirect sort: 649.877, 656.727, 654.700
+```
+
+목표를 적용한 뒤 마지막 실행도 각각 median 813.5 ms, 438.6 ms, 3,057.6 ms,
+649.6 ms로 통과했고 sandbox는 남지 않았다. 이 결과로 재현 가능한 warm-cache runner
+timing seam을 닫았다. 이는 uncached 근거가 아니다. 진짜 uncached 분포에는 검증되지 않은
+system-cache 비우기 대신 사전에 만든 corpus와 controlled restart가 필요하다.

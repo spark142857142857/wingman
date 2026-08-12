@@ -505,3 +505,75 @@ The median ratio of 1.2153x passes both the 2x target and the 3x release
 ceiling. This closes the matched Windows Terminal bulk-render comparison on
 this machine without changing the user's Windows Terminal settings or leaving
 benchmark processes and signal files behind.
+
+## 2026-08-12: warmed-cache release runner timing
+
+- Runner source: `d9ef6c557e31c9468d6df2ae41ab217be9ece4f6`
+- Harness and accepted targets: `dc46478fd6b4a6194fa5be8b41f55e70ad9b96db`
+- OS: Microsoft Windows 11 Home `10.0.26200`
+- CPU: AMD Ryzen 7 9700X, 8 physical cores, 16 logical processors
+- Power: Windows Balanced (`381b4222-f694-41f0-9685-ff5bb260df2e`)
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`
+- Build: optimized Cargo `release`
+
+Command:
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
+```
+
+Each independent invocation creates a private sandbox containing an exact
+100 MiB UTF-8 corpus of 819,200 fixed 128-byte LF records, a tree with exactly
+20,000 entries, and 200,000 fixed 32-byte reverse-ordered sort records. An
+untimed pass warms each operation. Three timed passes then start the real
+`wingman-runner`, fetch one typed request through a one-shot broker, process the
+data, validate the result and exit status, and remove the entire sandbox.
+
+`grep` scans the full 100 MiB corpus for one fixed match in the final record.
+`find` emits and verifies all 20,000 entries. `cat` redirects normalized output
+from the 100 MiB corpus, excluding renderer cost. `sort` materializes and
+redirects all 200,000 records. Corpus creation, warm-up, result validation, and
+cleanup are outside the recorded interval; broker fetch, process startup,
+runner validation, file work, output completion, and process exit are inside.
+
+| Independent distribution | `grep` median | `find` median | Redirected `cat` median | Redirected `sort` median |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 825.8 ms | 442.8 ms | 3,070.8 ms | 663.2 ms |
+| 2 | 832.3 ms | 439.0 ms | 3,081.2 ms | 653.7 ms |
+| 3 | 818.7 ms | 442.8 ms | 3,093.1 ms | 654.7 ms |
+| Outer median | 825.8 ms | 442.8 ms | 3,081.2 ms | 654.7 ms |
+| Accepted target | 1,000 ms | 535 ms | 3,700 ms | 790 ms |
+
+Outer-median throughput was 121.09 MiB/s for `grep`, 45,166.9 entries/s for
+`find`, 32.45 MiB/s for redirected `cat`, and 305,483.5 records/s for redirected
+`sort`. Accepted targets are the first outer medians plus the policy's 20%
+runner-throughput regression line, rounded upward. The ignored release test now
+enforces those targets.
+
+Raw samples (ms):
+
+```text
+distribution 1
+grep: 825.849, 827.105, 824.290
+find: 446.221, 442.802, 436.071
+redirected cat: 3121.691, 3061.706, 3070.828
+redirected sort: 666.742, 663.203, 650.044
+
+distribution 2
+grep: 813.251, 832.275, 838.572
+find: 439.243, 438.975, 438.469
+redirected cat: 3122.941, 3081.241, 3065.282
+redirected sort: 652.718, 656.612, 653.664
+
+distribution 3
+grep: 841.868, 812.706, 818.675
+find: 438.766, 461.041, 442.828
+redirected cat: 3143.331, 3087.476, 3093.148
+redirected sort: 649.877, 656.727, 654.700
+```
+
+A final run after target enforcement also passed, with medians of 813.5 ms,
+438.6 ms, 3,057.6 ms, and 649.6 ms respectively. No sandbox remained. This
+closes the reproducible warmed-cache runner timing seam. It is not uncached
+evidence: a true uncached distribution requires a controlled restart and a
+pre-existing corpus, rather than an unverified system-cache purge.

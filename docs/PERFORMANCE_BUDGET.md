@@ -149,6 +149,13 @@ must remain cancellable, obey memory/resource limits, and not busy-poll while
 idle. `tail -f` must satisfy the normal idle CPU ceiling when the file is
 unchanged.
 
+On the reference machine, the warmed-cache median targets, including broker
+fetch and runner process startup, are: `grep` <= 1,000 ms, `find` <= 535 ms,
+redirected `cat` <= 3,700 ms, and redirected `sort` <= 790 ms. These are the
+rounded 20% regression lines above the first accepted outer medians. Uncached
+targets require a separately recorded controlled-restart run; an ordinary test
+must not claim to purge the Windows system file cache.
+
 Reproducible component measurements are recorded in
 [PERFORMANCE_BASELINES.md](PERFORMANCE_BASELINES.md); they do not replace the
 whole process-tree release gate.
@@ -224,9 +231,10 @@ probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release
 whole-process-tree retained-memory distribution after clear, and a release
 measurement of the 4,000-row scrollback ceiling. The same release workload is
 also measured against a one-tab Windows Terminal baseline. It still lacks
-runner timing, resource limits, and endurance automation. These are planned
-measurement needs, not permission to add production instrumentation before
-implementation approval.
+controlled-restart uncached runner timing, remaining resource-limit release
+measurements, and endurance automation. These are planned measurement needs,
+not permission to add production instrumentation before implementation
+approval.
 
 ## Research basis
 

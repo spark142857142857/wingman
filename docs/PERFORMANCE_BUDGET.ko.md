@@ -138,6 +138,12 @@ storage 속도와 관계없이 모든 경우가 취소 가능하고 자원 제�
 busy polling하지 않아야 한다. 파일 변화가 없는 `tail -f`는 일반 idle CPU 상한을
 충족해야 한다.
 
+기준 장비에서 broker fetch와 runner process 시작을 포함한 warm-cache median 목표는
+`grep` 1,000 ms 이하, `find` 535 ms 이하, redirect `cat` 3,700 ms 이하, redirect
+`sort` 790 ms 이하다. 첫 수락 outer median보다 20% 높은 회귀 조사선을 반올림한 값이다.
+Uncached 목표는 별도로 기록한 controlled-restart 실행이 필요하며, 일반 테스트가 Windows
+system file cache를 비웠다고 주장해서는 안 된다.
+
 재현 가능한 component 측정은 [성능 기준 측정 기록](PERFORMANCE_BASELINES.ko.md)에
 보관하며 전체 process-tree 배포 게이트를 대신하지 않는다.
 
@@ -203,8 +209,9 @@ process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 �
 수락·렌더 startup 및 대용량 출력 중 입력 latency probe, 결정적 100,000줄/10MiB PTY
 완전성 probe, clear 후 release 전체 process-tree retained-memory 분포, 4,000줄 scrollback
 상한의 release 측정이 있다. 같은 release workload를 단일 탭 Windows Terminal과도
-비교한다. runner timing, 자원 제한, 지속 실행 자동화는 아직 없다. 이는 계획된 측정
-요구사항이며 구현 승인 전에 제품 계측을 추가해도 된다는 뜻은 아니다.
+비교한다. controlled-restart uncached runner timing, 남은 자원 제한 release 측정,
+지속 실행 자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품
+계측을 추가해도 된다는 뜻은 아니다.
 
 ## 조사 근거
 
