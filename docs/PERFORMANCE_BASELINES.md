@@ -255,6 +255,88 @@ have elapsed. The probe flag is removed from the PowerShell child environment.
 The median was 4,566.2 ms, and all three runs preserved every ordered line and
 kept the GUI and integrated PowerShell process alive. This closes the
 deterministic 100,000-line/10-MiB completeness seam. It is not the complete bulk
-performance gate: matched Windows Terminal elapsed time, at least 100
-input-latency samples during output, retained-memory recovery after clear, and
-an explicit scrollback ceiling measurement remain pending.
+performance gate: matched Windows Terminal elapsed time, retained-memory
+recovery after clear, and an explicit scrollback ceiling measurement remain
+pending.
+
+## 2026-08-12: release bulk-output input-latency distribution
+
+- App source: `6089a96cb5aab99797852ddd36dbe13b22752e49`
+- Harness introduced at: `3a40d001ecd8d8a5f54944830efceff06c53f34a`
+- Build and machine: unchanged from the deterministic bulk-render precheck
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_input_latency.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 60
+```
+
+The environment-gated probe divides the same 100,000-line, 11,900,000-byte
+PowerShell workload into 100 ordered 1,000-line bursts. At each sample boundary,
+the frontend takes a monotonic timestamp immediately before sending one fixed
+character through xterm's normal user-input event. The character passes through
+the normal Tauri command, Rust terminal session, PTY, and PowerShell console
+input. PowerShell consumes it without echoing and emits an indexed response
+marker; completion is recorded only after xterm parses that PTY chunk and two
+animation frames elapse. The next output burst then continues. Indexed markers
+make missing, repeated, and out-of-order samples fail closed. Rust accepts
+exactly 100 finite bounded samples, independently recomputes the summary, and
+exposes the raw distribution to the local black-box harness. The probe flag is
+removed from the PowerShell child environment.
+
+| Independent run | Median | p95 (nearest-rank) | Maximum | Result |
+| --- | ---: | ---: | ---: | --- |
+| 1 | 41.0 ms | 47.8 ms | 48.6 ms | Pass |
+| 2 | 40.6 ms | 48.4 ms | 48.9 ms | Pass |
+| 3 | 41.1 ms | 48.1 ms | 48.8 ms | Pass |
+
+Raw samples, run 1 (ms):
+
+```text
+43.2, 47.2, 32.0, 37.2, 42.6, 47.0, 35.4, 40.1, 44.3, 31.8,
+37.8, 41.4, 46.3, 33.9, 37.9, 42.0, 46.9, 35.5, 40.1, 42.9,
+46.9, 35.8, 39.3, 43.6, 46.5, 33.7, 37.5, 41.8, 46.5, 33.8,
+38.6, 42.1, 46.9, 34.3, 37.8, 40.8, 44.3, 48.6, 37.0, 41.6,
+45.7, 32.4, 37.5, 42.6, 46.2, 33.9, 38.0, 42.5, 46.8, 34.9,
+39.4, 42.0, 46.5, 34.6, 38.8, 43.1, 47.8, 36.0, 40.6, 43.9,
+46.9, 31.9, 37.4, 42.5, 47.9, 36.1, 41.2, 46.2, 35.2, 39.9,
+44.2, 47.8, 35.8, 39.3, 42.8, 47.2, 35.6, 40.4, 45.0, 47.8,
+36.1, 39.6, 44.1, 48.0, 36.9, 41.7, 46.7, 32.3, 38.6, 42.3,
+45.6, 34.3, 39.6, 45.4, 32.2, 37.1, 42.6, 47.1, 35.2, 40.4
+```
+
+Raw samples, run 2 (ms):
+
+```text
+41.3, 45.3, 32.3, 37.2, 40.1, 44.7, 32.1, 37.2, 41.5, 44.0,
+48.7, 36.2, 41.8, 45.8, 32.2, 37.5, 42.1, 46.6, 35.2, 39.2,
+43.7, 48.1, 34.7, 39.1, 44.3, 48.3, 35.5, 39.1, 43.7, 48.4,
+35.8, 39.8, 45.4, 32.1, 37.6, 41.2, 46.0, 48.8, 36.5, 39.6,
+43.6, 48.4, 35.6, 40.2, 43.6, 48.9, 35.6, 40.0, 43.8, 48.3,
+36.3, 41.5, 45.6, 34.5, 38.1, 42.3, 46.7, 48.8, 37.8, 42.5,
+46.8, 34.3, 39.8, 45.7, 31.8, 38.0, 42.6, 46.5, 35.4, 39.0,
+43.7, 32.0, 36.2, 41.1, 45.8, 32.1, 37.4, 40.7, 45.7, 33.9,
+38.1, 43.2, 46.8, 35.0, 39.0, 46.0, 43.2, 36.1, 42.6, 46.2,
+33.9, 37.7, 41.2, 45.7, 31.9, 37.3, 40.4, 43.6, 34.1, 38.3
+```
+
+Raw samples, run 3 (ms):
+
+```text
+46.1, 32.3, 36.2, 39.2, 43.4, 48.7, 36.1, 40.2, 43.9, 34.1,
+39.0, 43.8, 46.4, 32.3, 38.7, 43.3, 47.4, 34.7, 39.7, 43.0,
+46.7, 35.5, 38.3, 42.5, 47.4, 35.2, 38.7, 42.3, 45.5, 32.2,
+36.9, 41.3, 46.0, 35.2, 40.8, 48.1, 35.0, 39.4, 43.8, 31.8,
+38.2, 42.0, 44.8, 31.6, 37.8, 42.2, 46.3, 35.8, 40.1, 43.0,
+47.5, 32.0, 38.3, 43.2, 47.7, 35.6, 38.5, 42.6, 46.9, 34.8,
+39.7, 43.8, 48.3, 36.6, 42.2, 45.8, 34.3, 37.7, 42.3, 46.6,
+33.8, 37.8, 43.3, 47.5, 35.4, 39.7, 43.3, 48.0, 35.4, 39.9,
+42.8, 47.5, 35.4, 39.6, 44.5, 48.8, 36.8, 41.9, 45.8, 34.1,
+37.7, 41.5, 45.0, 48.6, 37.1, 40.6, 43.9, 48.7, 37.5, 41.7
+```
+
+All three independent distributions pass the 200 ms p95 bulk-output input
+latency ceiling with more than 4x headroom, while the GUI and integrated
+PowerShell process remain alive. This closes the PowerShell measurement seam on
+this machine. The matched Windows Terminal comparison, retained-memory recovery,
+scrollback ceiling, and the separate `cmd.exe` release matrix remain pending.

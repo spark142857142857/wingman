@@ -218,13 +218,13 @@ implementation gate; the performance contract does not authorize it.
 ## Prototype gaps before measurement
 
 The prototype now has release-only whole-process-tree accounting for the settled
-Windows PowerShell idle case, an authenticated editor-readiness marker, an
-environment-gated accepted-and-rendered normal-input startup probe, and a
-deterministic 100,000-line/10-MiB PTY completeness probe. It still lacks bulk
-input-latency and retained-memory distributions, matched Windows Terminal
-comparison, runner timing, resource limits, and endurance automation. These are
-planned measurement needs, not permission to add production instrumentation
-before implementation approval.
+Windows PowerShell idle case, an authenticated editor-readiness marker,
+environment-gated accepted-and-rendered normal-input and bulk input-latency
+probes, and a deterministic 100,000-line/10-MiB PTY completeness probe. It still
+lacks a retained-memory distribution, matched Windows Terminal comparison,
+runner timing, resource limits, and endurance automation. These are planned
+measurement needs, not permission to add production instrumentation before
+implementation approval.
 
 ## Research basis
 
