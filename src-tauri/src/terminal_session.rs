@@ -86,6 +86,10 @@ impl TerminalSessionV1 {
         self.pending_output.clear();
     }
 
+    pub fn editor_ready(&self) -> bool {
+        self.editing_reliable && self.input_reliable && !self.readiness_cycle_dirty
+    }
+
     pub fn ingest_pty_output(&mut self, chunk: &str) -> String {
         if !self.accept_pty_readiness {
             return chunk.to_string();

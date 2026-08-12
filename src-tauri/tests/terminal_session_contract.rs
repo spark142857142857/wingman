@@ -10,10 +10,37 @@ use wingman_lib::transport::{
 fn a_new_session_cannot_prepare_before_a_valid_prompt_marker() {
     let mut session = TerminalSessionV1::new(501, ActiveShell::WindowsPowerShell);
 
+    assert!(!session.editor_ready());
     assert_eq!(
         session.prepare_submission("pwd", true),
         Err(TerminalPrepareErrorV1::PromptNotValidated)
     );
+}
+
+#[test]
+fn editor_readiness_is_observable_only_while_the_verified_editor_cycle_is_clean() {
+    let mut session = TerminalSessionV1::new(514, ActiveShell::WindowsPowerShell);
+    let nonce = session.integration_nonce().to_string();
+
+    assert!(!session.editor_ready());
+    assert!(session.apply_editor_readiness(&readiness(&nonce, 1)));
+    assert!(session.editor_ready());
+
+    let actions = session.handle_terminal_input("pwd\r", false);
+    assert!(matches!(
+        actions.last(),
+        Some(TerminalInputActionV1::Prepared {
+            decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                decision: FrontendDecisionKindV1::PassThrough { raw_line },
+                ..
+            },
+            editor: EditorSnapshotV1 {
+                character_count: 3,
+                cursor: 3,
+            },
+        }) if raw_line == "pwd"
+    ));
+    assert!(!session.editor_ready());
 }
 
 #[test]
