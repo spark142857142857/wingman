@@ -1,7 +1,14 @@
 use std::fs;
+use std::fs::OpenOptions;
+use std::mem::MaybeUninit;
+use std::os::windows::fs::OpenOptionsExt;
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
+use windows_sys::Win32::Storage::FileSystem::{
+    GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+};
 use wingman_lib::interpreter::{
     ExecutionPlanV1, ExistingDestinationPolicyV1, PreparedRequestKindV1, PreparedRequestV1,
     StagePlanV1,
@@ -198,6 +205,16 @@ fn actual_cross_volume_move_commits_then_removes_the_source() {
     let destination = destination_sandbox.join("destination.txt");
     fs::write(&source, b"cross-volume").unwrap();
 
+    let source_volume = volume_serial_number(&source, false);
+    let destination_volume = volume_serial_number(&destination_sandbox, true);
+    if source_volume == destination_volume {
+        cleanup(&source_sandbox);
+        fs::remove_dir_all(&destination_sandbox).unwrap();
+        panic!(
+            "WINGMAN_TEST_SECOND_VOLUME must resolve to a distinct volume; both operands use {source_volume:#010x}"
+        );
+    }
+
     let outcome = execute_prepared(request(
         &source,
         &destination,
@@ -216,6 +233,27 @@ fn actual_cross_volume_move_commits_then_removes_the_source() {
     cleanup(&source_sandbox);
     assert!(destination_sandbox.starts_with(&second_root));
     fs::remove_dir_all(&destination_sandbox).unwrap();
+}
+
+fn volume_serial_number(path: &Path, directory: bool) -> u32 {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    if directory {
+        options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS);
+    }
+    let handle = options.open(path).unwrap();
+    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+    let succeeded = unsafe {
+        GetFileInformationByHandle(handle.as_raw_handle() as _, information.as_mut_ptr())
+    };
+    assert_ne!(
+        succeeded,
+        0,
+        "inspect volume for {}: {}",
+        path.display(),
+        std::io::Error::last_os_error()
+    );
+    unsafe { information.assume_init().dwVolumeSerialNumber }
 }
 
 fn request(
