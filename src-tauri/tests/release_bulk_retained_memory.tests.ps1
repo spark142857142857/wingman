@@ -50,6 +50,24 @@ function Get-TreePrivateWorkingSetMiB {
     return [double]$privateWorkingSet / 1MB
 }
 
+function Get-TreePrivateWorkingSetByProcess {
+    param([uint32[]]$ProcessIds)
+
+    $wanted = [System.Collections.Generic.HashSet[uint32]]::new()
+    foreach ($processId in $ProcessIds) {
+        [void]$wanted.Add([uint32]$processId)
+    }
+    return @(Get-CimInstance Win32_PerfRawData_PerfProc_Process | Where-Object {
+        $wanted.Contains([uint32]$_.IDProcess)
+    } | ForEach-Object {
+        [pscustomobject]@{
+            ProcessId = [uint32]$_.IDProcess
+            Name = $_.Name
+            PrivateWorkingSetMiB = [double]$_.WorkingSetPrivate / 1MB
+        }
+    } | Sort-Object -Property PrivateWorkingSetMiB -Descending)
+}
+
 function Get-Median {
     param([double[]]$Values)
 
@@ -140,12 +158,14 @@ try {
 
     Start-Sleep -Seconds $BaselineSettleSeconds
     $baseline = Measure-PrivateWorkingSet -Process $app -Count $SampleCount -IntervalSeconds $SampleIntervalSeconds -ExpectedTitle "Wingman - Retention Baseline"
+    $baselineByProcess = Get-TreePrivateWorkingSetByProcess -ProcessIds @(Get-ProcessTreeIds -RootProcessId $app.Id)
 
     Wait-ForTitle -Process $app -Expected "Wingman - Retention Cleared" -TimeoutSeconds $PhaseTimeoutSeconds
     Start-Sleep -Seconds $PostClearSettleSeconds
     $retained = Measure-PrivateWorkingSet -Process $app -Count $SampleCount -IntervalSeconds $SampleIntervalSeconds -ExpectedTitle "Wingman - Retention Cleared"
 
     $knownTreeIds = @(Get-ProcessTreeIds -RootProcessId $app.Id)
+    $retainedByProcess = Get-TreePrivateWorkingSetByProcess -ProcessIds $knownTreeIds
     if ($knownTreeIds -notcontains [uint32]$shell.ProcessId) {
         throw "The active PowerShell PTY session left the Wingman process tree."
     }
@@ -157,11 +177,13 @@ try {
     $result = [ordered]@{
         BaselinePrivateWorkingSetMiB = $baseline
         BaselineMedianMiB = $baselineMedian
+        BaselineByProcess = $baselineByProcess
         RetainedPrivateWorkingSetMiB = $retained
         RetainedMedianMiB = $retainedMedian
         RetainedMaximumMiB = $retainedMaximum
         RetainedMedianGrowthMiB = $retainedMedian - $baselineMedian
         RetainedMaximumGrowthMiB = $maximumGrowth
+        RetainedByProcess = $retainedByProcess
     }
     [pscustomobject]$result | ConvertTo-Json -Depth 3
 
