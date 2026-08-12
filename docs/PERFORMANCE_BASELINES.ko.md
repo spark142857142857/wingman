@@ -184,3 +184,26 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/
 기록한 20회는 모두 완료됐지만 모든 실행이 warm hard ceiling 1.5초를 4배 넘게
 초과했다. 따라서 warm startup gate는 실패한다. Cold-cache 측정과 ETW 원인 귀속은
 별도 후속 작업이며, 어느 쪽도 이미 관측된 warm hard-ceiling 실패를 바꾸지는 않는다.
+
+### 중복 startup cwd probe 제거 후 재검증
+
+Commit `8ff27ae38f3f33c8133546029c97a6a985732937` 뒤 같은 release build와 3+20
+절차를 다시 실행했다. Startup은 실제 PTY 전에 cwd 확인용 PowerShell을 별도로 동기
+실행하고 이후 cwd를 다시 조회하는 대신, `start_shell`이 반환한 cwd를 바로 사용한다.
+
+3회 warmup은 830.2, 789.1, 775.4 ms였다. 기록한 20회 표본은 다음과 같다.
+
+```text
+795.5, 813.0, 729.7, 761.4, 728.3, 782.3, 792.8, 791.9, 813.0, 765.1,
+804.9, 782.4, 783.3, 775.9, 778.1, 750.9, 819.2, 749.1, 799.3, 804.0
+```
+
+| 통계 | 수정 전 | 수정 후 | 변화 |
+| --- | ---: | ---: | ---: |
+| Median | 6,217.4 ms | 782.9 ms | -87.4% |
+| p95 (nearest-rank) | 6,246.9 ms | 813.0 ms | -87.0% |
+| Maximum | 6,265.4 ms | 819.2 ms | -86.9% |
+
+20회 모두 warm hard ceiling 1.5초를 통과한다. Median은 목표 0.8초 아래지만 p95는
+목표를 13.0 ms 초과하므로, 추가 개선은 측정 없는 재작성보다 ETW 원인 귀속을 먼저
+해야 한다. 통제된 5회 cold 분포는 아직 남아 있다.

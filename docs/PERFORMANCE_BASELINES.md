@@ -198,3 +198,28 @@ All 20 recorded runs completed, but every run exceeded the 1.5-second warm
 hard ceiling by more than four times. The warm startup gate therefore fails.
 Cold-cache measurement and ETW attribution remain separate follow-up work;
 neither can change this already-observed warm hard-ceiling failure.
+
+### Revalidation after removing redundant startup cwd probes
+
+The same release build and 3+20 procedure was repeated after commit
+`8ff27ae38f3f33c8133546029c97a6a985732937`. Startup now uses the cwd returned
+by `start_shell` instead of synchronously spawning a separate PowerShell cwd
+probe before the real PTY and then querying cwd again afterward.
+
+The three warmups were 830.2, 789.1, and 775.4 ms. The 20 recorded samples were:
+
+```text
+795.5, 813.0, 729.7, 761.4, 728.3, 782.3, 792.8, 791.9, 813.0, 765.1,
+804.9, 782.4, 783.3, 775.9, 778.1, 750.9, 819.2, 749.1, 799.3, 804.0
+```
+
+| Statistic | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Median | 6,217.4 ms | 782.9 ms | -87.4% |
+| p95 (nearest-rank) | 6,246.9 ms | 813.0 ms | -87.0% |
+| Maximum | 6,265.4 ms | 819.2 ms | -86.9% |
+
+All 20 runs now pass the 1.5-second warm hard ceiling. The median is below the
+0.8-second target, while p95 misses that target by 13.0 ms; further attribution
+should use ETW rather than another unprofiled rewrite. The controlled five-cold
+distribution is still pending.
