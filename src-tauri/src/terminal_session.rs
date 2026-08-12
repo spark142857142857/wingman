@@ -44,6 +44,7 @@ pub struct TerminalSessionV1 {
     integration_nonce: String,
     expected_sequence: u64,
     editing_reliable: bool,
+    verified_prompt_observed: bool,
     readiness_cycle_dirty: bool,
     accept_pty_readiness: bool,
     interpreter: Option<InterpreterSession>,
@@ -64,6 +65,7 @@ impl TerminalSessionV1 {
             integration_nonce: Uuid::new_v4().as_simple().to_string(),
             expected_sequence: 1,
             editing_reliable: false,
+            verified_prompt_observed: false,
             readiness_cycle_dirty: false,
             accept_pty_readiness: true,
             interpreter: None,
@@ -88,6 +90,10 @@ impl TerminalSessionV1 {
 
     pub fn editor_ready(&self) -> bool {
         self.editing_reliable && self.input_reliable && !self.readiness_cycle_dirty
+    }
+
+    pub fn verified_prompt_observed(&self) -> bool {
+        self.verified_prompt_observed
     }
 
     pub fn ingest_pty_output(&mut self, chunk: &str) -> String {
@@ -323,6 +329,7 @@ impl TerminalSessionV1 {
             || frame.shell_depth != 0
             || frame.location_kind != EditorLocationKindV1::FileSystem
             || frame.adapter_capability != EditorAdapterCapabilityV1::PsReadLineReplaceV1
+            || !self.input_escape.is_empty()
         {
             return false;
         }
@@ -339,6 +346,7 @@ impl TerminalSessionV1 {
             ));
         }
         self.editing_reliable = true;
+        self.verified_prompt_observed = true;
         self.readiness_cycle_dirty = false;
         self.input_buffer.clear();
         self.input_buffer_bytes = 0;
@@ -351,12 +359,25 @@ impl TerminalSessionV1 {
 
     fn record_unvalidated_input(&mut self, data: &str) {
         for character in data.chars() {
+            if !self.input_escape.is_empty() {
+                self.input_escape.push(character);
+                if input_escape_complete(&self.input_escape)
+                    || self.input_escape.len() > MAX_INPUT_ESCAPE_BYTES
+                {
+                    let sequence = std::mem::take(&mut self.input_escape);
+                    if !focus_reporting_sequence(&sequence) {
+                        self.readiness_cycle_dirty = true;
+                    }
+                }
+                continue;
+            }
             if character == '\n' && self.ignore_next_line_feed {
                 self.ignore_next_line_feed = false;
                 continue;
             }
             self.ignore_next_line_feed = false;
             match character {
+                ESCAPE => self.input_escape.push(character),
                 '\r' => {
                     self.expected_sequence = self.expected_sequence.saturating_add(1);
                     self.readiness_cycle_dirty = false;
@@ -398,10 +419,15 @@ impl TerminalSessionV1 {
                     self.input_buffer_bytes -= removed.len_utf8();
                 }
             }
+            "\u{1b}[I" | "\u{1b}[O" => {}
             _ => return false,
         }
         true
     }
+}
+
+fn focus_reporting_sequence(sequence: &str) -> bool {
+    matches!(sequence, "\u{1b}[I" | "\u{1b}[O")
 }
 
 fn push_forward(actions: &mut Vec<TerminalInputActionV1>, data: String) {

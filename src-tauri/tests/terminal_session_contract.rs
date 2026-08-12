@@ -23,8 +23,10 @@ fn editor_readiness_is_observable_only_while_the_verified_editor_cycle_is_clean(
     let nonce = session.integration_nonce().to_string();
 
     assert!(!session.editor_ready());
+    assert!(!session.verified_prompt_observed());
     assert!(session.apply_editor_readiness(&readiness(&nonce, 1)));
     assert!(session.editor_ready());
+    assert!(session.verified_prompt_observed());
 
     let actions = session.handle_terminal_input("pwd\r", false);
     assert!(matches!(
@@ -41,6 +43,7 @@ fn editor_readiness_is_observable_only_while_the_verified_editor_cycle_is_clean(
         }) if raw_line == "pwd"
     ));
     assert!(!session.editor_ready());
+    assert!(session.verified_prompt_observed());
 }
 
 #[test]
@@ -294,6 +297,40 @@ fn readiness_arriving_after_any_forwarded_input_cannot_upgrade_that_editor_cycle
     );
 
     assert!(session.apply_editor_readiness(&readiness(&nonce, 2)));
+    assert!(matches!(
+        session.handle_terminal_input("pwd\r", true).last(),
+        Some(TerminalInputActionV1::Prepared { .. })
+    ));
+}
+
+#[test]
+fn focus_reporting_before_readiness_does_not_dirty_the_editor_cycle() {
+    let mut session = TerminalSessionV1::new(515, ActiveShell::WindowsPowerShell);
+    let nonce = session.integration_nonce().to_string();
+
+    assert_eq!(
+        session.handle_terminal_input("\u{1b}[I", true),
+        vec![TerminalInputActionV1::Forward {
+            data: "\u{1b}[I".to_string(),
+        }]
+    );
+    assert!(session.apply_editor_readiness(&readiness(&nonce, 1)));
+    assert!(session.editor_ready());
+}
+
+#[test]
+fn focus_reporting_preserves_a_verified_editor_buffer() {
+    let mut session = TerminalSessionV1::new(516, ActiveShell::WindowsPowerShell);
+    let nonce = session.integration_nonce().to_string();
+    assert!(session.apply_editor_readiness(&readiness(&nonce, 1)));
+
+    assert_eq!(
+        session.handle_terminal_input("\u{1b}[I\u{1b}[O", true),
+        vec![TerminalInputActionV1::Forward {
+            data: "\u{1b}[I\u{1b}[O".to_string(),
+        }]
+    );
+    assert!(session.editor_ready());
     assert!(matches!(
         session.handle_terminal_input("pwd\r", true).last(),
         Some(TerminalInputActionV1::Prepared { .. })
