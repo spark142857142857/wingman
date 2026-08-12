@@ -122,10 +122,15 @@ async function startSession(shell: ShellKind) {
   const sessionId = ++activeSessionId;
   term.reset();
   const { cols, rows } = term;
-  await invoke("start_shell", { shell, cols, rows, compat, clientSessionId: sessionId });
+  const session = await invoke<{ shell: string; cwd: string }>("start_shell", {
+    shell,
+    cols,
+    rows,
+    compat,
+    clientSessionId: sessionId,
+  });
   activeShell = shell;
-  updateStatus();
-  await refreshCwd();
+  updateStatus(session.cwd);
   term.focus();
   if (shell === "powershell") void observeEditorReadiness(sessionId);
 }
@@ -279,5 +284,5 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-updateStatus(await invoke<string>("get_cwd").catch(() => "D:\\"));
+updateStatus();
 await startSession("powershell");
