@@ -17,6 +17,7 @@ use transport::{EditorReadinessBrokerV1, SessionBrokerV1};
 
 const PERFORMANCE_INPUT_ECHO_PROBE_ENV: &str = "WINGMAN_PERF_INPUT_ECHO_PROBE";
 const PERFORMANCE_BULK_OUTPUT_PROBE_ENV: &str = "WINGMAN_PERF_BULK_OUTPUT_PROBE";
+const PERFORMANCE_BULK_LATENCY_PROBE_ENV: &str = "WINGMAN_PERF_BULK_LATENCY_PROBE";
 
 pub mod app_launch;
 pub mod catalog;
@@ -106,6 +107,7 @@ struct AppState {
     session: Mutex<Option<PtySession>>,
     performance_input_echo_probe: bool,
     performance_bulk_output_probe: bool,
+    performance_bulk_latency_probe: bool,
 }
 
 static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
@@ -120,6 +122,11 @@ static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
             .ok()
             .as_deref(),
     ),
+    performance_bulk_latency_probe: performance_input_echo_probe_enabled(
+        std::env::var(PERFORMANCE_BULK_LATENCY_PROBE_ENV)
+            .ok()
+            .as_deref(),
+    ),
 });
 
 fn performance_input_echo_probe_enabled(value: Option<&str>) -> bool {
@@ -129,6 +136,7 @@ fn performance_input_echo_probe_enabled(value: Option<&str>) -> bool {
 fn remove_performance_probe_environment(cmd: &mut CommandBuilder) {
     cmd.env_remove(PERFORMANCE_INPUT_ECHO_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_BULK_OUTPUT_PROBE_ENV);
+    cmd.env_remove(PERFORMANCE_BULK_LATENCY_PROBE_ENV);
 }
 
 fn terminal_pty_size(cols: u16, rows: u16) -> PtySize {
@@ -547,6 +555,20 @@ fn performance_bulk_output_probe(client_session_id: u64) -> Result<PerformancePr
 }
 
 #[tauri::command]
+fn performance_bulk_latency_probe(
+    client_session_id: u64,
+) -> Result<PerformanceProbeResult, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = guard
+        .as_ref()
+        .is_some_and(|session| session.id == client_session_id);
+    Ok(PerformanceProbeResult {
+        accepted,
+        enabled: accepted && APP_STATE.performance_bulk_latency_probe,
+    })
+}
+
+#[tauri::command]
 fn mark_performance_input_echo(app: AppHandle, client_session_id: u64) -> Result<bool, String> {
     let guard = APP_STATE.session.lock();
     let accepted = APP_STATE.performance_input_echo_probe
@@ -578,6 +600,47 @@ fn mark_performance_bulk_output(app: AppHandle, client_session_id: u64) -> Resul
         }
     }
     Ok(accepted)
+}
+
+#[tauri::command]
+fn mark_performance_bulk_latency(
+    app: AppHandle,
+    client_session_id: u64,
+    samples_ms: Vec<f64>,
+) -> Result<bool, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = APP_STATE.performance_bulk_latency_probe
+        && guard
+            .as_ref()
+            .is_some_and(|session| session.id == client_session_id);
+    if !accepted {
+        return Ok(false);
+    }
+    if samples_ms.len() != 100
+        || samples_ms
+            .iter()
+            .any(|sample| !sample.is_finite() || !(0.0..=60_000.0).contains(sample))
+    {
+        return Err("invalid bulk input-latency distribution".to_string());
+    }
+
+    let mut sorted = samples_ms.clone();
+    sorted.sort_by(f64::total_cmp);
+    let median = (sorted[49] + sorted[50]) / 2.0;
+    let p95 = sorted[94];
+    let maximum = sorted[99];
+    let raw = samples_ms
+        .iter()
+        .map(|sample| format!("{sample:.1}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let title = format!("Wingman - Bulk Latency {median:.1} {p95:.1} {maximum:.1}|{raw}");
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_title(&title)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(true)
 }
 
 #[tauri::command]
@@ -651,8 +714,10 @@ pub fn run() {
             poll_shell_readiness,
             performance_input_echo_probe,
             performance_bulk_output_probe,
+            performance_bulk_latency_probe,
             mark_performance_input_echo,
             mark_performance_bulk_output,
+            mark_performance_bulk_latency,
             write_native_paste,
             handle_terminal_input,
             resize_shell
@@ -681,9 +746,11 @@ mod tests {
         let mut command = CommandBuilder::new("cmd.exe");
         command.env(PERFORMANCE_INPUT_ECHO_PROBE_ENV, "1");
         command.env(PERFORMANCE_BULK_OUTPUT_PROBE_ENV, "1");
+        command.env(PERFORMANCE_BULK_LATENCY_PROBE_ENV, "1");
         remove_performance_probe_environment(&mut command);
         assert_eq!(command.get_env(PERFORMANCE_INPUT_ECHO_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_OUTPUT_PROBE_ENV), None);
+        assert_eq!(command.get_env(PERFORMANCE_BULK_LATENCY_PROBE_ENV), None);
     }
 
     #[test]

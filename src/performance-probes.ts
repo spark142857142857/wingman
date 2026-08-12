@@ -13,10 +13,28 @@ const bulkCommand =
   '[Console]::Out.Write($s+"`r`n");' +
   'for($i=0;$i -lt 100000;$i++){[Console]::Out.Write(("{0:D6}:{1}`r`n" -f $i,$p))};' +
   '[Console]::Out.Write($e+"`r`n")\r';
+const latencyEnd = "__WINGMAN_LATENCY_END__\r\n";
+const latencyMarkerCarryLength =
+  "__WINGMAN_LATENCY_READY_000__\r\n".length - 1;
+const latencyCommand =
+  "$p=([char]0xe9).ToString()*55;" +
+  "$r='__WINGMAN_LATENCY_'+'READY_';$a='__WINGMAN_LATENCY_'+'ECHO_';" +
+  "$z='__WINGMAN_LATENCY_'+'END__';" +
+  'for($s=0;$s -lt 100;$s++){for($l=0;$l -lt 1000;$l++){' +
+  '$i=$s*1000+$l;[Console]::Out.Write(("{0:D6}:{1}`r`n" -f $i,$p))};' +
+  '[Console]::Out.Write((($r+"{0:D3}__`r`n") -f $s));' +
+  'while(-not [Console]::KeyAvailable){Start-Sleep -Milliseconds 1};' +
+  '[void][Console]::ReadKey($true);' +
+  '[Console]::Out.Write((($a+"{0:D3}__`r`n") -f $s))};' +
+  '[Console]::Out.Write($z+"`r`n")\r';
 
-type ProbeKind = "input-echo" | "bulk-output";
+type ProbeKind = "input-echo" | "bulk-output" | "bulk-latency";
 type BulkState = "waiting-start" | "body" | "complete" | "invalid";
 type VtState = "ground" | "escape" | "csi" | "string" | "string-escape";
+type LatencyObservation = {
+  echoIndexes: number[];
+  endObserved: boolean;
+};
 
 type ProbeAvailability = {
   accepted: boolean;
@@ -26,10 +44,17 @@ type ProbeAvailability = {
 export class PerformanceProbe {
   private observed = false;
   private bulkState: BulkState = "waiting-start";
-  private carry = "";
+  private bulkCarry = "";
   private bodyLength = 0;
   private bodyHash = 0x811c9dc5;
   private vtState: VtState = "ground";
+  private latencyCarry = "";
+  private nextLatencyReady = 0;
+  private nextLatencyEcho = 0;
+  private readonly latencyStarts = new Map<number, number>();
+  private readonly latencySamples: number[] = [];
+  private latencyEndSeen = false;
+  private latencyInvalid = false;
 
   private constructor(
     private readonly sessionId: number,
@@ -42,6 +67,16 @@ export class PerformanceProbe {
     terminal: Terminal,
     isCurrentSession: () => boolean,
   ): Promise<PerformanceProbe | null> {
+    const latency = await queryAvailability(
+      "performance_bulk_latency_probe",
+      sessionId,
+    );
+    if (latency.accepted && latency.enabled && isCurrentSession()) {
+      const probe = new PerformanceProbe(sessionId, "bulk-latency", terminal);
+      terminal.input(latencyCommand, true);
+      return probe;
+    }
+
     const bulk = await queryAvailability(
       "performance_bulk_output_probe",
       sessionId,
@@ -66,6 +101,11 @@ export class PerformanceProbe {
 
   write(sessionId: number, data: string): boolean {
     if (sessionId !== this.sessionId || this.observed) return false;
+    if (this.kind === "bulk-latency") {
+      const observation = this.observeLatencyOutput(data);
+      this.terminal.write(data, () => this.checkRenderedLatency(observation));
+      return true;
+    }
     if (this.kind === "bulk-output") this.observeBulkOutput(data);
     this.terminal.write(data, () => this.checkRenderedCompletion());
     return true;
@@ -95,12 +135,12 @@ export class PerformanceProbe {
   private observeBulkOutput(data: string) {
     if (this.bulkState === "complete" || this.bulkState === "invalid") return;
 
-    let input = this.carry + data;
-    this.carry = "";
+    let input = this.bulkCarry + data;
+    this.bulkCarry = "";
     if (this.bulkState === "waiting-start") {
       const markerIndex = input.indexOf(bulkStart);
       if (markerIndex < 0) {
-        this.carry = input.slice(-(bulkStart.length - 1));
+        this.bulkCarry = input.slice(-(bulkStart.length - 1));
         return;
       }
       input = input.slice(markerIndex + bulkStart.length);
@@ -110,7 +150,7 @@ export class PerformanceProbe {
     const endIndex = input.indexOf(bulkEnd);
     if (endIndex >= 0) {
       this.hashBody(input.slice(0, endIndex));
-      this.carry = "";
+      this.bulkCarry = "";
       this.bulkState =
         this.bodyLength === bulkExpectedLength &&
         this.bodyHash === bulkExpectedHash &&
@@ -123,7 +163,84 @@ export class PerformanceProbe {
     const retainedLength = Math.min(input.length, bulkEnd.length - 1);
     const bodyEnd = input.length - retainedLength;
     this.hashBody(input.slice(0, bodyEnd));
-    this.carry = input.slice(bodyEnd);
+    this.bulkCarry = input.slice(bodyEnd);
+  }
+
+  private observeLatencyOutput(data: string): LatencyObservation {
+    const input = this.latencyCarry + data;
+    const echoIndexes: number[] = [];
+    let consumed = 0;
+    const marker = /__WINGMAN_LATENCY_(READY|ECHO)_(\d{3})__\r\n/g;
+    for (let match = marker.exec(input); match; match = marker.exec(input)) {
+      consumed = marker.lastIndex;
+      const index = Number(match[2]);
+      if (match[1] === "READY") {
+        if (
+          index !== this.nextLatencyReady ||
+          this.latencyStarts.has(index) ||
+          index >= 100
+        ) {
+          this.latencyInvalid = true;
+          continue;
+        }
+        this.nextLatencyReady += 1;
+        this.latencyStarts.set(index, performance.now());
+        this.terminal.input(".", true);
+        continue;
+      }
+      if (
+        index !== this.nextLatencyEcho ||
+        !this.latencyStarts.has(index) ||
+        index >= 100
+      ) {
+        this.latencyInvalid = true;
+        continue;
+      }
+      this.nextLatencyEcho += 1;
+      echoIndexes.push(index);
+    }
+
+    const endIndex = input.indexOf(latencyEnd);
+    const endObserved = !this.latencyEndSeen && endIndex >= 0;
+    if (endIndex >= 0) consumed = Math.max(consumed, endIndex + latencyEnd.length);
+    if (endObserved) this.latencyEndSeen = true;
+    this.latencyCarry = input.slice(
+      Math.max(consumed, input.length - latencyMarkerCarryLength),
+    );
+    return { echoIndexes, endObserved };
+  }
+
+  private checkRenderedLatency(observation: LatencyObservation) {
+    if (observation.echoIndexes.length === 0 && !observation.endObserved) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (this.observed || this.latencyInvalid) return;
+        for (const index of observation.echoIndexes) {
+          const startedAt = this.latencyStarts.get(index);
+          if (startedAt === undefined || index !== this.latencySamples.length) {
+            this.latencyInvalid = true;
+            return;
+          }
+          this.latencyStarts.delete(index);
+          this.latencySamples.push(performance.now() - startedAt);
+        }
+        if (
+          !this.latencyEndSeen ||
+          this.nextLatencyReady !== 100 ||
+          this.nextLatencyEcho !== 100 ||
+          this.latencyStarts.size !== 0 ||
+          this.latencySamples.length !== 100
+        ) {
+          return;
+        }
+
+        this.observed = true;
+        void invoke("mark_performance_bulk_latency", {
+          clientSessionId: this.sessionId,
+          samplesMs: [...this.latencySamples],
+        });
+      });
+    });
   }
 
   private hashBody(body: string) {
