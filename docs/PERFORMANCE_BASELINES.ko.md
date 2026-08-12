@@ -541,3 +541,58 @@ redirect sort: 649.877, 656.727, 654.700
 649.6 ms로 통과했고 sandbox는 남지 않았다. 이 결과로 재현 가능한 warm-cache runner
 timing seam을 닫았다. 이는 uncached 근거가 아니다. 진짜 uncached 분포에는 검증되지 않은
 system-cache 비우기 대신 사전에 만든 corpus와 controlled restart가 필요하다.
+
+## 2026-08-12: release runner `sort` 자원 상한
+
+- Runner source: `d9ef6c557e31c9468d6df2ae41ab217be9ece4f6`
+- Harness와 수락 상한: `f71b82a45ccf48356b92e15cebe9787170e1ebcc`
+- OS, CPU, power plan, toolchain, release profile: 앞선 runner timing 기준과 동일
+
+실행 명령:
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract sort_resource_limit_stays_bounded_and_fails_closed -- --ignored --exact --nocapture
+```
+
+각 독립 분포는 비공개 입력 두 개를 만든다. Byte-limit 입력은 text가 정확히 65,536
+바이트인 record 1,024개로 retained sort text가 정확히 64 MiB다. 실제 broker와 release
+runner가 모든 record를 수락하고 redirect한다. 이어서 같은 크기의 record 하나를 추가하고
+fail-closed 거부를 요구한다. 두 번째 입력은 짧은 record 262,145개로 독립적인 262,144개
+record 상한을 증명한다. 각 시나리오는 세 번 실행한다.
+
+Parent는 `GetProcessMemoryInfo`로 `PrivateUsage`를 2 ms마다 표본화하며 최대 표본을 peak
+private bytes로 보고한다. 같은 API의 process-lifetime `PeakWorkingSetSize`가 peak working
+set 측정값이다. 둘 다 수락된 release 상한 96 MiB 이하여야 한다. Exact-limit 성공은
+정규화된 출력 67,110,912바이트를 모두 쓴다. 두 초과 경우는 exit `1`, 고정된 55바이트
+CRLF 진단 `wingman sort: materialization resource limit exceeded`만 출력하고 열린 redirect
+target을 0바이트로 남긴다.
+
+| 분포 | Exact 64 MiB peak WS | Exact 64 MiB peak private | Byte + 1 record peak WS | Byte + 1 record peak private | Count + 1 peak WS | Count + 1 peak private |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 69.47 MiB | 65.69 MiB | 69.46 MiB | 65.90 MiB | 18.95 MiB | 18.09 MiB |
+| 2 | 69.48 MiB | 65.99 MiB | 69.45 MiB | 65.75 MiB | 18.96 MiB | 18.05 MiB |
+| 3 | 69.50 MiB | 65.92 MiB | 69.46 MiB | 65.75 MiB | 18.96 MiB | 18.09 MiB |
+
+원시 표본은 순서대로 경과 ms, peak working-set MiB, peak private-byte MiB다.
+
+```text
+분포 1
+exact: (479.197, 69.426, 65.609), (461.989, 69.473, 65.637), (458.922, 69.465, 65.691)
+byte + 1: (445.400, 69.461, 65.898), (454.205, 69.434, 65.559), (435.508, 69.438, 65.695)
+count + 1: (38.185, 18.930, 18.016), (36.818, 18.949, 18.090), (37.897, 18.934, 18.020)
+
+분포 2
+exact: (461.897, 69.484, 65.758), (452.405, 69.477, 65.816), (456.404, 69.477, 65.988)
+byte + 1: (447.168, 69.445, 65.684), (430.147, 69.449, 65.754), (447.632, 69.449, 65.555)
+count + 1: (39.320, 18.957, 15.160), (40.400, 18.953, 18.047), (37.663, 18.957, 15.289)
+
+분포 3
+exact: (453.231, 69.496, 65.918), (468.619, 69.449, 65.914), (456.376, 69.445, 65.680)
+byte + 1: (437.813, 69.465, 65.754), (429.688, 69.434, 65.555), (431.011, 69.438, 65.492)
+count + 1: (39.006, 18.945, 18.035), (37.901, 18.953, 18.043), (37.025, 18.961, 18.094)
+```
+
+전체 최대값은 working set 69.50 MiB, private bytes 65.99 MiB였고 runner process 27개가
+모두 release 상한 96 MiB를 통과했다. 부분 sorted record, 크기 무제한 진단, 살아남은
+runner, resource sandbox는 없었다. 이 결과로 bounded `sort`의 release process-memory
+근거를 닫았고 별도 traversal, listing, mutation 자원 제한 경우는 남아 있다.

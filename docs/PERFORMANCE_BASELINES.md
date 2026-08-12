@@ -577,3 +577,64 @@ A final run after target enforcement also passed, with medians of 813.5 ms,
 closes the reproducible warmed-cache runner timing seam. It is not uncached
 evidence: a true uncached distribution requires a controlled restart and a
 pre-existing corpus, rather than an unverified system-cache purge.
+
+## 2026-08-12: release runner `sort` resource ceiling
+
+- Runner source: `d9ef6c557e31c9468d6df2ae41ab217be9ece4f6`
+- Harness and accepted ceiling: `f71b82a45ccf48356b92e15cebe9787170e1ebcc`
+- OS, CPU, power plan, toolchain, and release profile: unchanged from the
+  preceding runner timing baseline
+
+Command:
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract sort_resource_limit_stays_bounded_and_fails_closed -- --ignored --exact --nocapture
+```
+
+Each independent distribution creates two private inputs. The byte-limit input
+contains 1,024 records of exactly 65,536 text bytes, for exactly 64 MiB of
+retained sort text. The real broker and release runner accept and redirect all
+records. The harness then appends one equally sized record and requires a
+fail-closed rejection. A second input contains 262,145 short records and proves
+the independent 262,144-record limit. Every scenario runs three times.
+
+The parent samples `PrivateUsage` every 2 ms through
+`GetProcessMemoryInfo`; the maximum sample is reported as peak private bytes.
+The same API's process-lifetime `PeakWorkingSetSize` is the peak working-set
+measurement. Both must remain at or below the accepted 96 MiB release ceiling.
+The exact-limit success writes all 67,110,912 normalized output bytes. Both
+over-limit cases exit `1`, emit exactly the fixed 55-byte CRLF diagnostic
+`wingman sort: materialization resource limit exceeded`, and leave the opened
+redirect target at zero bytes.
+
+| Distribution | Exact 64 MiB peak WS | Exact 64 MiB peak private | Byte + 1 record peak WS | Byte + 1 record peak private | Count + 1 peak WS | Count + 1 peak private |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 69.47 MiB | 65.69 MiB | 69.46 MiB | 65.90 MiB | 18.95 MiB | 18.09 MiB |
+| 2 | 69.48 MiB | 65.99 MiB | 69.45 MiB | 65.75 MiB | 18.96 MiB | 18.05 MiB |
+| 3 | 69.50 MiB | 65.92 MiB | 69.46 MiB | 65.75 MiB | 18.96 MiB | 18.09 MiB |
+
+Raw samples contain elapsed milliseconds, peak working-set MiB, and peak
+private-byte MiB in that order:
+
+```text
+distribution 1
+exact: (479.197, 69.426, 65.609), (461.989, 69.473, 65.637), (458.922, 69.465, 65.691)
+byte + 1: (445.400, 69.461, 65.898), (454.205, 69.434, 65.559), (435.508, 69.438, 65.695)
+count + 1: (38.185, 18.930, 18.016), (36.818, 18.949, 18.090), (37.897, 18.934, 18.020)
+
+distribution 2
+exact: (461.897, 69.484, 65.758), (452.405, 69.477, 65.816), (456.404, 69.477, 65.988)
+byte + 1: (447.168, 69.445, 65.684), (430.147, 69.449, 65.754), (447.632, 69.449, 65.555)
+count + 1: (39.320, 18.957, 15.160), (40.400, 18.953, 18.047), (37.663, 18.957, 15.289)
+
+distribution 3
+exact: (453.231, 69.496, 65.918), (468.619, 69.449, 65.914), (456.376, 69.445, 65.680)
+byte + 1: (437.813, 69.465, 65.754), (429.688, 69.434, 65.555), (431.011, 69.438, 65.492)
+count + 1: (39.006, 18.945, 18.035), (37.901, 18.953, 18.043), (37.025, 18.961, 18.094)
+```
+
+The overall maximum was 69.50 MiB working set and 65.99 MiB private bytes, so
+all 27 runner processes passed the 96 MiB release ceiling. No partial sorted
+record, unbounded diagnostic, surviving runner, or resource sandbox remained.
+This closes the release process-memory evidence for bounded `sort` while the
+separate traversal, listing, and mutation resource-limit cases remain.

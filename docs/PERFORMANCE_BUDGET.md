@@ -156,6 +156,12 @@ rounded 20% regression lines above the first accepted outer medians. Uncached
 targets require a separately recorded controlled-restart run; an ordinary test
 must not claim to purge the Windows system file cache.
 
+At the exact `sort` materialization limit of 64 MiB retained record text, both
+the release runner's lifetime peak working set and sampled peak private bytes
+must remain at or below 96 MiB. One additional byte-limit record or one record
+beyond 262,144 exits `1`, emits only the fixed bounded diagnostic, leaves a
+redirect target empty, and stays under the same process-memory ceiling.
+
 Reproducible component measurements are recorded in
 [PERFORMANCE_BASELINES.md](PERFORMANCE_BASELINES.md); they do not replace the
 whole process-tree release gate.
@@ -231,10 +237,10 @@ probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release
 whole-process-tree retained-memory distribution after clear, and a release
 measurement of the 4,000-row scrollback ceiling. The same release workload is
 also measured against a one-tab Windows Terminal baseline. It still lacks
-controlled-restart uncached runner timing, remaining resource-limit release
-measurements, and endurance automation. These are planned measurement needs,
-not permission to add production instrumentation before implementation
-approval.
+controlled-restart uncached runner timing, traversal/listing/mutation
+resource-limit release measurements, and endurance automation. These are
+planned measurement needs, not permission to add production instrumentation
+before implementation approval.
 
 ## Research basis
 
