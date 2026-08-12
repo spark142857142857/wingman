@@ -98,3 +98,34 @@ authoritative accepted-and-echoed prompt probe, the machine is faster than the
 minimum reference tier, and only Windows PowerShell was measured. An attempted
 `WPR GeneralProfile` capture was rejected by the unelevated environment with
 `0xc5585011`; ETW/WPR diagnosis remains for an authorized performance session.
+
+## 2026-08-12: verified PowerShell editor readiness precheck
+
+- App source and harness: `76211fd5b9112cfd72b4a9f6f3d6a9af2c0b5c0f`
+- Build and machine: the same official Tauri release and environment as the
+  settled process-tree measurement above
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_editor_readiness.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 30
+```
+
+The release harness starts the real GUI and waits for the current session's
+authenticated OOB PowerShell readiness frame to pass nonce, sequence, shell,
+depth, filesystem-location, and PSReadLine-adapter validation. Rust then exposes
+the ASCII native-window title `Wingman - Ready`; the harness additionally
+requires the integrated PowerShell PTY child to be alive.
+
+| Independent run | Verified editor readiness |
+| --- | ---: |
+| 1 | 6,418.2 ms |
+| 2 | 6,439.0 ms |
+| 3 | 6,232.5 ms |
+
+This marker is earlier than the contract's accepted-and-echoed PTY probe, so it
+is not a complete cold or warm launch distribution. Nevertheless, all three
+lower-bound measurements already exceed the 3.0-second hard launch ceiling;
+the complete launch gate therefore cannot pass on this environment yet. The
+standard three warmups plus 20 warm samples and five controlled cold samples
+remain pending until the normal-input echo probe is automated.

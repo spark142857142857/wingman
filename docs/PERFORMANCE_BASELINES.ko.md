@@ -92,3 +92,32 @@ Private working set은 목표 250 MiB와 배포 상한 350 MiB를 모두 통과�
 아니고, 측정 PC는 최소 reference tier보다 빠르며, Windows PowerShell만 측정했다.
 권한이 없는 환경에서 `WPR GeneralProfile` capture를 시도했지만 `0xc5585011`로
 거부됐다. ETW/WPR 진단은 권한이 허용된 성능 측정 session의 남은 작업이다.
+
+## 2026-08-12: 검증된 PowerShell editor readiness 사전 검사
+
+- App source와 harness: `76211fd5b9112cfd72b4a9f6f3d6a9af2c0b5c0f`
+- Build와 machine: 위의 안정화된 process-tree 측정과 같은 공식 Tauri release 및 환경
+
+실행 명령:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_editor_readiness.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 30
+```
+
+Release harness는 실제 GUI를 시작하고 현재 session의 인증된 OOB PowerShell
+readiness frame이 nonce, sequence, shell, depth, filesystem location,
+PSReadLine adapter 검증을 통과할 때까지 기다린다. Rust는 그 뒤 ASCII native window
+title `Wingman - Ready`를 노출하며, harness는 통합 PowerShell PTY child가 살아 있는지도
+함께 요구한다.
+
+| 독립 실행 | 검증된 editor readiness |
+| --- | ---: |
+| 1 | 6,418.2 ms |
+| 2 | 6,439.0 ms |
+| 3 | 6,232.5 ms |
+
+이 marker는 계약의 수락·echo된 PTY probe보다 앞선 시점이므로 완전한 cold 또는 warm
+launch 분포가 아니다. 그럼에도 세 lower-bound 측정이 이미 3.0초 hard launch 상한을
+넘으므로 현재 환경에서 완전한 launch gate는 아직 통과할 수 없다. 정상 입력 echo
+probe를 자동화한 뒤 표준 3회 warmup+20회 warm 표본과 통제된 cold 표본 5회를
+측정해야 한다.
