@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Terminal } from "@xterm/xterm";
+import { TERMINAL_SCROLLBACK_ROWS } from "./terminal-config";
 
 const inputEchoToken = "__WINGMAN_INPUT_ECHO_PROBE__";
 const inputEchoCommand = `# ${inputEchoToken}\r`;
@@ -38,7 +39,8 @@ type ProbeKind =
   | "input-echo"
   | "bulk-output"
   | "bulk-latency"
-  | "bulk-retention";
+  | "bulk-retention"
+  | "scrollback-ceiling";
 type BulkState = "waiting-start" | "body" | "complete" | "invalid";
 type VtState = "ground" | "escape" | "csi" | "string" | "string-escape";
 type LatencyObservation = {
@@ -80,6 +82,20 @@ export class PerformanceProbe {
     terminal: Terminal,
     isCurrentSession: () => boolean,
   ): Promise<PerformanceProbe | null> {
+    const scrollback = await queryAvailability(
+      "performance_scrollback_probe",
+      sessionId,
+    );
+    if (scrollback.accepted && scrollback.enabled && isCurrentSession()) {
+      const probe = new PerformanceProbe(
+        sessionId,
+        "scrollback-ceiling",
+        terminal,
+      );
+      terminal.input(bulkCommand, true);
+      return probe;
+    }
+
     const retention = await queryAvailability(
       "performance_bulk_retention_probe",
       sessionId,
@@ -132,7 +148,11 @@ export class PerformanceProbe {
       });
       return true;
     }
-    if (this.kind === "bulk-output" || this.kind === "bulk-retention") {
+    if (
+      this.kind === "bulk-output" ||
+      this.kind === "bulk-retention" ||
+      this.kind === "scrollback-ceiling"
+    ) {
       this.observeBulkOutput(data);
     }
     if (
@@ -175,6 +195,15 @@ export class PerformanceProbe {
         if (!ready) return;
 
         this.observed = true;
+        if (this.kind === "scrollback-ceiling") {
+          void invoke("mark_performance_scrollback", {
+            clientSessionId: this.sessionId,
+            configuredScrollbackRows: TERMINAL_SCROLLBACK_ROWS,
+            viewportRows: this.terminal.rows,
+            bufferRows: this.terminal.buffer.normal.length,
+          });
+          return;
+        }
         const command =
           this.kind === "input-echo"
             ? "mark_performance_input_echo"

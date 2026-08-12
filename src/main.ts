@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 import { classifyTerminalPaste } from "./terminal-paste";
 import { isPasteShortcut } from "./terminal-shortcuts";
 import { PerformanceProbe } from "./performance-probes";
+import { TERMINAL_SCROLLBACK_ROWS } from "./terminal-config";
 
 type ShellKind = "powershell" | "cmd";
 
@@ -35,6 +36,7 @@ const term = new Terminal({
   fontWeight: "500",
   fontWeightBold: "700",
   lineHeight: 1.25,
+  scrollback: TERMINAL_SCROLLBACK_ROWS,
   theme: {
     background: "#00000000",
     foreground: "#dceaff",

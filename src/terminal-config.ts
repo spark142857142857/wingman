@@ -1,0 +1,1 @@
+export const TERMINAL_SCROLLBACK_ROWS = 4_000;
