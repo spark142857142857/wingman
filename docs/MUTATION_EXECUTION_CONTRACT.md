@@ -254,3 +254,24 @@ Tests cover at least:
 9. cancellation at every stage boundary and exact `0/1/2/130` aggregation;
 10. staging names, cleanup artifacts, and diagnostics containing no request
     secret or user-data copy beyond the necessary operand name.
+
+### Actual-volume acceptance gate
+
+The ignored `mv_contract` acceptance tests require
+`WINGMAN_TEST_SECOND_VOLUME` to name a writable directory on a genuinely
+different volume. The tests independently compare Windows volume serials before
+calling the public runner seam, so a second path on the source volume fails the
+fixture instead of producing a false cross-volume pass.
+
+```powershell
+$env:WINGMAN_TEST_SECOND_VOLUME = 'D:\wingman-test-root'
+cargo test --manifest-path src-tauri/Cargo.toml --test mv_contract actual_cross_volume -- --ignored --nocapture
+```
+
+The gate moves both a file and a nested directory tree, requires exit `0`,
+verifies complete destination content and empty-directory preservation, requires
+the source to be absent, and removes the uniquely named destination sandbox.
+On 2026-08-12 both cases passed from an NTFS `C:` source to the writable
+Google Drive FAT32 virtual volume mounted below `G:\내 드라이브`; no test sandbox
+remained afterward. This environment result validates the fallback boundary but
+does not replace the broader failure and cancellation matrix above.

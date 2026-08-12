@@ -232,3 +232,22 @@ directory, `cp -n` skip 같은 문서화 no-op여야 성공이다. 뒤 성공이
 9. 모든 stage 경계 cancellation과 정확한 `0/1/2/130` 집계
 10. staging 이름·cleanup artifact·진단에 request secret이나 필요한 operand 이름 밖의
     user-data copy가 없는지 확인
+
+### 실제 volume acceptance gate
+
+Ignore된 `mv_contract` acceptance test는 `WINGMAN_TEST_SECOND_VOLUME`에 실제로
+다른 volume의 쓰기 가능한 directory를 요구한다. Public runner seam을 호출하기 전에
+test가 Windows volume serial을 독립적으로 비교하므로, source volume의 다른 경로를
+넣으면 거짓 cross-volume 통과 대신 fixture 실패가 발생한다.
+
+```powershell
+$env:WINGMAN_TEST_SECOND_VOLUME = 'D:\wingman-test-root'
+cargo test --manifest-path src-tauri/Cargo.toml --test mv_contract actual_cross_volume -- --ignored --nocapture
+```
+
+Gate는 file과 중첩 directory tree를 각각 이동하고, exit `0`, 완전한 destination
+content, empty directory 보존, source 부재를 확인한 뒤 고유 이름의 destination
+sandbox를 삭제한다. 2026-08-12에 NTFS `C:` source에서 `G:\내 드라이브` 아래에
+mount된 쓰기 가능한 Google Drive FAT32 virtual volume으로 두 case가 모두 통과했고
+test sandbox도 남지 않았다. 이 환경 결과는 fallback 경계를 검증하지만 위의 더 넓은
+실패·cancellation matrix를 대신하지 않는다.
