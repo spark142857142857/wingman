@@ -67,7 +67,6 @@ const performanceInputEchoCommand = `# ${performanceInputEchoToken}\r`;
 
 type PerformanceInputEchoProbe = {
   sessionId: number;
-  outputTail: string;
   observed: boolean;
 };
 
@@ -93,7 +92,6 @@ async function observeEditorReadiness(clientSessionId: number) {
       if (probe.accepted && probe.enabled && clientSessionId === activeSessionId) {
         performanceInputEchoProbe = {
           sessionId: clientSessionId,
-          outputTail: "",
           observed: false,
         };
         term.input(performanceInputEchoCommand, true);
@@ -136,27 +134,36 @@ await listen<{ session_id: number; data: string }>("pty-output", (event) => {
   if (event.payload.session_id === activeSessionId) {
     const probe = performanceInputEchoProbe;
     if (probe && probe.sessionId === activeSessionId && !probe.observed) {
-      probe.outputTail = (probe.outputTail + event.payload.data).slice(
-        -performanceInputEchoToken.length * 2,
-      );
-      if (probe.outputTail.includes(performanceInputEchoToken)) {
-        probe.observed = true;
-        term.write(event.payload.data, () => {
+      term.write(event.payload.data, () => {
+        requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              if (probe.sessionId !== activeSessionId) return;
+            if (
+              !probe.observed &&
+              probe.sessionId === activeSessionId &&
+              renderedTerminalContains(performanceInputEchoToken)
+            ) {
+              probe.observed = true;
               void invoke("mark_performance_input_echo", {
                 clientSessionId: probe.sessionId,
               });
-            });
+            }
           });
         });
-        return;
-      }
+      });
+      return;
     }
     term.write(event.payload.data);
   }
 });
+
+function renderedTerminalContains(text: string) {
+  const buffer = term.buffer.active;
+  const firstLine = Math.max(0, buffer.length - term.rows - 4);
+  for (let index = firstLine; index < buffer.length; index += 1) {
+    if (buffer.getLine(index)?.translateToString(true).includes(text)) return true;
+  }
+  return false;
+}
 
 await listen<string>("cwd-changed", (event) => {
   updateStatus(event.payload);
