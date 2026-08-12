@@ -3,6 +3,7 @@ use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -303,9 +304,8 @@ fn start_shell(
     for arg in args {
         cmd.arg(arg);
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        cmd.cwd(cwd);
-    }
+    let cwd_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(r"C:\"));
+    cmd.cwd(&cwd_path);
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     let child = Arc::new(Mutex::new(child));
@@ -313,7 +313,7 @@ fn start_shell(
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    let cwd = detect_cwd(&shell);
+    let cwd = cwd_path.display().to_string();
     let shell_name = if shell == "cmd" {
         "cmd".to_string()
     } else {
