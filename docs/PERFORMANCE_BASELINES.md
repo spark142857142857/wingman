@@ -162,7 +162,39 @@ launches.
 
 The median was 6,226.9 ms and all five runs completed. This closes the missing
 measurement seam and directly exercises the contract's startup-completion
-boundary, but it is still a repeatability precheck rather than the required
-three-warmup/20-warm and controlled five-cold distributions. Every sample
-exceeds the 3.0-second cold hard ceiling and the 1.5-second warm hard ceiling,
-so startup performance remains a release blocker on this environment.
+boundary, but it is still a repeatability precheck. The standardized warm
+distribution is recorded below; the controlled five-cold distribution remains
+pending. Every sample exceeds the 3.0-second cold hard ceiling and the
+1.5-second warm hard ceiling, so startup performance remains a release blocker
+on this environment.
+
+## 2026-08-12: standardized warm PowerShell startup distribution
+
+- App source: `b921e95de128dc30181940b791bed81e7386477e`
+- Distribution harness: `6983b2c`
+- Build and machine: unchanged from the rendered input-echo precheck
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_warm_startup_distribution.tests.ps1 -Executable src-tauri/target/release/wingman.exe -WarmupCount 3 -SampleCount 20 -TimeoutSeconds 15
+```
+
+The three warmups were 6,248.3, 6,247.0, and 6,256.9 ms. The 20 recorded
+accepted-and-rendered input-echo samples were:
+
+```text
+6237.3, 6227.0, 6182.2, 6156.8, 6241.8, 6210.0, 6217.2, 6243.8, 6216.3, 6217.6,
+6211.5, 6208.5, 6242.1, 6216.0, 6246.9, 6265.4, 6190.3, 6204.9, 6226.4, 6242.6
+```
+
+| Statistic | Warm startup |
+| --- | ---: |
+| Median | 6,217.4 ms |
+| p95 (nearest-rank) | 6,246.9 ms |
+| Maximum | 6,265.4 ms |
+
+All 20 recorded runs completed, but every run exceeded the 1.5-second warm
+hard ceiling by more than four times. The warm startup gate therefore fails.
+Cold-cache measurement and ETW attribution remain separate follow-up work;
+neither can change this already-observed warm hard-ceiling failure.

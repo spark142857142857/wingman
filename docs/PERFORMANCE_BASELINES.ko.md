@@ -150,6 +150,37 @@ frame 두 번이 지나야 완료로 기록한다. Probe 플래그는 child shel
 | 5 | 6,226.9 ms |
 
 Median은 6,226.9 ms이고 5회 모두 완료됐다. 이 결과로 누락됐던 측정 seam을 닫고
-계약의 startup 완료 경계를 직접 검증하지만, 표준 3회 warmup+20회 warm 및 통제된
-5회 cold 분포를 대신하는 결과는 아니다. 모든 표본이 cold hard ceiling 3.0초와 warm
-hard ceiling 1.5초를 넘으므로, 현재 환경에서 startup 성능은 계속 release blocker다.
+계약의 startup 완료 경계를 직접 검증하지만, 반복성 사전 검사일 뿐이다. 표준 warm
+분포는 아래에 기록하며 통제된 5회 cold 분포는 아직 남아 있다. 모든 표본이 cold hard
+ceiling 3.0초와 warm hard ceiling 1.5초를 넘으므로, 현재 환경에서 startup 성능은
+계속 release blocker다.
+
+## 2026-08-12: 표준화된 warm PowerShell startup 분포
+
+- App source: `b921e95de128dc30181940b791bed81e7386477e`
+- 분포 harness: `6983b2c`
+- Build와 machine: 렌더된 입력 echo 사전 검사와 동일
+
+실행 명령:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_warm_startup_distribution.tests.ps1 -Executable src-tauri/target/release/wingman.exe -WarmupCount 3 -SampleCount 20 -TimeoutSeconds 15
+```
+
+3회 warmup은 6,248.3, 6,247.0, 6,256.9 ms였다. 기록한 20회의 수락·렌더 입력 echo
+표본은 다음과 같다.
+
+```text
+6237.3, 6227.0, 6182.2, 6156.8, 6241.8, 6210.0, 6217.2, 6243.8, 6216.3, 6217.6,
+6211.5, 6208.5, 6242.1, 6216.0, 6246.9, 6265.4, 6190.3, 6204.9, 6226.4, 6242.6
+```
+
+| 통계 | Warm startup |
+| --- | ---: |
+| Median | 6,217.4 ms |
+| p95 (nearest-rank) | 6,246.9 ms |
+| Maximum | 6,265.4 ms |
+
+기록한 20회는 모두 완료됐지만 모든 실행이 warm hard ceiling 1.5초를 4배 넘게
+초과했다. 따라서 warm startup gate는 실패한다. Cold-cache 측정과 ETW 원인 귀속은
+별도 후속 작업이며, 어느 쪽도 이미 관측된 warm hard-ceiling 실패를 바꾸지는 않는다.
