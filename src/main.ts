@@ -123,11 +123,19 @@ async function startSession(shell: ShellKind) {
   if (shell === "powershell") void observeEditorReadiness(sessionId);
 }
 
-await listen<{ session_id: number; data: string }>("pty-output", (event) => {
+await listen<{ session_id: number; sequence: number; data: string }>("pty-output", (event) => {
+  const acknowledge = () => {
+    void invoke("acknowledge_pty_output", {
+      clientSessionId: event.payload.session_id,
+      sequence: event.payload.sequence,
+    });
+  };
   if (event.payload.session_id === activeSessionId) {
-    if (performanceProbe?.write(activeSessionId, event.payload.data)) return;
-    term.write(event.payload.data);
+    if (performanceProbe?.write(activeSessionId, event.payload.data, acknowledge)) return;
+    term.write(event.payload.data, acknowledge);
+    return;
   }
+  acknowledge();
 });
 
 await listen<string>("cwd-changed", (event) => {

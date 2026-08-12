@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use interpreter::ActiveShell;
+use pty_output_flow::PtyOutputFlowV1;
 use session_runtime::{apply_familiar_effect, execute_terminal_input, write_session_input};
 use terminal_session::TerminalSessionV1;
 use transport::{EditorReadinessBrokerV1, SessionBrokerV1};
@@ -18,6 +19,7 @@ use transport::{EditorReadinessBrokerV1, SessionBrokerV1};
 const PERFORMANCE_INPUT_ECHO_PROBE_ENV: &str = "WINGMAN_PERF_INPUT_ECHO_PROBE";
 const PERFORMANCE_BULK_OUTPUT_PROBE_ENV: &str = "WINGMAN_PERF_BULK_OUTPUT_PROBE";
 const PERFORMANCE_BULK_LATENCY_PROBE_ENV: &str = "WINGMAN_PERF_BULK_LATENCY_PROBE";
+const PERFORMANCE_BULK_RETENTION_PROBE_ENV: &str = "WINGMAN_PERF_BULK_RETENTION_PROBE";
 
 pub mod app_launch;
 pub mod catalog;
@@ -28,6 +30,7 @@ pub mod lexer;
 pub mod ordered_pipeline;
 pub mod parser;
 pub mod pipeline;
+mod pty_output_flow;
 pub mod runner;
 pub mod runner_cancel;
 mod runner_cp;
@@ -62,6 +65,7 @@ struct SessionInfo {
 #[derive(Clone, Serialize)]
 struct PtyOutput {
     session_id: u64,
+    sequence: u64,
     data: String,
 }
 
@@ -101,6 +105,13 @@ struct PtySession {
     broker_pipe_name: String,
     #[allow(dead_code)]
     broker: SessionBrokerV1,
+    output_flow: Arc<PtyOutputFlowV1>,
+}
+
+impl Drop for PtySession {
+    fn drop(&mut self) {
+        self.output_flow.close();
+    }
 }
 
 struct AppState {
@@ -108,6 +119,7 @@ struct AppState {
     performance_input_echo_probe: bool,
     performance_bulk_output_probe: bool,
     performance_bulk_latency_probe: bool,
+    performance_bulk_retention_probe: bool,
 }
 
 static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
@@ -127,6 +139,11 @@ static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
             .ok()
             .as_deref(),
     ),
+    performance_bulk_retention_probe: performance_input_echo_probe_enabled(
+        std::env::var(PERFORMANCE_BULK_RETENTION_PROBE_ENV)
+            .ok()
+            .as_deref(),
+    ),
 });
 
 fn performance_input_echo_probe_enabled(value: Option<&str>) -> bool {
@@ -137,6 +154,7 @@ fn remove_performance_probe_environment(cmd: &mut CommandBuilder) {
     cmd.env_remove(PERFORMANCE_INPUT_ECHO_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_BULK_OUTPUT_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_BULK_LATENCY_PROBE_ENV);
+    cmd.env_remove(PERFORMANCE_BULK_RETENTION_PROBE_ENV);
 }
 
 fn terminal_pty_size(cols: u16, rows: u16) -> PtySize {
@@ -277,6 +295,34 @@ fn filter_session_output(session_id: u64, data: &str) -> Option<String> {
     Some(session.terminal.ingest_pty_output(data))
 }
 
+fn deliver_pty_output(
+    app: &AppHandle,
+    output_flow: &PtyOutputFlowV1,
+    session_id: u64,
+    sequence: &mut u64,
+    data: String,
+) -> bool {
+    if data.is_empty() {
+        return true;
+    }
+    let Some(current_sequence) = sequence.checked_add(1) else {
+        output_flow.close();
+        return false;
+    };
+    *sequence = current_sequence;
+    output_flow.deliver(current_sequence, || {
+        app.emit(
+            "pty-output",
+            PtyOutput {
+                session_id,
+                sequence: current_sequence,
+                data,
+            },
+        )
+        .is_ok()
+    })
+}
+
 #[tauri::command]
 fn get_cwd() -> Result<String, String> {
     let guard = APP_STATE.session.lock();
@@ -374,6 +420,7 @@ fn start_shell(
     } else {
         "powershell".to_string()
     };
+    let output_flow = Arc::new(PtyOutputFlowV1::new());
 
     {
         let mut guard = APP_STATE.session.lock();
@@ -389,6 +436,7 @@ fn start_shell(
             readiness,
             broker_pipe_name,
             broker,
+            output_flow: output_flow.clone(),
         });
     }
 
@@ -396,51 +444,49 @@ fn start_shell(
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut decoder = Utf8StreamDecoder::default();
+        let mut output_sequence = 0u64;
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => {
                     let trailing = decoder.finish();
                     let visible = filter_session_output(session_id, &trailing).unwrap_or_default();
-                    if !visible.is_empty() {
-                        let _ = app_handle.emit(
-                            "pty-output",
-                            PtyOutput {
-                                session_id,
-                                data: visible,
-                            },
-                        );
-                    }
+                    let _ = deliver_pty_output(
+                        &app_handle,
+                        &output_flow,
+                        session_id,
+                        &mut output_sequence,
+                        visible,
+                    );
                     break;
                 }
                 Ok(n) => {
                     let chunk = decoder.push(&buf[..n]);
                     let visible = filter_session_output(session_id, &chunk).unwrap_or_default();
-                    if !visible.is_empty() {
-                        let _ = app_handle.emit(
-                            "pty-output",
-                            PtyOutput {
-                                session_id,
-                                data: visible,
-                            },
-                        );
+                    if !deliver_pty_output(
+                        &app_handle,
+                        &output_flow,
+                        session_id,
+                        &mut output_sequence,
+                        visible,
+                    ) {
+                        break;
                     }
                 }
                 Err(_) => {
                     let trailing = decoder.finish();
                     let visible = filter_session_output(session_id, &trailing).unwrap_or_default();
-                    if !visible.is_empty() {
-                        let _ = app_handle.emit(
-                            "pty-output",
-                            PtyOutput {
-                                session_id,
-                                data: visible,
-                            },
-                        );
-                    }
+                    let _ = deliver_pty_output(
+                        &app_handle,
+                        &output_flow,
+                        session_id,
+                        &mut output_sequence,
+                        visible,
+                    );
                     break;
                 }
             }
         }
+        output_flow.close();
     });
 
     let exit_app_handle = app.clone();
@@ -458,6 +504,21 @@ fn start_shell(
         shell: shell_name,
         cwd,
     })
+}
+
+#[tauri::command]
+fn acknowledge_pty_output(client_session_id: u64, sequence: u64) -> Result<bool, String> {
+    let output_flow = {
+        let guard = APP_STATE.session.lock();
+        let Some(session) = guard
+            .as_ref()
+            .filter(|session| session.id == client_session_id)
+        else {
+            return Ok(false);
+        };
+        session.output_flow.clone()
+    };
+    Ok(output_flow.acknowledge(sequence))
 }
 
 #[tauri::command]
@@ -569,6 +630,20 @@ fn performance_bulk_latency_probe(
 }
 
 #[tauri::command]
+fn performance_bulk_retention_probe(
+    client_session_id: u64,
+) -> Result<PerformanceProbeResult, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = guard
+        .as_ref()
+        .is_some_and(|session| session.id == client_session_id);
+    Ok(PerformanceProbeResult {
+        accepted,
+        enabled: accepted && APP_STATE.performance_bulk_retention_probe,
+    })
+}
+
+#[tauri::command]
 fn mark_performance_input_echo(app: AppHandle, client_session_id: u64) -> Result<bool, String> {
     let guard = APP_STATE.session.lock();
     let accepted = APP_STATE.performance_input_echo_probe
@@ -643,6 +718,40 @@ fn mark_performance_bulk_latency(
     Ok(true)
 }
 
+fn mark_performance_retention_phase(
+    app: AppHandle,
+    client_session_id: u64,
+    title: &str,
+) -> Result<bool, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = APP_STATE.performance_bulk_retention_probe
+        && guard
+            .as_ref()
+            .is_some_and(|session| session.id == client_session_id);
+    if accepted {
+        if let Some(window) = app.get_webview_window("main") {
+            window.set_title(title).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(accepted)
+}
+
+#[tauri::command]
+fn mark_performance_retention_baseline(
+    app: AppHandle,
+    client_session_id: u64,
+) -> Result<bool, String> {
+    mark_performance_retention_phase(app, client_session_id, "Wingman - Retention Baseline")
+}
+
+#[tauri::command]
+fn mark_performance_retention_cleared(
+    app: AppHandle,
+    client_session_id: u64,
+) -> Result<bool, String> {
+    mark_performance_retention_phase(app, client_session_id, "Wingman - Retention Cleared")
+}
+
 #[tauri::command]
 fn handle_terminal_input(
     client_session_id: u64,
@@ -715,9 +824,13 @@ pub fn run() {
             performance_input_echo_probe,
             performance_bulk_output_probe,
             performance_bulk_latency_probe,
+            performance_bulk_retention_probe,
             mark_performance_input_echo,
             mark_performance_bulk_output,
             mark_performance_bulk_latency,
+            mark_performance_retention_baseline,
+            mark_performance_retention_cleared,
+            acknowledge_pty_output,
             write_native_paste,
             handle_terminal_input,
             resize_shell
@@ -747,10 +860,12 @@ mod tests {
         command.env(PERFORMANCE_INPUT_ECHO_PROBE_ENV, "1");
         command.env(PERFORMANCE_BULK_OUTPUT_PROBE_ENV, "1");
         command.env(PERFORMANCE_BULK_LATENCY_PROBE_ENV, "1");
+        command.env(PERFORMANCE_BULK_RETENTION_PROBE_ENV, "1");
         remove_performance_probe_environment(&mut command);
         assert_eq!(command.get_env(PERFORMANCE_INPUT_ECHO_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_OUTPUT_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_LATENCY_PROBE_ENV), None);
+        assert_eq!(command.get_env(PERFORMANCE_BULK_RETENTION_PROBE_ENV), None);
     }
 
     #[test]
@@ -801,6 +916,7 @@ mod tests {
                 Uuid::new_v4().as_simple()
             ))
             .expect("start test session broker"),
+            output_flow: Arc::new(PtyOutputFlowV1::new()),
         });
 
         let (sender, receiver) = mpsc::channel();

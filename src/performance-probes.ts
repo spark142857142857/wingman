@@ -7,12 +7,18 @@ const bulkStart = "__WINGMAN_BULK_START__\r\n";
 const bulkEnd = "__WINGMAN_BULK_END__\r\n";
 const bulkExpectedLength = 11_900_000;
 const bulkExpectedHash = 0x48bac225;
-const bulkCommand =
+const bulkScript =
   "$p=([char]0xe9).ToString()*55;" +
   "$s='__WINGMAN_BULK_'+'START__';$e='__WINGMAN_BULK_'+'END__';" +
   '[Console]::Out.Write($s+"`r`n");' +
   'for($i=0;$i -lt 100000;$i++){[Console]::Out.Write(("{0:D6}:{1}`r`n" -f $i,$p))};' +
-  '[Console]::Out.Write($e+"`r`n")\r';
+  '[Console]::Out.Write($e+"`r`n")';
+const bulkCommand = foregroundPowerShellCommand(bulkScript);
+const retentionBaselineMilliseconds = 25_000;
+const retentionCleared = "__WINGMAN_RETENTION_CLEARED__";
+const retentionClearCommand =
+  "Clear-Host;$m='__WINGMAN_RETENTION_'+'CLEARED__';" +
+  '[Console]::Out.Write($m+"`r`n")\r';
 const latencyEnd = "__WINGMAN_LATENCY_END__\r\n";
 const latencyMarkerCarryLength =
   "__WINGMAN_LATENCY_READY_000__\r\n".length - 1;
@@ -28,7 +34,11 @@ const latencyCommand =
   '[Console]::Out.Write((($a+"{0:D3}__`r`n") -f $s))};' +
   '[Console]::Out.Write($z+"`r`n")\r';
 
-type ProbeKind = "input-echo" | "bulk-output" | "bulk-latency";
+type ProbeKind =
+  | "input-echo"
+  | "bulk-output"
+  | "bulk-latency"
+  | "bulk-retention";
 type BulkState = "waiting-start" | "body" | "complete" | "invalid";
 type VtState = "ground" | "escape" | "csi" | "string" | "string-escape";
 type LatencyObservation = {
@@ -55,6 +65,9 @@ export class PerformanceProbe {
   private readonly latencySamples: number[] = [];
   private latencyEndSeen = false;
   private latencyInvalid = false;
+  private retentionClearSubmitted = false;
+  private retentionClearRendered = false;
+  private retentionCarry = "";
 
   private constructor(
     private readonly sessionId: number,
@@ -67,6 +80,16 @@ export class PerformanceProbe {
     terminal: Terminal,
     isCurrentSession: () => boolean,
   ): Promise<PerformanceProbe | null> {
+    const retention = await queryAvailability(
+      "performance_bulk_retention_probe",
+      sessionId,
+    );
+    if (retention.accepted && retention.enabled && isCurrentSession()) {
+      const probe = new PerformanceProbe(sessionId, "bulk-retention", terminal);
+      void probe.startRetentionWorkload(isCurrentSession);
+      return probe;
+    }
+
     const latency = await queryAvailability(
       "performance_bulk_latency_probe",
       sessionId,
@@ -99,16 +122,45 @@ export class PerformanceProbe {
     return null;
   }
 
-  write(sessionId: number, data: string): boolean {
+  write(sessionId: number, data: string, onParsed: () => void): boolean {
     if (sessionId !== this.sessionId || this.observed) return false;
     if (this.kind === "bulk-latency") {
       const observation = this.observeLatencyOutput(data);
-      this.terminal.write(data, () => this.checkRenderedLatency(observation));
+      this.terminal.write(data, () => {
+        this.checkRenderedLatency(observation);
+        onParsed();
+      });
       return true;
     }
-    if (this.kind === "bulk-output") this.observeBulkOutput(data);
-    this.terminal.write(data, () => this.checkRenderedCompletion());
+    if (this.kind === "bulk-output" || this.kind === "bulk-retention") {
+      this.observeBulkOutput(data);
+    }
+    if (
+      this.kind === "bulk-retention" &&
+      this.retentionClearSubmitted &&
+      this.observeRetentionClear(data)
+    ) {
+      this.retentionClearRendered = true;
+    }
+    this.terminal.write(data, () => {
+      if (this.kind === "bulk-retention") {
+        this.checkRenderedRetention();
+      } else {
+        this.checkRenderedCompletion();
+      }
+      onParsed();
+    });
     return true;
+  }
+
+  private async startRetentionWorkload(isCurrentSession: () => boolean) {
+    const accepted = await invoke<boolean>("mark_performance_retention_baseline", {
+      clientSessionId: this.sessionId,
+    }).catch(() => false);
+    if (!accepted || !isCurrentSession() || this.observed) return;
+    await delay(retentionBaselineMilliseconds);
+    if (!isCurrentSession() || this.observed) return;
+    this.terminal.input(bulkCommand, true);
   }
 
   private checkRenderedCompletion() {
@@ -130,6 +182,45 @@ export class PerformanceProbe {
         void invoke(command, { clientSessionId: this.sessionId });
       });
     });
+  }
+
+  private checkRenderedRetention() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (this.observed) return;
+        if (!this.retentionClearSubmitted) {
+          if (
+            this.bulkState !== "complete" ||
+            !renderedTerminalContains(this.terminal, bulkEnd.trim())
+          ) {
+            return;
+          }
+          this.retentionClearSubmitted = true;
+          this.terminal.input(retentionClearCommand, true);
+          return;
+        }
+        if (
+          !this.retentionClearRendered ||
+          !renderedTerminalContains(this.terminal, retentionCleared)
+        ) {
+          return;
+        }
+        this.observed = true;
+        void invoke("mark_performance_retention_cleared", {
+          clientSessionId: this.sessionId,
+        });
+      });
+    });
+  }
+
+  private observeRetentionClear(data: string) {
+    const input = this.retentionCarry + data;
+    if (input.includes(retentionCleared)) {
+      this.retentionCarry = "";
+      return true;
+    }
+    this.retentionCarry = input.slice(-(retentionCleared.length - 1));
+    return false;
   }
 
   private observeBulkOutput(data: string) {
@@ -318,6 +409,22 @@ async function queryAvailability(command: string, clientSessionId: number) {
     accepted: false,
     enabled: false,
   }));
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function foregroundPowerShellCommand(script: string) {
+  const bytes = new Uint8Array(script.length * 2);
+  for (let index = 0; index < script.length; index += 1) {
+    const code = script.charCodeAt(index);
+    bytes[index * 2] = code & 0xff;
+    bytes[index * 2 + 1] = code >> 8;
+  }
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${btoa(binary)}\r`;
 }
 
 function renderedTerminalContains(terminal: Terminal, text: string) {
