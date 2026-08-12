@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
-    [int]$TimeoutSeconds = 30
+    [int]$TimeoutSeconds = 30,
+    [switch]$PassThru
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,7 +54,14 @@ try {
     }
 
     $elapsed = ((Get-Date) - $startedAt).TotalMilliseconds
-    Write-Output ("Release GUI accepted and rendered normal PowerShell input in {0:N1} ms." -f $elapsed)
+    if ($PassThru) {
+        Write-Output ([pscustomobject]@{
+            ElapsedMilliseconds = [double]$elapsed
+        })
+    }
+    else {
+        Write-Output ("Release GUI accepted and rendered normal PowerShell input in {0:N1} ms." -f $elapsed)
+    }
 }
 finally {
     $liveApp = Get-Process -Id $app.Id -ErrorAction SilentlyContinue
