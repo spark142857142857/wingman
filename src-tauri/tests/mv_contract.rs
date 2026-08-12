@@ -235,6 +235,63 @@ fn actual_cross_volume_move_commits_then_removes_the_source() {
     fs::remove_dir_all(&destination_sandbox).unwrap();
 }
 
+#[test]
+#[ignore = "requires WINGMAN_TEST_SECOND_VOLUME to name a writable distinct volume"]
+fn actual_cross_volume_directory_move_preserves_the_complete_tree() {
+    let second_root = PathBuf::from(
+        std::env::var_os("WINGMAN_TEST_SECOND_VOLUME")
+            .expect("set WINGMAN_TEST_SECOND_VOLUME to a writable distinct volume"),
+    );
+    let destination_sandbox = second_root.join(format!(
+        "wingman-mv-cross-volume-directory-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&destination_sandbox).unwrap();
+    let source_sandbox = sandbox();
+    let source = source_sandbox.join("한글 source tree");
+    let destination = destination_sandbox.join("moved tree");
+    fs::create_dir_all(source.join("nested").join("empty")).unwrap();
+    fs::write(
+        source.join("nested").join("내용.txt"),
+        "cross-volume directory",
+    )
+    .unwrap();
+
+    let source_volume = volume_serial_number(&source, true);
+    let destination_volume = volume_serial_number(&destination_sandbox, true);
+    if source_volume == destination_volume {
+        cleanup(&source_sandbox);
+        fs::remove_dir_all(&destination_sandbox).unwrap();
+        panic!(
+            "WINGMAN_TEST_SECOND_VOLUME must resolve to a distinct volume; both operands use {source_volume:#010x}"
+        );
+    }
+
+    let outcome = execute_prepared(request(
+        &source,
+        &destination,
+        ExistingDestinationPolicyV1::Replace,
+    ))
+    .expect("move directory across actual volumes");
+
+    assert_eq!(
+        outcome.exit_code,
+        0,
+        "{}",
+        String::from_utf8_lossy(&outcome.stderr)
+    );
+    assert!(!source.exists());
+    assert_eq!(
+        fs::read_to_string(destination.join("nested").join("내용.txt")).unwrap(),
+        "cross-volume directory"
+    );
+    assert!(destination.join("nested").join("empty").is_dir());
+    cleanup(&source_sandbox);
+    assert!(destination_sandbox.starts_with(&second_root));
+    fs::remove_dir_all(&destination_sandbox).unwrap();
+}
+
 fn volume_serial_number(path: &Path, directory: bool) -> u32 {
     let mut options = OpenOptions::new();
     options.read(true);
