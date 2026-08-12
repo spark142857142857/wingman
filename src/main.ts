@@ -61,6 +61,27 @@ let activeShell: ShellKind = "powershell";
 let inputQueue = Promise.resolve();
 let activeSessionId = 0;
 
+const shellReadinessTimeoutMs = 30_000;
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function observeEditorReadiness(clientSessionId: number) {
+  const deadline = performance.now() + shellReadinessTimeoutMs;
+  while (clientSessionId === activeSessionId && performance.now() < deadline) {
+    const state = await invoke<{ accepted: boolean; editorReady: boolean }>(
+      "poll_shell_readiness",
+      { clientSessionId },
+    ).catch(() => ({ accepted: false, editorReady: false }));
+    if (!state.accepted || clientSessionId !== activeSessionId) return;
+    if (state.editorReady) {
+      return;
+    }
+    await delay(25);
+  }
+}
+
 function updateStatus(cwd?: string) {
   shellLabel.textContent = activeShell === "powershell" ? "PowerShell" : "cmd";
   familiarLabel.textContent = compat ? "ON" : "PAUSED";
@@ -86,6 +107,7 @@ async function startSession(shell: ShellKind) {
   updateStatus();
   await refreshCwd();
   term.focus();
+  if (shell === "powershell") void observeEditorReadiness(sessionId);
 }
 
 await listen<{ session_id: number; data: string }>("pty-output", (event) => {

@@ -68,6 +68,13 @@ struct TerminalInputResult {
     familiar_enabled: bool,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellReadinessResult {
+    accepted: bool,
+    editor_ready: bool,
+}
+
 struct PtySession {
     id: u64,
     writer: Box<dyn Write + Send>,
@@ -251,6 +258,14 @@ fn start_shell(
     client_session_id: u64,
 ) -> Result<SessionInfo, String> {
     let _ = compat;
+    if let Some(window) = app.get_webview_window("main") {
+        let title = if shell == "powershell" {
+            "Wingman - Starting"
+        } else {
+            "Wingman"
+        };
+        window.set_title(title).map_err(|error| error.to_string())?;
+    }
     {
         let mut guard = APP_STATE.session.lock();
         if let Some(previous) = guard.take() {
@@ -430,6 +445,51 @@ fn write_native_paste(client_session_id: u64, data: String) -> Result<(), String
     Ok(())
 }
 
+fn refresh_editor_readiness(session: &mut PtySession) {
+    match session.readiness.drain() {
+        Ok(frames) => {
+            for frame in frames {
+                if !session.terminal.apply_editor_readiness(&frame) {
+                    session.terminal.suspend_after_transport_failure();
+                    break;
+                }
+            }
+        }
+        Err(_) => session.terminal.suspend_after_transport_failure(),
+    }
+}
+
+#[tauri::command]
+fn poll_shell_readiness(
+    app: AppHandle,
+    client_session_id: u64,
+) -> Result<ShellReadinessResult, String> {
+    let mut guard = APP_STATE.session.lock();
+    let session = guard
+        .as_mut()
+        .ok_or_else(|| "shell not started".to_string())?;
+    if session.id != client_session_id {
+        return Ok(ShellReadinessResult {
+            accepted: false,
+            editor_ready: false,
+        });
+    }
+
+    refresh_editor_readiness(session);
+    let editor_ready = session.terminal.editor_ready();
+    if editor_ready {
+        if let Some(window) = app.get_webview_window("main") {
+            window
+                .set_title("Wingman - Ready")
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(ShellReadinessResult {
+        accepted: true,
+        editor_ready,
+    })
+}
+
 #[tauri::command]
 fn handle_terminal_input(
     client_session_id: u64,
@@ -450,17 +510,7 @@ fn handle_terminal_input(
     } else {
         ActiveShell::WindowsPowerShell
     };
-    match session.readiness.drain() {
-        Ok(frames) => {
-            for frame in frames {
-                if !session.terminal.apply_editor_readiness(&frame) {
-                    session.terminal.suspend_after_transport_failure();
-                    break;
-                }
-            }
-        }
-        Err(_) => session.terminal.suspend_after_transport_failure(),
-    }
+    refresh_editor_readiness(session);
 
     let outcome = execute_terminal_input(
         &mut session.terminal,
@@ -508,6 +558,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_cwd,
             start_shell,
+            poll_shell_readiness,
             write_native_paste,
             handle_terminal_input,
             resize_shell
