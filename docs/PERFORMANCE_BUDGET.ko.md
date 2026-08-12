@@ -115,8 +115,8 @@ render해야 한다. 출력 중 표본 입력 지연은 p95 200 ms 미만을 유
 render 시간은 같은 Windows Terminal 기준의 2배 이하가 목표이며 3배가 배포 상한이다.
 
 출력을 지우고 안정화한 뒤 private working set은 이전 idle보다 목표 25 MiB,
-상한 50 MiB 이상 남지 않는다. scrollback에는 명시적인 제한이 있으며 무제한
-터미널 히스토리는 P0 기능이 아니다.
+상한 50 MiB 이상 남지 않는다. P0는 활성 viewport를 제외하고 터미널 세션마다
+scrollback을 최대 4,000줄 보존한다. 무제한 터미널 히스토리는 P0 기능이 아니다.
 
 Pipeline benchmark에는 channel capacity `1`, 의도적으로 느린 consumer, 최대 크기
 record 하나, read 사이에서 나뉜 invalid UTF-8, early `head` stop도 넣는다. 취소·memory
@@ -201,10 +201,10 @@ renderer 재작성을 검토한다. 재작성도 구현 게이트에 따른 사�
 현재 초안에는 안정화된 Windows PowerShell idle 상태를 위한 release 전용 전체
 process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 켜지는 정상 입력
 수락·렌더 startup 및 대용량 출력 중 입력 latency probe, 결정적 100,000줄/10MiB PTY
-완전성 probe, clear 후 release 전체 process-tree retained-memory 분포가 있다. 같은 조건의
-Windows Terminal 비교, 명시적 scrollback 상한, runner timing, 자원 제한, 지속 실행
-자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품 계측을 추가해도
-된다는 뜻은 아니다.
+완전성 probe, clear 후 release 전체 process-tree retained-memory 분포, 4,000줄 scrollback
+상한의 release 측정이 있다. 같은 조건의 Windows Terminal 비교, runner timing, 자원 제한,
+지속 실행 자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품 계측을
+추가해도 된다는 뜻은 아니다.
 
 ## 조사 근거
 

@@ -255,9 +255,9 @@ have elapsed. The probe flag is removed from the PowerShell child environment.
 The median was 4,566.2 ms, and all three runs preserved every ordered line and
 kept the GUI and integrated PowerShell process alive. This closes the
 deterministic 100,000-line/10-MiB completeness seam. It is not the complete bulk
-performance gate: matched Windows Terminal elapsed time and an explicit
-scrollback ceiling measurement remain pending. Retained-memory recovery is
-measured below.
+performance gate: matched Windows Terminal elapsed time remains pending.
+Retained-memory recovery and the explicit scrollback ceiling are measured
+below.
 
 ## 2026-08-12: release bulk-output input-latency distribution
 
@@ -338,8 +338,8 @@ Raw samples, run 3 (ms):
 All three independent distributions pass the 200 ms p95 bulk-output input
 latency ceiling with more than 4x headroom, while the GUI and integrated
 PowerShell process remain alive. This closes the PowerShell measurement seam on
-this machine. The matched Windows Terminal comparison, scrollback ceiling, and
-the separate `cmd.exe` release matrix remain pending.
+this machine. The matched Windows Terminal comparison and the separate
+`cmd.exe` release matrix remain pending.
 
 ## 2026-08-12: release bulk-output retained-memory distribution
 
@@ -400,3 +400,60 @@ MiB, so further renderer allocation work remains an optimization opportunity,
 not a P0 release blocker. Revalidation also preserved the 11.9 MB stream in
 4,819.2 ms and measured input latency at 41.8 ms median, 48.7 ms p95, and
 50.0 ms maximum.
+
+## 2026-08-12: explicit release scrollback ceiling
+
+- App source: `90bc57ec0a9d842eaf34c1220308347857a8d626`
+- Harness introduced at: `cedbba0430615050f8825ec34f580a0ab5e533e3`
+- Build and machine: unchanged from the preceding bulk-output measurements
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_scrollback_ceiling.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 60
+```
+
+The release-only probe uses the same verified 100,000-line, 11,900,000-byte
+foreground PowerShell workload. After xterm parses the complete stream and the
+end marker is visible, the frontend reports the configured scrollback, active
+viewport rows, and normal-buffer rows. Rust accepts the report only for the
+current session, exact probe opt-in, configured P0 ceiling, and a buffer whose
+retained rows exactly fill that ceiling. The black-box harness independently
+requires the same value and an active PowerShell PTY.
+
+An initial 10,000-row candidate retained 54.66 MiB above idle after clear and
+failed the 50 MiB release ceiling. A 5,000-row candidate passed once at
+48.33 MiB but left too little measurement margin. P0 therefore fixes the limit
+at 4,000 rows, four times xterm's previous implicit default while preserving the
+existing memory release gate.
+
+The release scrollback test retained exactly 4,000 rows after all 100,000 lines.
+Three independent retained-memory rechecks with that ceiling produced:
+
+| Independent run | Idle median | Retained median | Retained maximum | Maximum growth | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 148.43 MiB | 190.78 MiB | 193.52 MiB | 45.08 MiB | Ceiling pass |
+| 2 | 148.19 MiB | 191.18 MiB | 195.00 MiB | 46.81 MiB | Ceiling pass |
+| 3 | 150.62 MiB | 193.59 MiB | 197.66 MiB | 47.03 MiB | Ceiling pass |
+
+Raw idle samples (MiB):
+
+```text
+run 1: 147.922, 147.809, 148.074, 148.266, 148.359, 148.508, 148.824, 149.055, 148.918, 149.109
+run 2: 147.668, 147.652, 147.770, 148.047, 148.094, 148.277, 148.613, 148.828, 148.730, 148.855
+run 3: 150.152, 150.055, 150.258, 150.488, 150.547, 150.699, 151.047, 151.203, 151.066, 151.270
+```
+
+Raw retained samples (MiB):
+
+```text
+run 1: 193.438, 193.438, 193.438, 193.516, 190.719, 190.781, 190.781, 190.766, 190.664, 190.730
+run 2: 194.992, 194.992, 194.996, 194.996, 191.137, 191.121, 191.184, 191.156, 191.176, 191.129
+run 3: 197.648, 197.656, 197.656, 197.656, 193.547, 193.555, 193.617, 193.539, 193.566, 193.555
+```
+
+All three runs stay below the 50 MiB retained-memory release ceiling while the
+GUI and integrated PowerShell remain alive. The explicit scrollback gap is now
+closed. Revalidation preserved all 11,900,000 bytes in 5,105.0 ms and measured
+bulk-output input latency at 41.8 ms median, 48.6 ms p95, and 50.8 ms maximum.
+The matched Windows Terminal comparison remains separate.

@@ -190,10 +190,11 @@ ordering, partial failure, and cancellation behavior are binding in the
   logs do not record raw commands, PTY output, environment variables, working
   paths, clipboard contents, or serialized execution plans.
 - Wingman-owned scrollback and visible recall are in memory for the current
-  session only. Wingman does not override the active shell's configured native
-  history, which may persist and may contain an opaque runner invocation. Any
-  future persistent Wingman history is a separate opt-in feature with a visible
-  location, retention control, and deletion control.
+  session only. P0 retains at most 4,000 scrollback rows per terminal session,
+  excluding the active viewport. Wingman does not override the active shell's
+  configured native history, which may persist and may contain an opaque runner
+  invocation. Any future persistent Wingman history is a separate opt-in
+  feature with a visible location, retention control, and deletion control.
 - Automatic secret redaction is not sufficient protection because arbitrary
   terminal data cannot be classified reliably.
 - Copy requires an explicit user action on selected terminal text. Single-line

@@ -124,8 +124,8 @@ the matched Windows Terminal baseline, with 3x as the release ceiling.
 
 After output is cleared and the app settles, retained private working set is no
 more than 25 MiB above the earlier idle value as a target and 50 MiB as a
-ceiling. Scrollback is explicitly bounded; unlimited terminal history is not a
-P0 feature.
+ceiling. P0 retains at most 4,000 scrollback rows per terminal session, not
+counting the active viewport. Unlimited terminal history is not a P0 feature.
 
 Pipeline benchmarks also include channel capacity `1`, a deliberately slow
 consumer, one maximum-size record, invalid UTF-8 split across reads, and early
@@ -220,12 +220,12 @@ implementation gate; the performance contract does not authorize it.
 The prototype now has release-only whole-process-tree accounting for the settled
 Windows PowerShell idle case, an authenticated editor-readiness marker,
 environment-gated accepted-and-rendered normal-input and bulk input-latency
-probes, a deterministic 100,000-line/10-MiB PTY completeness probe, and a
-release whole-process-tree retained-memory distribution after clear. It still
-lacks a matched Windows Terminal comparison, an explicit scrollback ceiling,
-runner timing, resource limits, and endurance automation. These are planned
-measurement needs, not permission to add production instrumentation before
-implementation approval.
+probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release
+whole-process-tree retained-memory distribution after clear, and a release
+measurement of the 4,000-row scrollback ceiling. It still lacks a matched
+Windows Terminal comparison, runner timing, resource limits, and endurance
+automation. These are planned measurement needs, not permission to add
+production instrumentation before implementation approval.
 
 ## Research basis
 

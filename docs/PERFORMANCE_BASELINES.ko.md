@@ -237,8 +237,8 @@ terminal buffer에 end marker가 나타나고 animation frame 두 번이 지난 
 
 Median은 4,566.2 ms이고 세 실행 모두 모든 순서 줄을 보존했으며 GUI와 통합
 PowerShell process가 살아 있었다. 이 결과로 결정적 100,000줄/10MiB 완전성 seam을
-닫았다. 다만 Windows Terminal과 일치시킨 경과 시간과 명시적 scrollback 상한 측정은
-아직 남아 있으므로 완전한 대용량 성능 gate 통과 결과는 아니다. Retained-memory 회수는
+닫았다. 다만 Windows Terminal과 일치시킨 경과 시간은 아직 남아 있으므로 완전한
+대용량 성능 gate 통과 결과는 아니다. Retained-memory 회수와 명시적 scrollback 상한은
 아래에서 측정한다.
 
 ## 2026-08-12: release 대용량 출력 중 입력 latency 분포
@@ -317,8 +317,8 @@ child 환경에서 제거된다.
 
 세 독립 분포 모두 대용량 출력 중 입력 latency p95 상한 200 ms를 4배가 넘는 여유로
 통과했고 GUI와 통합 PowerShell process도 살아 있었다. 이 결과로 현재 장비의
-PowerShell 측정 seam을 닫았다. 같은 조건의 Windows Terminal 비교, scrollback 상한,
-별도 `cmd.exe` release matrix는 아직 남아 있다.
+PowerShell 측정 seam을 닫았다. 같은 조건의 Windows Terminal 비교와 별도 `cmd.exe`
+release matrix는 아직 남아 있다.
 
 ## 2026-08-12: release 대용량 출력 후 retained-memory 분포
 
@@ -373,3 +373,58 @@ Retained 원시 표본 (MiB):
 통과했다. 25 MiB 목표는 14.84~17.89 MiB 초과하므로 renderer 할당 추가 개선은 P0
 release blocker가 아니라 최적화 기회로 남는다. 재검증에서도 11.9 MB stream을
 4,819.2 ms에 보존했고 입력 latency는 median 41.8 ms, p95 48.7 ms, maximum 50.0 ms였다.
+
+## 2026-08-12: 명시적 release scrollback 상한
+
+- App source: `90bc57ec0a9d842eaf34c1220308347857a8d626`
+- Harness 최초 도입: `cedbba0430615050f8825ec34f580a0ab5e533e3`
+- Build와 machine: 앞선 대용량 출력 측정과 동일
+
+실행 명령:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_scrollback_ceiling.tests.ps1 -Executable src-tauri/target/release/wingman.exe -TimeoutSeconds 60
+```
+
+Release 전용 probe는 검증된 100,000줄·11,900,000바이트 foreground PowerShell
+workload를 그대로 사용한다. xterm이 전체 stream을 해석하고 끝 marker가 화면에 나타난
+뒤 frontend가 설정된 scrollback, 활성 viewport 행 수, normal buffer 행 수를 보고한다.
+Rust는 현재 세션, 정확한 probe opt-in, 설정된 P0 상한, 보존 행이 상한을 정확히 채운
+buffer인 경우에만 보고를 받는다. Black-box harness도 같은 값을 독립적으로 요구하고
+PowerShell PTY가 살아 있는지 확인한다.
+
+처음 검토한 10,000줄 후보는 clear 후 idle 대비 54.66 MiB를 남겨 50 MiB release
+상한을 넘었다. 5,000줄 후보는 한 번 48.33 MiB로 통과했지만 측정 여유가 부족했다.
+따라서 P0는 이전 xterm 암묵적 기본값의 4배이면서 기존 memory release gate를
+유지하는 4,000줄로 제한한다.
+
+Release scrollback 테스트는 100,000줄 처리 후 정확히 4,000줄을 보존했다. 이 상한으로
+다시 측정한 독립 retained-memory 분포 세 개는 다음과 같다.
+
+| 독립 실행 | Idle median | Retained median | Retained maximum | 최대 증가 | 결과 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 148.43 MiB | 190.78 MiB | 193.52 MiB | 45.08 MiB | 상한 통과 |
+| 2 | 148.19 MiB | 191.18 MiB | 195.00 MiB | 46.81 MiB | 상한 통과 |
+| 3 | 150.62 MiB | 193.59 MiB | 197.66 MiB | 47.03 MiB | 상한 통과 |
+
+Idle 원시 표본 (MiB):
+
+```text
+실행 1: 147.922, 147.809, 148.074, 148.266, 148.359, 148.508, 148.824, 149.055, 148.918, 149.109
+실행 2: 147.668, 147.652, 147.770, 148.047, 148.094, 148.277, 148.613, 148.828, 148.730, 148.855
+실행 3: 150.152, 150.055, 150.258, 150.488, 150.547, 150.699, 151.047, 151.203, 151.066, 151.270
+```
+
+Retained 원시 표본 (MiB):
+
+```text
+실행 1: 193.438, 193.438, 193.438, 193.516, 190.719, 190.781, 190.781, 190.766, 190.664, 190.730
+실행 2: 194.992, 194.992, 194.996, 194.996, 191.137, 191.121, 191.184, 191.156, 191.176, 191.129
+실행 3: 197.648, 197.656, 197.656, 197.656, 193.547, 193.555, 193.617, 193.539, 193.566, 193.555
+```
+
+세 실행 모두 GUI와 통합 PowerShell이 살아 있는 동안 retained-memory release 상한
+50 MiB 아래를 유지했다. 명시적 scrollback 공백은 닫혔다. 재검증에서도 11,900,000
+바이트를 5,105.0 ms에 모두 보존했고 대용량 출력 중 입력 latency는 median 41.8 ms,
+p95 48.6 ms, maximum 50.8 ms였다. 같은 조건의 Windows Terminal 비교는 별도 작업으로
+남는다.

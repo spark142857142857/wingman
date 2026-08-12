@@ -171,7 +171,8 @@ Wingman이 소유한 P0 명령은 제한된 문법과 문서화된 의미로 안
 - 터미널 입력과 출력은 기본적으로 민감한 정보다. 배포 진단 로그에 원문 명령,
   PTY 출력, 환경 변수, 작업 경로, 클립보드 내용, 직렬화된 실행 계획을 기록하지
   않는다.
-- Wingman이 소유한 scrollback과 화면 recall만 현재 세션 메모리에 둔다. Wingman은
+- Wingman이 소유한 scrollback과 화면 recall만 현재 세션 메모리에 둔다. P0는 활성
+  viewport를 제외하고 터미널 세션마다 scrollback을 최대 4,000줄 보존한다. Wingman은
   활성 셸의 설정된 네이티브 history를 바꾸지 않는다. 이 history는 영구 저장될 수
   있고 불투명한 runner 호출을 담을 수 있다. 향후 Wingman 영구 history는 저장 위치,
   보존·삭제 설정이 보이는 별도 opt-in 기능으로 만든다.
