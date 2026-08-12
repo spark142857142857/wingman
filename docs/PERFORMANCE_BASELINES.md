@@ -255,9 +255,9 @@ have elapsed. The probe flag is removed from the PowerShell child environment.
 The median was 4,566.2 ms, and all three runs preserved every ordered line and
 kept the GUI and integrated PowerShell process alive. This closes the
 deterministic 100,000-line/10-MiB completeness seam. It is not the complete bulk
-performance gate: matched Windows Terminal elapsed time, retained-memory
-recovery after clear, and an explicit scrollback ceiling measurement remain
-pending.
+performance gate: matched Windows Terminal elapsed time and an explicit
+scrollback ceiling measurement remain pending. Retained-memory recovery is
+measured below.
 
 ## 2026-08-12: release bulk-output input-latency distribution
 
@@ -338,5 +338,65 @@ Raw samples, run 3 (ms):
 All three independent distributions pass the 200 ms p95 bulk-output input
 latency ceiling with more than 4x headroom, while the GUI and integrated
 PowerShell process remain alive. This closes the PowerShell measurement seam on
-this machine. The matched Windows Terminal comparison, retained-memory recovery,
-scrollback ceiling, and the separate `cmd.exe` release matrix remain pending.
+this machine. The matched Windows Terminal comparison, scrollback ceiling, and
+the separate `cmd.exe` release matrix remain pending.
+
+## 2026-08-12: release bulk-output retained-memory distribution
+
+- App source: `d1415336dcec620b3a6e3e8d00d38a3cd9a07f54`
+- Harness introduced at: `a04fa4e464b58cd223ec57f11e64f6160394803b`
+- Per-process diagnostics added at: `7447aac59fc1ecd5082d37b8bdccaff542dba9d9`
+- Build and machine: unchanged from the preceding bulk-output measurements
+
+Command:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_retained_memory.tests.ps1 -Executable src-tauri/target/release/wingman.exe -PhaseTimeoutSeconds 90
+```
+
+The black-box harness records ten one-second whole-process-tree private-working-
+set samples after a 10-second idle settle. The probe then runs the verified
+100,000-line, 11,900,000-byte generator as a foreground child PowerShell,
+renders and validates the entire stream, submits `Clear-Host` through the normal
+xterm/Tauri/Rust/PTY input path, and exposes completion only after a fixed marker
+is rendered. After another 10-second settle, the harness records ten retained
+samples. The child generator must have exited while the GUI and integrated
+PowerShell remain alive.
+
+The first implementation had no output backpressure. A standard diagnostic run
+retained as much as 280.42 MiB from a 147.68 MiB idle median, a 132.74 MiB
+increase and a hard-ceiling failure. Short per-process diagnostics attributed
+most growth to the WebView renderer. The fix sequences every PTY chunk and lets
+the Rust reader deliver the next chunk only after xterm acknowledges parsing the
+previous one. Session replacement closes this flow and wakes a blocked old
+reader. Moving the deterministic generator into a foreground child also avoids
+retaining its heap in the long-lived interactive PowerShell.
+
+| Independent run | Idle median | Retained median | Retained maximum | Maximum growth | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 146.99 MiB | 187.28 MiB | 187.30 MiB | 40.31 MiB | Ceiling pass |
+| 2 | 148.66 MiB | 187.66 MiB | 191.55 MiB | 42.89 MiB | Ceiling pass |
+| 3 | 147.78 MiB | 184.88 MiB | 187.62 MiB | 39.84 MiB | Ceiling pass |
+
+Raw idle samples (MiB):
+
+```text
+run 1: 147.207, 146.992, 146.992, 146.992, 146.977, 146.980, 146.980, 146.996, 146.758, 146.738
+run 2: 147.688, 147.664, 148.246, 148.469, 148.566, 148.762, 149.102, 149.203, 149.086, 149.238
+run 3: 147.250, 147.215, 147.328, 147.613, 147.699, 147.859, 148.230, 148.387, 148.250, 148.406
+```
+
+Raw retained samples (MiB):
+
+```text
+run 1: 187.301, 187.301, 187.301, 187.301, 187.281, 187.281, 187.281, 187.281, 187.281, 187.195
+run 2: 191.488, 191.551, 191.555, 187.598, 187.656, 187.664, 187.664, 187.453, 187.469, 187.379
+run 3: 187.621, 187.621, 187.621, 187.621, 184.844, 184.852, 184.914, 184.602, 184.523, 184.594
+```
+
+All three runs pass the absolute 350 MiB ceiling and the relative 50 MiB
+retained-memory release ceiling. They miss the 25 MiB target by 14.84 to 17.89
+MiB, so further renderer allocation work remains an optimization opportunity,
+not a P0 release blocker. Revalidation also preserved the 11.9 MB stream in
+4,819.2 ms and measured input latency at 41.8 ms median, 48.7 ms p95, and
+50.0 ms maximum.

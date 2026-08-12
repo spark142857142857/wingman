@@ -237,9 +237,9 @@ terminal buffer에 end marker가 나타나고 animation frame 두 번이 지난 
 
 Median은 4,566.2 ms이고 세 실행 모두 모든 순서 줄을 보존했으며 GUI와 통합
 PowerShell process가 살아 있었다. 이 결과로 결정적 100,000줄/10MiB 완전성 seam을
-닫았다. 다만 Windows Terminal과 일치시킨 경과 시간, clear 후 retained-memory 회수,
-명시적 scrollback 상한 측정은 아직 남아 있으므로 완전한 대용량 성능 gate 통과 결과는
-아니다.
+닫았다. 다만 Windows Terminal과 일치시킨 경과 시간과 명시적 scrollback 상한 측정은
+아직 남아 있으므로 완전한 대용량 성능 gate 통과 결과는 아니다. Retained-memory 회수는
+아래에서 측정한다.
 
 ## 2026-08-12: release 대용량 출력 중 입력 latency 분포
 
@@ -317,5 +317,59 @@ child 환경에서 제거된다.
 
 세 독립 분포 모두 대용량 출력 중 입력 latency p95 상한 200 ms를 4배가 넘는 여유로
 통과했고 GUI와 통합 PowerShell process도 살아 있었다. 이 결과로 현재 장비의
-PowerShell 측정 seam을 닫았다. 같은 조건의 Windows Terminal 비교, retained-memory
-회수, scrollback 상한, 별도 `cmd.exe` release matrix는 아직 남아 있다.
+PowerShell 측정 seam을 닫았다. 같은 조건의 Windows Terminal 비교, scrollback 상한,
+별도 `cmd.exe` release matrix는 아직 남아 있다.
+
+## 2026-08-12: release 대용량 출력 후 retained-memory 분포
+
+- App source: `d1415336dcec620b3a6e3e8d00d38a3cd9a07f54`
+- Harness 최초 도입: `a04fa4e464b58cd223ec57f11e64f6160394803b`
+- Process별 진단 추가: `7447aac59fc1ecd5082d37b8bdccaff542dba9d9`
+- Build와 machine: 앞선 대용량 출력 측정과 동일
+
+실행 명령:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_retained_memory.tests.ps1 -Executable src-tauri/target/release/wingman.exe -PhaseTimeoutSeconds 90
+```
+
+Black-box harness는 10초 idle 안정화 후 전체 process tree private working set을 1초
+간격으로 10회 기록한다. Probe는 검증된 100,000줄·11,900,000바이트 generator를
+foreground child PowerShell로 실행하고 전체 stream을 렌더·검증한다. 이어서 정상
+xterm/Tauri/Rust/PTY 입력 경로로 `Clear-Host`를 제출하고 고정 marker가 렌더된 뒤에만
+완료를 노출한다. 다시 10초 안정화한 후 retained 표본 10개를 기록한다. 이때 child
+generator는 종료됐고 GUI와 통합 PowerShell은 살아 있어야 한다.
+
+첫 구현은 출력 backpressure가 없었다. 표준 진단 실행은 idle median 147.68 MiB에서
+최대 280.42 MiB를 남겨 132.74 MiB 증가로 hard ceiling에 실패했다. 짧은 process별
+진단에서 증가 대부분이 WebView renderer에 집중됐다. 수정 후 모든 PTY chunk에 sequence를
+붙이고 xterm이 앞 chunk의 해석 완료를 ACK한 뒤에만 Rust reader가 다음 chunk를 전달한다.
+Session 교체는 이 flow를 닫아 대기 중인 이전 reader를 깨운다. 결정적 generator를
+foreground child로 옮겨 장기 실행 PowerShell에 generator heap이 남는 것도 막았다.
+
+| 독립 실행 | Idle median | Retained median | Retained maximum | 최대 증가 | 결과 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 146.99 MiB | 187.28 MiB | 187.30 MiB | 40.31 MiB | 상한 통과 |
+| 2 | 148.66 MiB | 187.66 MiB | 191.55 MiB | 42.89 MiB | 상한 통과 |
+| 3 | 147.78 MiB | 184.88 MiB | 187.62 MiB | 39.84 MiB | 상한 통과 |
+
+Idle 원시 표본 (MiB):
+
+```text
+실행 1: 147.207, 146.992, 146.992, 146.992, 146.977, 146.980, 146.980, 146.996, 146.758, 146.738
+실행 2: 147.688, 147.664, 148.246, 148.469, 148.566, 148.762, 149.102, 149.203, 149.086, 149.238
+실행 3: 147.250, 147.215, 147.328, 147.613, 147.699, 147.859, 148.230, 148.387, 148.250, 148.406
+```
+
+Retained 원시 표본 (MiB):
+
+```text
+실행 1: 187.301, 187.301, 187.301, 187.301, 187.281, 187.281, 187.281, 187.281, 187.281, 187.195
+실행 2: 191.488, 191.551, 191.555, 187.598, 187.656, 187.664, 187.664, 187.453, 187.469, 187.379
+실행 3: 187.621, 187.621, 187.621, 187.621, 184.844, 184.852, 184.914, 184.602, 184.523, 184.594
+```
+
+세 실행 모두 absolute 350 MiB 상한과 상대 증가 50 MiB retained-memory 배포 상한을
+통과했다. 25 MiB 목표는 14.84~17.89 MiB 초과하므로 renderer 할당 추가 개선은 P0
+release blocker가 아니라 최적화 기회로 남는다. 재검증에서도 11.9 MB stream을
+4,819.2 ms에 보존했고 입력 latency는 median 41.8 ms, p95 48.7 ms, maximum 50.0 ms였다.
