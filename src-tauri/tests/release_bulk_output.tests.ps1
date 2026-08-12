@@ -53,7 +53,7 @@ try {
     }
 
     $elapsed = ((Get-Date) - $startedAt).TotalMilliseconds
-    Write-Output ("Release GUI validated and rendered 100,000 lines (12,800,000 bytes) in {0:N1} ms." -f $elapsed)
+    Write-Output ("Release GUI validated and rendered 100,000 lines (11,900,000 UTF-8 bytes) in {0:N1} ms." -f $elapsed)
 }
 finally {
     $liveApp = Get-Process -Id $app.Id -ErrorAction SilentlyContinue
