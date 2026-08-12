@@ -17,88 +17,87 @@ if (
     }
 
   $script:WingmanReadinessClient = $null
-  try {
-    $script:WingmanReadinessClient = New-Object System.IO.Pipes.NamedPipeClientStream(
-      '.',
-      $script:WingmanReadinessPipe,
-      [System.IO.Pipes.PipeDirection]::Out,
-      [System.IO.Pipes.PipeOptions]::Asynchronous
-    )
-    $script:WingmanReadinessClient.Connect(250)
-  } catch {
-    if ($null -ne $script:WingmanReadinessClient) {
-      $script:WingmanReadinessClient.Dispose()
+  $script:WingmanReadinessSequence = [uint64] 0
+  $script:WingmanReadinessLatch = $false
+  $script:WingmanOriginalPrompt = $function:prompt
+
+  function global:prompt {
+    $replacementHandler = Get-PSReadLineKeyHandler |
+      Where-Object {
+        $_.Key -eq 'Ctrl+x,Ctrl+w' -and
+        $_.Function -eq 'WingmanReplaceLineV1'
+      } |
+      Select-Object -First 1
+    $script:WingmanReadinessLatch = $null -ne $replacementHandler
+
+    if ($null -ne $script:WingmanOriginalPrompt) {
+      return & $script:WingmanOriginalPrompt
     }
-    $script:WingmanReadinessClient = $null
+    return "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
   }
 
-  if ($null -ne $script:WingmanReadinessClient) {
-    $script:WingmanReadinessSequence = [uint64] 0
-    $script:WingmanReadinessLatch = $false
-    $script:WingmanOriginalPrompt = $function:prompt
+  if ($null -ne $function:PSConsoleHostReadLine) {
+    function global:PSConsoleHostReadLine {
+      Microsoft.PowerShell.Core\Set-StrictMode -Off
 
-    function global:prompt {
-      $replacementHandler = Get-PSReadLineKeyHandler |
-        Where-Object {
-          $_.Key -eq 'Ctrl+x,Ctrl+w' -and
-          $_.Function -eq 'WingmanReplaceLineV1'
-        } |
-        Select-Object -First 1
-      $script:WingmanReadinessLatch = $null -ne $replacementHandler
-
-      if ($null -ne $script:WingmanOriginalPrompt) {
-        return & $script:WingmanOriginalPrompt
-      }
-      return "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
-    }
-
-    if ($null -ne $function:PSConsoleHostReadLine) {
-      function global:PSConsoleHostReadLine {
-        Microsoft.PowerShell.Core\Set-StrictMode -Off
-
-        $script:WingmanReadinessSequence++
-        $signalReadiness = $script:WingmanReadinessLatch
-        $script:WingmanReadinessLatch = $false
-        if ($signalReadiness -and $null -ne $script:WingmanReadinessClient) {
-          $locationKind = if (
-            $executionContext.SessionState.Path.CurrentLocation.Provider.Name -eq 'FileSystem'
-          ) {
-            'filesystem'
-          } else {
-            'non-filesystem'
+      $script:WingmanReadinessSequence++
+      $signalReadiness = $script:WingmanReadinessLatch
+      $script:WingmanReadinessLatch = $false
+      if ($signalReadiness -and $null -eq $script:WingmanReadinessClient) {
+        try {
+          $script:WingmanReadinessClient = New-Object System.IO.Pipes.NamedPipeClientStream(
+            '.',
+            $script:WingmanReadinessPipe,
+            [System.IO.Pipes.PipeDirection]::Out,
+            [System.IO.Pipes.PipeOptions]::Asynchronous
+          )
+          $script:WingmanReadinessClient.Connect(250)
+        } catch {
+          if ($null -ne $script:WingmanReadinessClient) {
+            $script:WingmanReadinessClient.Dispose()
           }
-          $shellDepth = [Math]::Max(0, [int] $nestedPromptLevel)
-          $frame = "1;$script:WingmanReadinessNonce;$script:WingmanReadinessSequence;powershell;$shellDepth;$locationKind;psreadline-replace-v1`n"
-          $bytes = [System.Text.Encoding]::ASCII.GetBytes($frame)
-          try {
-            $write = $script:WingmanReadinessClient.BeginWrite(
-              $bytes,
-              0,
-              $bytes.Length,
-              $null,
-              $null
-            )
-            if ($write.AsyncWaitHandle.WaitOne(50)) {
-              $script:WingmanReadinessClient.EndWrite($write)
-              $write.AsyncWaitHandle.Close()
-            } else {
-              $write.AsyncWaitHandle.Close()
-              $script:WingmanReadinessClient.Dispose()
-              $script:WingmanReadinessClient = $null
-            }
-          } catch {
-            if ($null -ne $script:WingmanReadinessClient) {
-              $script:WingmanReadinessClient.Dispose()
-            }
+          $script:WingmanReadinessClient = $null
+        }
+      }
+      if ($signalReadiness -and $null -ne $script:WingmanReadinessClient) {
+        $locationKind = if (
+          $executionContext.SessionState.Path.CurrentLocation.Provider.Name -eq 'FileSystem'
+        ) {
+          'filesystem'
+        } else {
+          'non-filesystem'
+        }
+        $shellDepth = [Math]::Max(0, [int] $nestedPromptLevel)
+        $frame = "1;$script:WingmanReadinessNonce;$script:WingmanReadinessSequence;powershell;$shellDepth;$locationKind;psreadline-replace-v1`n"
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($frame)
+        try {
+          $write = $script:WingmanReadinessClient.BeginWrite(
+            $bytes,
+            0,
+            $bytes.Length,
+            $null,
+            $null
+          )
+          if ($write.AsyncWaitHandle.WaitOne(50)) {
+            $script:WingmanReadinessClient.EndWrite($write)
+            $write.AsyncWaitHandle.Close()
+          } else {
+            $write.AsyncWaitHandle.Close()
+            $script:WingmanReadinessClient.Dispose()
             $script:WingmanReadinessClient = $null
           }
+        } catch {
+          if ($null -ne $script:WingmanReadinessClient) {
+            $script:WingmanReadinessClient.Dispose()
+          }
+          $script:WingmanReadinessClient = $null
         }
-
-        return [Microsoft.PowerShell.PSConsoleReadLine]::ReadLine(
-          $host.Runspace,
-          $ExecutionContext
-        )
       }
+
+      return [Microsoft.PowerShell.PSConsoleReadLine]::ReadLine(
+        $host.Runspace,
+        $ExecutionContext
+      )
     }
   }
 }
