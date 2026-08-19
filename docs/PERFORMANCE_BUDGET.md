@@ -253,10 +253,12 @@ environment-gated accepted-and-rendered normal-input and bulk input-latency
 probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release
 whole-process-tree retained-memory distribution after clear, and a release
 measurement of the 4,000-row scrollback ceiling. The same release workload is
-also measured against a one-tab Windows Terminal baseline. It still lacks
-controlled-restart uncached runner timing and endurance automation. These are
-planned measurement needs, not permission to add production instrumentation
-before implementation approval.
+also measured against a one-tab Windows Terminal baseline. A controlled-restart
+runner harness now rejects more than one recorded operation per Windows boot
+and requires five unique boots per operation. The five-boot distributions and
+accepted uncached targets are not yet recorded, and endurance automation is
+still missing. These are measurement gaps, not permission to mislabel warmed
+samples or add production telemetry.
 
 ## Research basis
 

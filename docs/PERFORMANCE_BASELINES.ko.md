@@ -761,3 +761,24 @@ rm +1: (3546.170, 49.813, 49.145), (3799.951, 49.855, 49.160), (3823.587, 49.809
 90개가 모두 80 MiB 아래였다. 정확한계 작업은 filesystem 효과를 모두 완료했고, 모든
 +1 경우는 atomic했으며 staging item, runner process, resource sandbox가 남지 않았다.
 이 결과로 mutation release 자원 gate를 닫았다.
+
+## 2026-08-19: controlled-restart runner harness
+
+Windows system file cache를 비웠다고 주장하지 않는 재현 가능한 uncached runner
+harness를 추가했다. Marker가 있는 영구 fixture 하나를 준비하고 boot 하나마다
+`grep`, `find`, redirect `cat`, redirect `sort` 중 정확히 하나만 실행한다. Coordinator는
+15분이 지난 boot와 같은 boot의 두 번째 표본을 거부하고 정확한 source commit과
+Windows build를 로컬에 기록하며 operation마다 서로 다른 boot 5개가 모여야 분포를
+출력한다.
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_uncached_runner.tests.ps1 -Mode Prepare -FixtureRoot C:\wingman-perf\runner-uncached
+# 통제된 재시작 뒤 operation 하나만 실행한다.
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_uncached_runner.tests.ps1 -Mode Sample -FixtureRoot C:\wingman-perf\runner-uncached -Operation grep
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_uncached_runner.tests.ps1 -Mode Validate -FixtureRoot C:\wingman-perf\runner-uncached
+```
+
+따뜻한 상태의 harness smoke로 100 MiB corpus를 통과하는 실제 release broker·runner
+경로와 versioned result marker를 확인했다. 이 시간값은 의도적으로 버렸고 uncached
+근거가 아니다. 아직 controlled-restart 표본을 저장소에 기록하지 않았으므로 uncached
+target은 미설정이고 이 release gate는 열려 있다.

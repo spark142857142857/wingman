@@ -815,3 +815,26 @@ The overall maximum was 53.01 MiB working set and 58.37 MiB private bytes. All
 filesystem effects; every plus-one case was atomic, and no staging item,
 runner process, or resource sandbox remained. This closes the mutation release
 resource gate.
+
+## 2026-08-19: controlled-restart runner harness
+
+The uncached runner harness is now reproducible without claiming to purge the
+Windows system file cache. It prepares one persistent, marked fixture and runs
+exactly one of `grep`, `find`, redirected `cat`, or redirected `sort` per boot.
+The coordinator rejects a boot older than 15 minutes, rejects a second sample
+from the same boot, records the exact source commit and Windows build locally,
+and requires five unique boots for every operation before producing a
+distribution.
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_uncached_runner.tests.ps1 -Mode Prepare -FixtureRoot C:\wingman-perf\runner-uncached
+# After a controlled restart, run one operation only:
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_uncached_runner.tests.ps1 -Mode Sample -FixtureRoot C:\wingman-perf\runner-uncached -Operation grep
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_uncached_runner.tests.ps1 -Mode Validate -FixtureRoot C:\wingman-perf\runner-uncached
+```
+
+A warmed harness smoke completed the real release broker/runner path over the
+100 MiB corpus and emitted the versioned result marker. Its timing was
+deliberately discarded and is not uncached evidence. No controlled-restart
+sample is checked into the repository yet, so uncached targets remain unset
+and this release gate remains open.

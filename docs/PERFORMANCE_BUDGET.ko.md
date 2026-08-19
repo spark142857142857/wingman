@@ -229,9 +229,10 @@ process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 �
 수락·렌더 startup 및 대용량 출력 중 입력 latency probe, 결정적 100,000줄/10MiB PTY
 완전성 probe, clear 후 release 전체 process-tree retained-memory 분포, 4,000줄 scrollback
 상한의 release 측정이 있다. 같은 release workload를 단일 탭 Windows Terminal과도
-비교한다. controlled-restart uncached runner timing과 지속 실행 자동화는 아직 없다.
-이는 계획된 측정 요구사항이며 구현 승인 전에 제품 계측을 추가해도 된다는 뜻은
-아니다.
+비교한다. Controlled-restart runner harness는 Windows boot 하나에서 표본 하나만
+기록하고 operation마다 서로 다른 boot 5개를 요구한다. 하지만 5-boot 분포와 승인할
+uncached target은 아직 기록하지 않았고 지속 실행 자동화도 남아 있다. 이는 warmed
+표본을 cold라고 부르거나 제품 telemetry를 추가해도 된다는 뜻이 아니다.
 
 ## 조사 근거
 
