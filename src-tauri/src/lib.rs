@@ -21,6 +21,7 @@ const PERFORMANCE_BULK_OUTPUT_PROBE_ENV: &str = "WINGMAN_PERF_BULK_OUTPUT_PROBE"
 const PERFORMANCE_BULK_LATENCY_PROBE_ENV: &str = "WINGMAN_PERF_BULK_LATENCY_PROBE";
 const PERFORMANCE_BULK_RETENTION_PROBE_ENV: &str = "WINGMAN_PERF_BULK_RETENTION_PROBE";
 const PERFORMANCE_SCROLLBACK_PROBE_ENV: &str = "WINGMAN_PERF_SCROLLBACK_PROBE";
+const PERFORMANCE_ENDURANCE_PROBE_ENV: &str = "WINGMAN_PERF_ENDURANCE_PROBE";
 const PERFORMANCE_SCROLLBACK_ROWS: u32 = 4_000;
 
 pub mod app_launch;
@@ -123,6 +124,7 @@ struct AppState {
     performance_bulk_latency_probe: bool,
     performance_bulk_retention_probe: bool,
     performance_scrollback_probe: bool,
+    performance_endurance_probe: bool,
 }
 
 static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
@@ -152,6 +154,11 @@ static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
             .ok()
             .as_deref(),
     ),
+    performance_endurance_probe: performance_input_echo_probe_enabled(
+        std::env::var(PERFORMANCE_ENDURANCE_PROBE_ENV)
+            .ok()
+            .as_deref(),
+    ),
 });
 
 fn performance_input_echo_probe_enabled(value: Option<&str>) -> bool {
@@ -164,6 +171,7 @@ fn remove_performance_probe_environment(cmd: &mut CommandBuilder) {
     cmd.env_remove(PERFORMANCE_BULK_LATENCY_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_BULK_RETENTION_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_SCROLLBACK_PROBE_ENV);
+    cmd.env_remove(PERFORMANCE_ENDURANCE_PROBE_ENV);
 }
 
 fn terminal_pty_size(cols: u16, rows: u16) -> PtySize {
@@ -665,6 +673,50 @@ fn performance_scrollback_probe(client_session_id: u64) -> Result<PerformancePro
 }
 
 #[tauri::command]
+fn performance_endurance_probe(client_session_id: u64) -> Result<PerformanceProbeResult, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = guard
+        .as_ref()
+        .is_some_and(|session| session.id == client_session_id);
+    Ok(PerformanceProbeResult {
+        accepted,
+        enabled: accepted && APP_STATE.performance_endurance_probe,
+    })
+}
+
+#[tauri::command]
+fn mark_performance_endurance(
+    app: AppHandle,
+    client_session_id: u64,
+    phase: String,
+    cycle: u32,
+) -> Result<bool, String> {
+    let guard = APP_STATE.session.lock();
+    let accepted = APP_STATE.performance_endurance_probe
+        && guard
+            .as_ref()
+            .is_some_and(|session| session.id == client_session_id);
+    if !accepted {
+        return Ok(false);
+    }
+    let title = match phase.as_str() {
+        "baseline" if cycle == 0 => "Wingman - Endurance Baseline".to_string(),
+        "cycle" if (1..=10_000).contains(&cycle) => {
+            format!("Wingman - Endurance Cycle {cycle}")
+        }
+        "complete" if cycle > 0 => format!("Wingman - Endurance Complete {cycle}"),
+        "failed" => format!("Wingman - Endurance Failed {cycle}"),
+        _ => return Err("invalid endurance measurement phase".to_string()),
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_title(&title)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(true)
+}
+
+#[tauri::command]
 fn mark_performance_input_echo(app: AppHandle, client_session_id: u64) -> Result<bool, String> {
     let guard = APP_STATE.session.lock();
     let accepted = APP_STATE.performance_input_echo_probe
@@ -886,12 +938,14 @@ pub fn run() {
             performance_bulk_latency_probe,
             performance_bulk_retention_probe,
             performance_scrollback_probe,
+            performance_endurance_probe,
             mark_performance_input_echo,
             mark_performance_bulk_output,
             mark_performance_bulk_latency,
             mark_performance_scrollback,
             mark_performance_retention_baseline,
             mark_performance_retention_cleared,
+            mark_performance_endurance,
             acknowledge_pty_output,
             write_native_paste,
             handle_terminal_input,
@@ -924,12 +978,14 @@ mod tests {
         command.env(PERFORMANCE_BULK_LATENCY_PROBE_ENV, "1");
         command.env(PERFORMANCE_BULK_RETENTION_PROBE_ENV, "1");
         command.env(PERFORMANCE_SCROLLBACK_PROBE_ENV, "1");
+        command.env(PERFORMANCE_ENDURANCE_PROBE_ENV, "1");
         remove_performance_probe_environment(&mut command);
         assert_eq!(command.get_env(PERFORMANCE_INPUT_ECHO_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_OUTPUT_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_LATENCY_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_RETENTION_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_SCROLLBACK_PROBE_ENV), None);
+        assert_eq!(command.get_env(PERFORMANCE_ENDURANCE_PROBE_ENV), None);
     }
 
     #[test]
