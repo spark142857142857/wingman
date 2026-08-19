@@ -707,11 +707,6 @@ mod windows {
         Ok(PreparedRequestChannelV1 { wire, pipe })
     }
 
-    pub fn fetch_prepared_request(pipe_name: &OsStr, request_id: &str) -> io::Result<Vec<u8>> {
-        let (wire, _) = fetch_prepared_request_channel(pipe_name, request_id)?.into_parts();
-        Ok(wire)
-    }
-
     fn serve_session_broker(shared: Arc<SessionBrokerShared>, mut pipe: File) -> io::Result<()> {
         loop {
             match connect_server_pipe(&pipe) {
@@ -1118,8 +1113,8 @@ mod windows {
 
 #[cfg(windows)]
 pub use windows::{
-    fetch_prepared_request, fetch_prepared_request_channel, parse_editor_readiness_frame,
-    EditorAdapterCapabilityV1, EditorLocationKindV1, EditorReadinessBrokerV1,
-    EditorReadinessFrameV1, OneShotBrokerV1, PreparedCancellationReceiverV1,
-    PreparedRequestChannelV1, SessionBrokerV1, MAX_POWERSHELL_NESTED_DEPTH,
+    fetch_prepared_request_channel, parse_editor_readiness_frame, EditorAdapterCapabilityV1,
+    EditorLocationKindV1, EditorReadinessBrokerV1, EditorReadinessFrameV1, OneShotBrokerV1,
+    PreparedCancellationReceiverV1, PreparedRequestChannelV1, SessionBrokerV1,
+    MAX_POWERSHELL_NESTED_DEPTH,
 };

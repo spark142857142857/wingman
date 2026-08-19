@@ -182,9 +182,6 @@ struct PtySession {
     compat_enabled: bool,
     terminal: TerminalSessionV1,
     readiness: EditorReadinessBrokerV1,
-    #[allow(dead_code)]
-    broker_pipe_name: String,
-    #[allow(dead_code)]
     broker: SessionBrokerV1,
     output_flow: Arc<PtyOutputFlowV1>,
     _runtime_files: Option<RuntimeFilesV1>,
@@ -622,7 +619,6 @@ fn start_shell_inner(
             compat_enabled: false,
             terminal,
             readiness,
-            broker_pipe_name,
             broker,
             output_flow: output_flow.clone(),
             _runtime_files: Some(runtime_files),
@@ -1277,11 +1273,6 @@ mod tests {
                 "abcdef0123456789abcdef0123456789".to_string(),
             )
             .expect("start test readiness broker"),
-            broker_pipe_name: format!(
-                r"\\.\pipe\wingman-test-{}-{}",
-                session_id,
-                Uuid::new_v4().as_simple()
-            ),
             broker: SessionBrokerV1::start(&format!(
                 r"\\.\pipe\wingman-test-broker-{}-{}",
                 session_id,
