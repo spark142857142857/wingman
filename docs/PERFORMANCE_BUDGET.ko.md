@@ -156,6 +156,14 @@ Traversal·listing 정확한계에서도 release runner의 두 측정값은 각�
 결과는 명령 계약을 유지한다. 미리 수집하는 `find`·`ls` 실패는 넣어 둔 target을 그대로
 두고, 평평한 재귀 `grep` 실패는 이미 연 target을 빈 상태로 둔다.
 
+Mutation release runner의 peak working set과 표본 peak private bytes는 각각 80 MiB
+이하여야 한다. `mkdir`와 `touch`는 경로 operand 정확히 128개를 수락하고, 129개 wire
+request는 mutation 전에 거부한다. 재귀 `cp`, 같은 volume `mv`, 재귀 `rm`은 source tree
+항목 정확히 100,000개를 수락한다. 항목 하나를 더하면 global preflight에서 거부되어
+source가 그대로 있고 destination이나 staging artifact가 생기지 않으며, 고정 크기 진단
+하나만 출력해야 한다. 정확한계 `cp`는 완전한 destination을 commit하고, `mv`는 완전한
+tree를 이동하며, `rm`은 완전한 tree를 삭제해야 한다.
+
 재현 가능한 component 측정은 [성능 기준 측정 기록](PERFORMANCE_BASELINES.ko.md)에
 보관하며 전체 process-tree 배포 게이트를 대신하지 않는다.
 
@@ -221,9 +229,9 @@ process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 �
 수락·렌더 startup 및 대용량 출력 중 입력 latency probe, 결정적 100,000줄/10MiB PTY
 완전성 probe, clear 후 release 전체 process-tree retained-memory 분포, 4,000줄 scrollback
 상한의 release 측정이 있다. 같은 release workload를 단일 탭 Windows Terminal과도
-비교한다. controlled-restart uncached runner timing, mutation 자원 제한 release 측정,
-지속 실행 자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품
-계측을 추가해도 된다는 뜻은 아니다.
+비교한다. controlled-restart uncached runner timing과 지속 실행 자동화는 아직 없다.
+이는 계획된 측정 요구사항이며 구현 승인 전에 제품 계측을 추가해도 된다는 뜻은
+아니다.
 
 ## 조사 근거
 

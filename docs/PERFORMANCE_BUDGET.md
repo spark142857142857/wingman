@@ -170,6 +170,15 @@ unbounded resource growth. Redirect effects retain the command contract:
 pre-collected `find`/`ls` failures leave the seeded target untouched, while the
 flat recursive-`grep` failure leaves the already-opened target empty.
 
+Mutation release-runner peak working set and sampled peak private bytes must
+each remain at or below 80 MiB. `mkdir` and `touch` accept exactly 128 path
+operands; a 129-operand wire request is rejected before mutation. Recursive
+`cp`, same-volume `mv`, and recursive `rm` accept exactly 100,000 source-tree
+entries. One additional entry is a global preflight rejection: source state is
+unchanged, no destination or staging artifact appears, and the runner emits one
+bounded diagnostic. Exact `cp` must commit a complete destination, exact `mv`
+must move the complete tree, and exact `rm` must remove the complete tree.
+
 Reproducible component measurements are recorded in
 [PERFORMANCE_BASELINES.md](PERFORMANCE_BASELINES.md); they do not replace the
 whole process-tree release gate.
@@ -245,10 +254,9 @@ probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release
 whole-process-tree retained-memory distribution after clear, and a release
 measurement of the 4,000-row scrollback ceiling. The same release workload is
 also measured against a one-tab Windows Terminal baseline. It still lacks
-controlled-restart uncached runner timing, mutation resource-limit release
-measurements, and endurance automation. These are planned measurement needs,
-not permission to add production instrumentation before implementation
-approval.
+controlled-restart uncached runner timing and endurance automation. These are
+planned measurement needs, not permission to add production instrumentation
+before implementation approval.
 
 ## Research basis
 

@@ -726,3 +726,92 @@ All 72 runner processes stayed below 144 MiB, every exact boundary was
 accepted, every plus-one boundary was rejected, and no runner process or
 resource sandbox survived cleanup. This closes the traversal and listing
 release resource gate; mutation resource measurements remain separate.
+
+## 2026-08-19: release mutation resource ceiling
+
+- Runner source: `b9b3510d5adb14dbac707839445733ddc16f687a`
+- Harness and accepted ceiling: `dfb67530f85a10c1528b0a79d3b67e069282cd94`
+- OS, CPU, power plan, toolchain, and release profile: unchanged from the
+  preceding runner baselines
+
+Command:
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_mutation_resource_contract mutation_resource_limits_are_bounded_and_atomic -- --ignored --exact --nocapture
+```
+
+The real broker and release runner first execute `mkdir` and `touch` with the
+exact 128-path wire limit, then prove that 129 paths are rejected before any
+item is created. One private flat tree contains its root plus 99,999 files.
+Each distribution copies that exact 100,000-entry tree three times through the
+real same-parent staging/commit path and removes each complete destination with
+the real recursive `rm`. It then moves the source three times on the same NTFS
+volume, restoring only the test fixture between runner processes. Adding one
+file makes all recursive `cp`, `mv`, and `rm` requests fail global preflight.
+
+Every exact operation validates the complete final filesystem tree. Every
+plus-one case validates exit `2`, one bounded diagnostic, an unchanged source,
+no destination, and no `.wingman-stage-*` artifact. Lifetime peak working set
+and 2 ms sampled peak private bytes must each remain at or below 80 MiB.
+
+Peak pairs below are working-set/private-byte MiB. Distribution 1 selected the
+ceiling; distributions 2 and 3 enforce it. All three are below the final bound.
+
+| Distribution | mkdir 128 / +1 | touch 128 / +1 | cp 100k / +1 |
+| --- | ---: | ---: | ---: |
+| 1 | 4.62/0.87 · 4.45/0.74 | 4.60/0.87 · 4.45/0.72 | 36.19/42.12 · 26.73/25.37 |
+| 2 | 4.59/0.86 · 4.45/0.72 | 4.60/0.87 · 4.45/0.70 | 36.20/42.15 · 26.76/25.38 |
+| 3 | 4.59/0.86 · 4.46/0.71 | 4.62/0.87 · 4.45/0.70 | 36.18/42.16 · 26.78/25.45 |
+
+| Distribution | mv 100k / +1 | rm 100k / +1 |
+| --- | ---: | ---: |
+| 1 | 32.96/38.04 · 26.75/25.38 | 52.98/58.35 · 49.86/49.17 |
+| 2 | 33.09/38.19 · 26.81/25.45 | 53.00/58.37 · 49.87/49.17 |
+| 3 | 33.10/38.19 · 26.82/25.46 | 53.01/58.36 · 49.86/49.17 |
+
+Raw samples contain elapsed milliseconds, peak working-set MiB, and peak
+private-byte MiB in that order:
+
+```text
+distribution 1
+mkdir exact: (48.937, 4.598, 0.863), (38.456, 4.617, 0.871), (35.920, 4.594, 0.863)
+mkdir +1: (7.914, 4.426, 0.703), (7.498, 4.449, 0.715), (7.076, 4.430, 0.738)
+touch exact: (37.097, 4.602, 0.871), (39.123, 4.582, 0.867), (39.137, 4.602, 0.863)
+touch +1: (8.175, 4.418, 0.715), (6.947, 4.449, 0.719), (7.773, 4.449, 0.723)
+cp exact: (76553.940, 36.145, 42.043), (77061.022, 36.133, 42.051), (81915.964, 36.188, 42.121)
+cp +1: (3279.188, 26.703, 25.359), (3230.340, 26.730, 25.367), (3203.067, 26.730, 25.371)
+mv exact: (5485.596, 32.930, 38.027), (5457.134, 32.926, 38.020), (5466.160, 32.965, 38.043)
+mv +1: (3802.266, 26.734, 25.363), (3613.037, 26.754, 25.375), (3592.775, 26.711, 25.352)
+rm exact: (11833.502, 52.973, 58.324), (11717.701, 52.941, 58.348), (11966.245, 52.977, 58.352)
+rm +1: (3639.559, 49.859, 49.172), (3604.628, 49.801, 49.141), (3783.326, 49.809, 49.172)
+
+distribution 2
+mkdir exact: (42.121, 4.594, 0.863), (39.305, 4.594, 0.863), (39.247, 4.578, 0.859)
+mkdir +1: (7.114, 4.430, 0.719), (7.252, 4.445, 0.703), (7.171, 4.426, 0.691)
+touch exact: (43.435, 4.602, 0.867), (42.463, 4.594, 0.863), (40.691, 4.590, 0.859)
+touch +1: (9.737, 4.449, 0.695), (7.128, 4.418, 0.688), (6.628, 4.441, 0.688)
+cp exact: (68421.922, 36.168, 42.148), (94819.193, 36.031, 41.934), (62191.611, 36.199, 42.148)
+cp +1: (3390.574, 26.750, 25.367), (3313.122, 26.762, 25.375), (3551.066, 26.723, 25.383)
+mv exact: (5433.191, 33.039, 38.184), (5462.054, 33.043, 38.191), (5408.298, 33.086, 38.184)
+mv +1: (4484.835, 26.746, 25.367), (3577.803, 26.754, 25.359), (3649.303, 26.809, 25.453)
+rm exact: (12105.853, 52.949, 58.363), (11563.213, 53.004, 58.367), (11755.126, 52.945, 58.348)
+rm +1: (3630.914, 49.867, 49.168), (3588.822, 49.828, 49.168), (3692.383, 49.844, 49.164)
+
+distribution 3
+mkdir exact: (36.667, 4.594, 0.852), (35.738, 4.594, 0.863), (37.641, 4.594, 0.863)
+mkdir +1: (7.323, 4.449, 0.715), (7.267, 4.434, 0.691), (6.842, 4.461, 0.715)
+touch exact: (40.789, 4.594, 0.852), (37.360, 4.609, 0.871), (37.765, 4.621, 0.867)
+touch +1: (7.973, 4.426, 0.695), (7.503, 4.449, 0.699), (6.878, 4.438, 0.695)
+cp exact: (71058.632, 36.148, 42.164), (116181.171, 36.176, 42.148), (44308.381, 36.109, 42.043)
+cp +1: (3243.085, 26.781, 25.449), (3220.411, 26.750, 25.359), (3218.458, 26.734, 25.355)
+mv exact: (5709.724, 33.031, 38.113), (5353.394, 33.102, 38.191), (5317.231, 33.043, 38.109)
+mv +1: (3692.203, 26.816, 25.461), (3501.324, 26.719, 25.371), (3512.441, 26.707, 25.359)
+rm exact: (12314.285, 53.008, 58.355), (11735.352, 53.004, 58.355), (12841.725, 52.957, 58.355)
+rm +1: (3546.170, 49.813, 49.145), (3799.951, 49.855, 49.160), (3823.587, 49.809, 49.172)
+```
+
+The overall maximum was 53.01 MiB working set and 58.37 MiB private bytes. All
+90 runner processes stayed below 80 MiB. Exact operations completed their full
+filesystem effects; every plus-one case was atomic, and no staging item,
+runner process, or resource sandbox remained. This closes the mutation release
+resource gate.
