@@ -82,7 +82,8 @@ Familiar ON에서는 네이티브 PowerShell cmdlet, cmd built-in, 셸 변수, �
 [터미널 제출·세션 계약](TERMINAL_SESSION_CONTRACT.ko.md)을 따른다. 검증된 prompt
 marker와 세션 상태, foreground interactive 통과, Unicode·IME 편집, completion과
 알 수 없는 편집 fallback, 화면 원문 recall과 네이티브 history, 한 줄·여러 줄 paste
-확인, 확인된 중첩 `cmd`·PowerShell 전환, 고정 호출 교체, 세션 재시작, `Ctrl+C`를
+확인, 인증된 동일 process PowerShell 중첩 depth 전환과 foreground child 네이티브
+통과, 고정 호출 교체, 세션 재시작, `Ctrl+C`를
 다룬다.
 
 필수 negative case는 prompt처럼 보이는 출력, stale·malformed marker, Tab·history

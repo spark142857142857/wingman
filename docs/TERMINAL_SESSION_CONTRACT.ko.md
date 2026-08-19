@@ -102,9 +102,9 @@ Marker는 우연한 모호성을 막는 동기화 증거이지, 같은 사용자
 코드에서 설치하고 사용자의 보이는 prompt 동작을 보존하며 쓰기 가능한 임시
 profile을 사용하지 않아야 한다.
 
-제출 뒤 Wingman은 `Running`으로 간다. 다음 유효 prompt marker 또는 아래에서
-정한 확인된 중첩 셸 marker만 새 빈 `Editing/Reliable` 상태를 시작한다. Timeout,
-prompt처럼 보이는 글자, 터미널 침묵은 근거가 아니다.
+제출 뒤 Wingman은 `Running`으로 간다. 다음 유효 readiness frame 또는 아래에서
+정한 인증된 동일 process 중첩 depth frame만 새 빈 `Editing/Reliable` 상태를
+시작한다. Timeout, prompt처럼 보이는 글자, 터미널 침묵은 근거가 아니다.
 
 ## 입력 mirror와 Unicode
 
@@ -230,33 +230,23 @@ block을 Wingman 소유 작업 여러 개로 몰래 바꾸지 않는다.
 
 지원 터미널 셸 종류는 `cmd.exe`와 Windows PowerShell 5.1이지만, P0에서
 `Editing/Reliable`로 들어갈 수 있는 것은 검증된 PowerShell adapter뿐이다.
-`cmd`에 들어가면 Familiar interception을 중단하고 모든 입력을 네이티브로
-전달한다. 신뢰성 있게 캡처한 독립 PowerShell 한 줄이 바깥 공백을 제외하고
-대소문자 무시 기준으로 다음 중 하나와 같으면 문서화한 전환 후보다.
+`cmd`나 다른 foreground child에 들어가면 Familiar interception을 중단하고 child의
+모든 입력을 네이티브로 전달한다. 패키지 adapter는 child 환경에서 readiness pipe와
+nonce를 제거하므로 child `powershell.exe`, `cmd.exe`, `pwsh`, `wsl`, `bash`, `ssh`,
+언어 REPL, alias, script, profile은 prompt를 인증하거나 Wingman 소유 편집 상태를
+얻을 수 없다.
 
-```text
-cmd
-cmd.exe
-powershell
-powershell.exe
-```
+P0는 `$host.EnterNestedPrompt()` 등 Windows PowerShell 동일 process 안의 인증된
+중첩 prompt만 추적한다. 첫 유효 readiness frame은 depth `0`이어야 하고 이후 frame은
+마지막으로 검증한 depth에서 한 단계만 오르내릴 수 있으며 depth `16`을 넘을 수 없다.
+Depth는 persistent out-of-band adapter가 다음 올바른 sequence frame을 보낼 때만
+바뀐다. Prompt처럼 보이는 PTY 출력에는 권한이 없다.
 
-인자, 대입, pipeline, redirection, wrapper, alias, 경로가 있으면 해당하지 않는다.
-`pwsh`, `wsl`, `bash`, `ssh`, 언어 REPL과 다른 interactive program은 P0에서
-일반 네이티브 명령이다.
-
-후보를 제출하면 예상 child shell을 기록하지만 활성 셸 stack을 바로 바꾸지 않는다.
-일치하는 유효 child prompt marker가 push를 확정한다. Marker가 오지 않으면
-`Running` 또는 `Suspended`를 유지하고 입력을 네이티브로 전달한다.
-
-확인된 중첩 셸 prompt에서 독립 `exit`은 예상 pop을 기록하지만 미리 pop하지 않는다.
-일치하는 부모 prompt marker 뒤에만 부모 셸과 편집 상태를 활성화한다. Root 셸 exit은
-process 종료로 확인하고 Wingman 세션을 닫는다. Alias, script, profile, child
-process가 prompt처럼 보이는 글자를 출력하는 것만으로 stack을 바꿀 수 없다.
-
-P0 shell integration은 사용자 데이터를 셸 source에 넣지 않고 문서화한
-PowerShell 전환 안에서 유효 marker를 만들어야 한다. `cmd`와 그 밖의 child에서는
-Familiar interception을 중단한다. Prompt를 보고 셸을 추측하지 않는다.
+인증된 동일 process 중첩 prompt의 네이티브 `exit`은 인접한 낮은 depth의 유효
+frame이 도착한 뒤에만 부모로 돌아간 것으로 확정한다. Root 셸 exit은 process 종료로
+확인하고 Wingman 세션을 닫는다. 일반 foreground child가 끝난 뒤에는 원래 부모
+adapter만 이전에 인증한 depth에서 편집 상태를 다시 열 수 있다. 명령 철자나 화면
+prompt를 보고 셸 또는 depth를 추측하지 않는다.
 
 ## Interrupt·재시작·오래된 작업
 
@@ -298,8 +288,8 @@ Familiar interception을 중단한다. Prompt를 보고 셸을 추측하지 않�
    foreground program 실행 중 paste
 6. 네이티브 통과, continuation 입력, 테스트 interactive child, full-screen 형태 child,
    다음 유효 prompt 전 interception 금지
-7. 확인된 독립 PowerShell 중첩 전환, 네이티브 `cmd` 통과 전환, 해당하지 않는
-   인자·wrapper, 일치하는 `exit`, marker 누락, root exit
+7. 인증된 동일 process PowerShell 중첩 depth push/pop, depth 상한·jump 거부,
+   foreground `cmd`·child 네이티브 통과, 중첩 `exit`, frame 누락, 부모 복귀, root exit
 8. Familiar ON/OFF, 준비된 Reject·Execute·Control 교체, line·sequence mismatch,
    PTY write 실패, 세션 재시작, `Ctrl+C`
 

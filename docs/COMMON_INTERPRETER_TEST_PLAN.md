@@ -89,7 +89,8 @@ The exact automated, integration, and boundary-spike matrix follows the
 covers validated prompt markers and session states; foreground interactive
 pass-through; Unicode/IME editing; completion and unknown-edit fallback; raw
 visible recall versus native history; single- and multiline paste confirmation;
-confirmed nested `cmd`/PowerShell transitions; fixed-invocation replacement;
+authenticated same-process nested PowerShell depth transitions and native
+foreground-child pass-through; fixed-invocation replacement;
 session restart; and `Ctrl+C`.
 
 Required negative cases prove that prompt-looking output, stale or malformed

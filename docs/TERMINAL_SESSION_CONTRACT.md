@@ -107,10 +107,10 @@ sandbox boundary against a hostile process already running as the same user.
 The integration hook must be installed from protected packaged code, preserve
 the user's visible prompt behavior, and not use a writable temporary profile.
 
-After any submission Wingman enters `Running`. Only the next valid prompt
-marker, or a confirmed nested-shell marker described below, starts a new empty
-`Editing/Reliable` state. A timeout, plausible prompt text, or terminal silence
-never does so.
+After any submission Wingman enters `Running`. Only the next valid readiness
+frame, including an authenticated same-process nested-depth frame described
+below, starts a new empty `Editing/Reliable` state. A timeout, plausible prompt
+text, or terminal silence never does so.
 
 ## Input mirroring and Unicode
 
@@ -247,36 +247,25 @@ operations.
 
 The supported terminal shell kinds are `cmd.exe` and Windows PowerShell 5.1,
 but only a validated PowerShell adapter may enter `Editing/Reliable` in P0.
-Entering `cmd` suspends Familiar interception and keeps all input native. A
-reliably captured standalone PowerShell line, case-insensitively equal after
-outer whitespace to one of the following, is a documented transition candidate:
+Entering `cmd` or any other foreground child suspends Familiar interception and
+keeps all child input native. The packaged adapter removes the readiness pipe
+and nonce from the child environment, so a child `powershell.exe`, `cmd.exe`,
+`pwsh`, `wsl`, `bash`, `ssh`, language REPL, alias, script, or profile cannot
+authenticate a prompt or acquire Wingman-owned editing state.
 
-```text
-cmd
-cmd.exe
-powershell
-powershell.exe
-```
+P0 tracks only Windows PowerShell's same-process authenticated nested prompts,
+such as a prompt entered through `$host.EnterNestedPrompt()`. The first valid
+readiness frame must report depth `0`; later frames may change the last verified
+depth by at most one and may not exceed depth `16`. The depth changes only when
+the persistent out-of-band adapter supplies the next correctly sequenced frame.
+Prompt-looking PTY output has no authority.
 
-Arguments, assignments, pipelines, redirection, wrappers, aliases, and paths do
-not qualify. `pwsh`, `wsl`, `bash`, `ssh`, language REPLs, and other interactive
-programs are ordinary native commands in P0.
-
-Submitting a candidate records an expected child shell but does not immediately
-change the active-shell stack. A matching valid child prompt marker confirms
-the push. If no matching marker arrives, Wingman remains `Running` or
-`Suspended` and forwards input natively.
-
-At a confirmed nested-shell prompt, standalone `exit` records an expected pop
-but does not pop early. The parent shell and its editing state become active
-only after the matching parent prompt marker. Root-shell exit is confirmed by
-process termination and closes the Wingman session. An alias, script, profile,
-or child process cannot change the stack merely by printing prompt-like text.
-
-P0 shell integration must establish valid PowerShell markers inside a
-documented PowerShell transition without placing user data in shell source.
-For `cmd` and every other child, Familiar interception is suspended. Wingman
-never guesses a shell from its prompt.
+At an authenticated same-process nested prompt, native `exit` returns control
+to the parent only after a valid frame reports the adjacent lower depth. A root
+shell exit is confirmed by process termination and closes the Wingman session.
+After an ordinary foreground child exits, only the original parent adapter can
+re-establish editing at its previously authenticated depth. Wingman never
+guesses a shell or depth from command spelling or visible prompts.
 
 ## Interrupts, restart, and stale work
 
@@ -323,9 +312,9 @@ PowerShell 5.1:
    ordering, bracketed paste, and paste while a foreground program is active;
 6. native pass-through, continuation input, a test interactive child, a
    full-screen-style child, and no interception before the next valid prompt;
-7. confirmed standalone nested PowerShell transitions, transition into native
-   `cmd` pass-through, arguments and wrappers that do not qualify, matching
-   `exit`, missing markers, and root exit;
+7. authenticated same-process nested PowerShell depth push/pop, depth bounds and
+   jump rejection, native foreground `cmd`/child pass-through, matching nested
+   `exit`, missing frames, parent resumption, and root exit;
 8. Familiar ON/OFF, prepared rejection/execution/control replacement, line and
    sequence mismatches, PTY write failure, session restart, and `Ctrl+C`.
 
