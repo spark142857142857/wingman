@@ -288,7 +288,7 @@ fn known_cursor_delete_and_backspace_edits_reconstruct_the_exact_line() {
 #[test]
 fn unicode_backspace_and_middle_insertion_use_scalar_boundaries() {
     let mut session = ready_session(522);
-    let actions = session.handle_terminal_input("echo 한글🚀\u{7f}\u{1b}[D!\r", false);
+    let actions = session.handle_terminal_input("echo 한글\u{7f}\u{1b}[D!\r", false);
 
     assert!(matches!(
         actions.last(),
@@ -298,11 +298,35 @@ fn unicode_backspace_and_middle_insertion_use_scalar_boundaries() {
                 ..
             },
             editor: EditorSnapshotV1 {
-                character_count: 8,
-                cursor: 7,
+                character_count: 7,
+                cursor: 6,
             },
-        }) if raw_line == "echo 한!글"
+        }) if raw_line == "echo !한"
     ));
+}
+
+#[test]
+fn non_bmp_edits_force_native_fallback_before_utf16_can_diverge() {
+    for (session_id, data) in [
+        (538, "pwd 🚀\u{7f}\r"),
+        (539, "pwd 🚀\u{1b}[D\r"),
+        (
+            540,
+            "pwd 🚀\u{1b}[H\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[3~\r",
+        ),
+        (
+            541,
+            "pwd 🚀\u{1b}[H\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[C\u{1b}[C\r",
+        ),
+    ] {
+        let mut session = ready_session(session_id);
+        assert_eq!(
+            session.handle_terminal_input(data, true),
+            vec![TerminalInputActionV1::Forward {
+                data: data.to_string(),
+            }],
+        );
+    }
 }
 
 #[test]

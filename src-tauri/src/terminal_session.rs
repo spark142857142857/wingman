@@ -268,9 +268,18 @@ impl TerminalSessionV1 {
 
             if matches!(character, '\u{7f}' | '\u{8}') {
                 if self.input_reliable && self.input_cursor > 0 {
-                    self.input_cursor -= 1;
-                    let removed = self.input_buffer.remove(self.input_cursor);
-                    self.input_buffer_bytes -= removed.len_utf8();
+                    let removed = self.input_buffer[self.input_cursor - 1];
+                    if removed.len_utf16() > 1 {
+                        // Windows PowerShell 5.1 PSReadLine edits UTF-16 code
+                        // units here and can leave half of a surrogate pair.
+                        // Its resulting buffer cannot be mirrored as Rust
+                        // Unicode scalars, so preserve the native submission.
+                        self.input_reliable = false;
+                    } else {
+                        self.input_cursor -= 1;
+                        self.input_buffer.remove(self.input_cursor);
+                        self.input_buffer_bytes -= removed.len_utf8();
+                    }
                 }
                 push_forward(&mut actions, character.to_string());
                 continue;
@@ -419,13 +428,22 @@ impl TerminalSessionV1 {
             return false;
         }
         match sequence {
-            "\u{1b}[D" => self.input_cursor = self.input_cursor.saturating_sub(1),
+            "\u{1b}[D" => {
+                if self.input_cursor > 0 && self.input_buffer[self.input_cursor - 1].len_utf16() > 1
+                {
+                    return false;
+                }
+                self.input_cursor = self.input_cursor.saturating_sub(1);
+            }
             "\u{1b}[C" => {
                 if self.input_cursor == self.input_buffer.len() {
                     // PSReadLine may accept prediction text when ForwardChar is
                     // invoked at the end of the visible buffer. That inserted
                     // text never passed through this mirror, so the cycle is
                     // no longer reliable.
+                    return false;
+                }
+                if self.input_buffer[self.input_cursor].len_utf16() > 1 {
                     return false;
                 }
                 self.input_cursor += 1;
@@ -441,7 +459,11 @@ impl TerminalSessionV1 {
             }
             "\u{1b}[3~" => {
                 if self.input_cursor < self.input_buffer.len() {
-                    let removed = self.input_buffer.remove(self.input_cursor);
+                    let removed = self.input_buffer[self.input_cursor];
+                    if removed.len_utf16() > 1 {
+                        return false;
+                    }
+                    self.input_buffer.remove(self.input_cursor);
                     self.input_buffer_bytes -= removed.len_utf8();
                 }
             }

@@ -284,6 +284,112 @@ fn psreadline_chord_replaces_a_unicode_buffer_from_a_middle_cursor_position() {
 }
 
 #[test]
+fn psreadline_known_edits_match_the_unicode_mirror_contract() {
+    let integration_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("powershell_runner_transport.ps1");
+    let nonce = "abcdef0123456789abcdef0123456789";
+    let pipe_id = format!(
+        "wingman-readiness-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let pipe_name = format!(r"\\.\pipe\{pipe_id}");
+    let broker = EditorReadinessBrokerV1::start(&pipe_name, nonce.to_string())
+        .expect("start readiness broker");
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 24,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .expect("open PowerShell edit probe PTY");
+    let probe_setup = r#"
+      . $env:WINGMAN_INTEGRATION_SCRIPT
+      $script:WingmanBufferProbe = 0
+      Set-PSReadLineKeyHandler -Chord 'Ctrl+x,Ctrl+q' -BriefDescription 'WingmanBufferProbeV1' -ScriptBlock {
+        $line = $null
+        $cursor = 0
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref] $line, [ref] $cursor)
+        $script:WingmanBufferProbe++
+        $hex = [BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes($line)).Replace('-', '')
+        [Console]::Out.Write(('__WINGMAN_BUFFER_{0}__{1}:{2}__WINGMAN_BUFFER_{0}_END__' -f $script:WingmanBufferProbe, $hex, $cursor))
+        [Microsoft.PowerShell.PSConsoleReadLine]::RevertLine()
+      }
+    "#;
+    let mut command = CommandBuilder::new("powershell.exe");
+    command.args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NoExit",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        probe_setup,
+    ]);
+    command.env("WINGMAN_INTEGRATION_SCRIPT", integration_path);
+    command.env("WINGMAN_SESSION_NONCE", nonce);
+    command.env("WINGMAN_READINESS_PIPE", &pipe_id);
+    let mut child = pair
+        .slave
+        .spawn_command(command)
+        .expect("spawn integrated PowerShell edit probe");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("clone PowerShell edit probe reader");
+    let mut writer = pair
+        .master
+        .take_writer()
+        .expect("take PowerShell edit probe writer");
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut bytes = [0u8; 4096];
+        while let Ok(count) = reader.read(&mut bytes) {
+            if count == 0 || sender.send(bytes[..count].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+
+    assert_eq!(
+        receive_readiness(&broker, Duration::from_secs(8)).sequence,
+        1
+    );
+    writer
+        .write_all("pxwd 한글\u{1b}[H\u{1b}[C\u{1b}[3~\u{1b}[F\u{1b}[D!".as_bytes())
+        .expect("type known Unicode edit sequence");
+    writer
+        .write_all(b"\x18\x11")
+        .expect("request first PSReadLine buffer probe");
+    writer.flush().expect("flush first edit probe");
+    let first = receive_until(
+        &receiver,
+        "__WINGMAN_BUFFER_1_END__",
+        Duration::from_secs(8),
+    );
+    assert_buffer_probe(&first, 1, "pwd 한!글", 6);
+
+    writer
+        .write_all("pwd e\u{301}\u{7f}".as_bytes())
+        .expect("type combining-character edit sequence");
+    writer
+        .write_all(b"\x18\x11")
+        .expect("request second PSReadLine buffer probe");
+    writer.flush().expect("flush second edit probe");
+    let second = receive_until(
+        &receiver,
+        "__WINGMAN_BUFFER_2_END__",
+        Duration::from_secs(8),
+    );
+    assert_buffer_probe(&second, 2, "pwd e", 5);
+
+    let _ = child.kill();
+    broker.stop().expect("stop readiness broker");
+}
+
+#[test]
 fn direct_prompt_call_cannot_signal_readiness_during_a_foreground_pipeline() {
     let integration_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")
@@ -394,4 +500,34 @@ fn receive_until(receiver: &mpsc::Receiver<Vec<u8>>, needle: &str, timeout: Dura
         }
     }
     panic!("timed out waiting for {needle:?}; output: {output:?}");
+}
+
+fn assert_buffer_probe(output: &str, index: usize, expected_line: &str, expected_cursor: usize) {
+    let prefix = format!("WINGMAN_BUFFER_{index}__");
+    let suffix = format!("__WINGMAN_BUFFER_{index}_END__");
+    let start = output
+        .find(&prefix)
+        .unwrap_or_else(|| panic!("missing buffer probe prefix in {output:?}"))
+        + prefix.len();
+    let end = output[start..]
+        .find(&suffix)
+        .map(|offset| start + offset)
+        .unwrap_or_else(|| panic!("missing buffer probe suffix in {output:?}"));
+    let (actual_hex, actual_cursor) = output[start..end]
+        .split_once(':')
+        .unwrap_or_else(|| panic!("malformed buffer probe in {output:?}"));
+    let expected_hex = expected_line
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>();
+
+    assert_eq!(actual_hex, expected_hex, "PSReadLine buffer mismatch");
+    assert_eq!(
+        actual_cursor
+            .parse::<usize>()
+            .expect("numeric probe cursor"),
+        expected_cursor,
+        "PSReadLine cursor mismatch"
+    );
 }
