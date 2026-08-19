@@ -821,3 +821,58 @@ Harness는 10초마다 전체 process tree를 표본화했고, 안정화된 양 
 모든 표본은 내부적으로 안정적이었고 process는 성공 종료했다. 이 결과로 이 machine의
 자동화된 PowerShell 내구성 자원 상한 검사를 닫는다. 별도의 입력 latency 분포나 현재
 및 직전 Windows release matrix를 대신하는 결과는 아니다.
+
+## 2026-08-19: 현재 release PowerShell·cmd 시작 및 cmd idle tree
+
+- App source: `b2ef9f2a495b95c2717955c6d4fa712cb9f97109`
+- 측정 harness: `ce809e49f0a39f3e326f7c86e7159756d0f01950`
+- OS: Windows `10.0.26200.9168`, display version `25H2`, x64
+- CPU: AMD Ryzen 7 9700X, physical core 8개, logical processor 16개
+- 전원: Windows 균형 조정 (`381b4222-f694-41f0-9685-ff5bb260df2e`)
+- WebView2 Runtime: `151.0.4129.93`
+- Toolchain: `rustc 1.96.1`
+- Build: 공식 Tauri release frontend, installer bundle 없음
+
+두 shell 모두 environment로 명시적으로 켜야 하는 동일한 xterm 렌더링 완료 입력
+marker를 사용했다. App은 공개 same-binary handoff와 명시적 `--shell` 선택을 거쳐
+시작한다. Probe flag는 shell을 spawn하기 전에 제거한다. 일반 production 실행에서는
+probe가 꺼져 있으며 cmd 시작 시 probe IPC도 수행하지 않는다.
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_warm_startup_distribution.tests.ps1 -Executable src-tauri/target/release/wingman.exe -ShellKind powershell -WarmupCount 3 -SampleCount 20 -TimeoutSeconds 15
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_warm_startup_distribution.tests.ps1 -Executable src-tauri/target/release/wingman.exe -ShellKind cmd -WarmupCount 3 -SampleCount 20 -TimeoutSeconds 15
+```
+
+| Shell | 중앙값 | p95 | 최댓값 | 1.5초 상한 |
+| --- | ---: | ---: | ---: | --- |
+| Windows PowerShell 5.1 | 742.8 ms | 833.5 ms | 834.5 ms | 통과 |
+| cmd.exe | 476.8 ms | 492.3 ms | 520.4 ms | 통과 |
+
+PowerShell 원시 표본(ms):
+
+```text
+833.5, 801.8, 834.5, 727.3, 732.3, 712.1, 729.0, 773.9, 722.2, 793.4,
+704.4, 786.1, 771.1, 802.7, 753.4, 708.7, 703.4, 708.6, 718.9, 810.3
+```
+
+cmd 원시 표본(ms):
+
+```text
+479.4, 489.3, 492.3, 475.2, 460.8, 479.3, 471.3, 478.0, 463.0, 485.0,
+463.6, 491.9, 456.1, 479.7, 462.0, 475.6, 444.9, 475.0, 480.1, 520.4
+```
+
+cmd idle harness는 이후 10초 안정화를 기다리고 독립 실행 3회마다 1초 표본 10개를
+전체 process tree에서 기록했다. 모든 tree에는 `wingman.exe`, WebView2, `cmd.exe`,
+`conhost.exe`가 있었고 runner는 남아 있지 않았다.
+
+| 실행 | CPU 중앙값 | CPU p95 | Private working set 중앙값 | Private working set 최댓값 | 결과 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 0.195% | 0.488% | 118.78 MiB | 119.66 MiB | 통과 |
+| 2 | 0.098% | 0.391% | 120.51 MiB | 121.51 MiB | 통과 |
+| 3 | 0.195% | 0.391% | 117.67 MiB | 118.71 MiB | 통과 |
+
+모든 cmd 표본은 전체 tree의 release 상한인 CPU 중앙값 0.5%, CPU p95 2%, private
+working set 350 MiB를 통과했다. 앞선 PowerShell 측정과 합치면 이 machine의 두 shell
+warm-start 및 안정화 idle matrix가 닫힌다. Controlled-restart cold 표본과 별도의 지원
+Windows version은 외부 matrix 증거로 남는다.

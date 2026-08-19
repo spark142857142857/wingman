@@ -880,3 +880,60 @@ exited successfully. This closes the automated PowerShell endurance
 resource-ceiling check on this machine. It is not a substitute for the
 separate input-latency distributions or the current-and-previous Windows
 release matrix.
+
+## 2026-08-19: current-release PowerShell and cmd startup, cmd idle tree
+
+- App source: `b2ef9f2a495b95c2717955c6d4fa712cb9f97109`
+- Measurement harness: `ce809e49f0a39f3e326f7c86e7159756d0f01950`
+- OS: Windows `10.0.26200.9168`, display version `25H2`, x64
+- CPU: AMD Ryzen 7 9700X, 8 physical cores, 16 logical processors
+- Power: Windows Balanced (`381b4222-f694-41f0-9685-ff5bb260df2e`)
+- WebView2 Runtime: `151.0.4129.93`
+- Toolchain: `rustc 1.96.1`
+- Build: official Tauri release frontend, no installer bundle
+
+The normal-input marker is the same env-gated, rendered xterm probe in both
+shells. The application launches through the public same-binary handoff with
+an explicit `--shell` selection. The probe flag is removed before spawning the
+shell. In ordinary production launches the probe is disabled and cmd performs
+no probe IPC.
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_warm_startup_distribution.tests.ps1 -Executable src-tauri/target/release/wingman.exe -ShellKind powershell -WarmupCount 3 -SampleCount 20 -TimeoutSeconds 15
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_warm_startup_distribution.tests.ps1 -Executable src-tauri/target/release/wingman.exe -ShellKind cmd -WarmupCount 3 -SampleCount 20 -TimeoutSeconds 15
+```
+
+| Shell | Median | p95 | Maximum | 1.5 s ceiling |
+| --- | ---: | ---: | ---: | --- |
+| Windows PowerShell 5.1 | 742.8 ms | 833.5 ms | 834.5 ms | Pass |
+| cmd.exe | 476.8 ms | 492.3 ms | 520.4 ms | Pass |
+
+PowerShell raw samples (ms):
+
+```text
+833.5, 801.8, 834.5, 727.3, 732.3, 712.1, 729.0, 773.9, 722.2, 793.4,
+704.4, 786.1, 771.1, 802.7, 753.4, 708.7, 703.4, 708.6, 718.9, 810.3
+```
+
+cmd raw samples (ms):
+
+```text
+479.4, 489.3, 492.3, 475.2, 460.8, 479.3, 471.3, 478.0, 463.0, 485.0,
+463.6, 491.9, 456.1, 479.7, 462.0, 475.6, 444.9, 475.0, 480.1, 520.4
+```
+
+The cmd idle harness then waited ten seconds and recorded ten one-second
+whole-tree samples in each of three independent launches. Every tree contained
+`wingman.exe`, WebView2, `cmd.exe`, and `conhost.exe`, with no runner alive.
+
+| Run | Median CPU | p95 CPU | Median private working set | Maximum private working set | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 0.195% | 0.488% | 118.78 MiB | 119.66 MiB | Pass |
+| 2 | 0.098% | 0.391% | 120.51 MiB | 121.51 MiB | Pass |
+| 3 | 0.195% | 0.391% | 117.67 MiB | 118.71 MiB | Pass |
+
+All cmd samples pass the whole-tree release ceilings of 0.5% median CPU, 2%
+p95 CPU, and 350 MiB private working set. Together with the earlier PowerShell
+measurements, this closes the current-machine two-shell warm-start and settled
+idle matrix. Controlled-restart cold samples and a separate supported-Windows
+version remain external matrix evidence.
