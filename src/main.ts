@@ -137,6 +137,7 @@ function updateStatus(cwd?: string) {
 async function startSession(shell: ShellKind) {
   const sessionId = ++activeSessionId;
   performanceProbe = null;
+  compat = false;
   term.reset();
   const { cols, rows } = term;
   const session = await invoke<{
@@ -148,7 +149,6 @@ async function startSession(shell: ShellKind) {
     shell,
     cols,
     rows,
-    compat,
     clientSessionId: sessionId,
   });
   activeShell = shell;

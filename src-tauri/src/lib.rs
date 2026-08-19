@@ -487,10 +487,9 @@ fn start_shell(
     shell: ShellRequest,
     cols: u16,
     rows: u16,
-    compat: bool,
     client_session_id: u64,
 ) -> Result<SessionInfo, String> {
-    let result = start_shell_inner(app.clone(), shell, cols, rows, compat, client_session_id);
+    let result = start_shell_inner(app.clone(), shell, cols, rows, client_session_id);
     if let Some(handoff) = GUI_HANDOFF.get() {
         match &result {
             Ok(_) => {
@@ -513,10 +512,8 @@ fn start_shell_inner(
     shell: ShellRequest,
     cols: u16,
     rows: u16,
-    compat: bool,
     client_session_id: u64,
 ) -> Result<SessionInfo, String> {
-    let _ = compat;
     let active_shell = shell.active_shell();
     let previous = reserve_session_generation(client_session_id)?;
     if let Some(previous) = previous {
