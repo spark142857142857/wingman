@@ -390,14 +390,12 @@ fn create_flat_tree(root: &Path, children: usize) {
 
 fn assert_flat_tree(root: &Path, expected_entries: usize) {
     assert!(root.is_dir());
-    assert_eq!(
-        fs::read_dir(root)
-            .expect("read mutation tree")
-            .map(|entry| entry.expect("read mutation tree entry"))
-            .count()
-            + 1,
-        expected_entries
-    );
+    let mut child_count = 0;
+    for entry in fs::read_dir(root).expect("read mutation tree") {
+        entry.expect("read mutation tree entry");
+        child_count += 1;
+    }
+    assert_eq!(child_count + 1, expected_entries);
 }
 
 fn assert_all_exist(paths: &[PathBuf], predicate: impl Fn(&Path) -> bool) {
