@@ -109,6 +109,7 @@ not the final release identity.
 ```powershell
 cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
 cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_process_contract idle_tail_follow_runner_stays_below_the_cpu_ceiling -- --ignored --exact --nocapture
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract sort_resource_limit_stays_bounded_and_fails_closed -- --ignored --exact --nocapture
 cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract traversal_and_listing_resource_limits_are_bounded -- --ignored --exact --nocapture
 cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_mutation_resource_contract mutation_resource_limits_are_bounded_and_atomic -- --ignored --exact --nocapture
 ```
