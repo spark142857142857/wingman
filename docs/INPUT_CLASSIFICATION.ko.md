@@ -126,12 +126,14 @@ P0이 아니라 가능한 미래 기능이다.
 | `familiar off` | 내부 제어 |
 | Familiar OFF의 `grep TODO *.txt` | PassThrough |
 
-## 현재 활성화 상태 (2026-08-09)
+## 현재 활성화 상태 (2026-08-19)
 
-Production classifier는 이제 이 ownership algorithm을 `cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq`에 활성화한다.
-Reliable evidence와 Familiar ON을 요구하고, 공통 lexer/parser/read-only catalog를 사용하며,
-이미 소유한 잘못된 줄은 결정적인 rejection으로 준비한다. 명시적 executable 이름과
+Production classifier는 모든 P0 이름에 이 ownership algorithm을 활성화한다. 대상은
+`pwd`, `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, 유한 `tail -n N`, 단일 파일
+`tail -f`, `wc -l`, `grep`, `sort`, `uniq`, `mkdir`, `touch`, `cp`, `mv`, `rm`이다.
+Reliable evidence와 Familiar ON을 요구하고, 공통 lexer/parser/catalog를 사용하며, 이미
+소유한 잘못된 줄은 결정적인 rejection으로 준비한다. 명시적 executable 이름과
 native-first pipeline은 native pass-through를 보존한다. PowerShell FileSystem/OOB editor
-경로는 실제 ConPTY, broker, sidecar, Unicode 경로 redirection, 다음 readiness cycle까지
-검증됐다. 나머지 예정 P0 이름은 아직 공개하지 않는다. `cmd`는 신뢰할 수 있는 editor
-adapter가 없으므로 native pass-through를 유지한다.
+경로는 실제 ConPTY, session broker, packaged sidecar, Unicode 경로, redirection,
+mutation 안전·자원 gate, 다음 readiness cycle까지 검증됐다. `cmd`는 신뢰할 수 있는
+editor adapter가 없으므로 native pass-through를 유지한다.

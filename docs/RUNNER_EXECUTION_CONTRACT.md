@@ -190,7 +190,7 @@ no BOM or separator, diagnostics remain on stderr, and a runtime failure or
 cancellation can leave an empty or partial target as specified above.
 
 This slice is reachable through typed runner requests and the actual
-`wingman-runner` process. `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, and `uniq` are now classified and published when
+`wingman-runner` process. `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, `uniq`, `mkdir`, `touch`, `cp`, `mv`, and `rm` are now classified and published when
 Familiar is on and the production PowerShell editor cycle is Reliable at a
 FileSystem location. The shared lexer, parser, and catalog either build one
 typed plan or prepare a deterministic exit-`2` rejection; explicit `.exe`

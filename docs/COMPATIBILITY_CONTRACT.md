@@ -44,11 +44,12 @@ mode off to use the original shell meaning.
 The current production cutover keeps Familiar default-paused. Windows
 PowerShell 5.1 now has a separately reviewed OOB editor-readiness channel, while
 PTY output has no readiness authority; `cmd.exe` remains native pass-through.
-Typing `familiar on` enables only the current Rust-runner preview: Familiar
-controls, `pwd`, and deterministic rejection for an owned unsupported `grep`
-option. Other command activation still requires the remaining resource and
-shell-transition gates. The catalog and runner foundation are not by themselves
-a claim that every listed Familiar command is enabled.
+Typing `familiar on` enables the complete P0 Rust-runner command set listed
+below. Every name has passed its typed catalog/runner tests, real broker and
+packaged-sidecar path, and applicable traversal/listing/mutation release
+resource gate. This does not broaden the documented syntax or enable any
+prototype-only command. Familiar still starts paused, and the remaining
+shell-transition, endurance, and release-hardening gates remain release work.
 
 ## Native shell state commands
 

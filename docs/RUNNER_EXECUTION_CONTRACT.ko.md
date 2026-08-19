@@ -169,7 +169,7 @@ separator를 추가하지 않고 diagnostic은 stderr에 남는다. Runtime 실�
 계약대로 비어 있거나 부분적으로 작성된 target이 남을 수 있다.
 
 이 slice는 typed runner request와 실제 `wingman-runner` process로 접근할 수 있다.
-`clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq`는 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
+`clear`·`which`·`ls`/`ll`·`find`·`cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`·`sort`·`uniq`·`mkdir`·`touch`·`cp`·`mv`·`rm`은 Familiar ON이고 production PowerShell editor cycle이 FileSystem 위치에서
 Reliable일 때 이제 분류·공개된다. 공통 lexer·parser·catalog는 하나의 typed plan을 만들거나
 결정적인 exit `2` rejection을 준비한다. 명시적 `.exe`, native-first pipeline, Familiar OFF,
 Uncertain 입력은 native pass-through를 유지한다. 실제 PowerShell/ConPTY test는 Familiar

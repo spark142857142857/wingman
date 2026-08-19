@@ -43,11 +43,12 @@ Wingman의 Unix 호환 의미를 우선합니다. 원래 Windows 셸의 의미�
 
 현재 production cutover는 Familiar 기본값을 `PAUSED`로 유지합니다. Windows
 PowerShell 5.1에는 별도 검토한 OOB editor-readiness 채널이 연결됐고 PTY 출력에는
-readiness 권한이 없습니다. `cmd.exe`는 계속 네이티브 통과입니다. 명령을 실제로
-`familiar on`으로 켤 수 있는 현재 Rust-runner preview는 Familiar control, `pwd`,
-소유한 미지원 `grep` option의 결정적 거부뿐입니다. 나머지 명령 활성화는
-resource·shell transition gate를 더 통과해야 합니다. Catalog와 runner 기반이
-있다는 사실만으로 아래 모든 Familiar 명령이 활성화됐다는 뜻은 아닙니다.
+readiness 권한이 없습니다. `cmd.exe`는 계속 네이티브 통과입니다. `familiar on`은 아래
+P0 Rust-runner 명령 전체를 활성화합니다. 모든 이름은 typed catalog·runner test, 실제
+broker·packaged sidecar 경로, 해당 traversal·listing·mutation release 자원 gate를
+통과했습니다. 이는 문서화한 문법을 넓히거나 prototype 전용 명령을 켠다는 뜻이
+아닙니다. Familiar는 계속 PAUSED로 시작하며 shell transition, endurance, 배포 강화
+gate는 별도 배포 작업으로 남습니다.
 
 ## P0: MVP에서 반드시 지원할 범위
 

@@ -137,13 +137,16 @@ active shell.
 | `familiar off` | internal control |
 | Familiar off: `grep TODO *.txt` | PassThrough |
 
-## Current activation status (2026-08-09)
+## Current activation status (2026-08-19)
 
-The production classifier now activates this ownership algorithm for `cat`,
-`head`, finite `tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, and `uniq`. It requires Reliable evidence and Familiar on, uses the shared
-lexer/parser/read-only catalog, prepares deterministic rejections for claimed
-invalid lines, and preserves native pass-through for explicit executable names
-and native-first pipelines. The PowerShell FileSystem/OOB editor path is proved
-through the real ConPTY, broker, sidecar, Unicode-path redirection, and next
-readiness cycle. Other planned P0 names remain unpublished; `cmd` has no trusted
-editor adapter and remains native pass-through.
+The production classifier activates this ownership algorithm for every P0
+name: `pwd`, `clear`, `which`, `ls`/`ll`, `find`, `cat`, `head`, finite
+`tail -n N`, single-file `tail -f`, `wc -l`, `grep`, `sort`, `uniq`, `mkdir`,
+`touch`, `cp`, `mv`, and `rm`. It requires Reliable evidence and Familiar on,
+uses the shared lexer/parser/catalog, prepares deterministic rejections for
+claimed invalid lines, and preserves native pass-through for explicit
+executable names and native-first pipelines. The PowerShell FileSystem/OOB
+editor path is proved through the real ConPTY, session broker, packaged
+sidecar, Unicode paths, redirection, mutation safety/resource gates, and the
+next readiness cycle. `cmd` has no trusted editor adapter and remains native
+pass-through.
