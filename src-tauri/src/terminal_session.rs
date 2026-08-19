@@ -3,14 +3,11 @@ use crate::interpreter::{
     PrepareSubmissionV1, PreparedRequestV1,
 };
 use crate::transport::{
-    parse_editor_readiness_frame, EditorAdapterCapabilityV1, EditorLocationKindV1,
-    EditorReadinessFrameV1, MAX_POWERSHELL_NESTED_DEPTH,
+    EditorAdapterCapabilityV1, EditorLocationKindV1, EditorReadinessFrameV1,
+    MAX_POWERSHELL_NESTED_DEPTH,
 };
 use uuid::Uuid;
 
-const MARKER_PREFIX: &str = "\u{1b}]777;wingman-prompt;";
-const MARKER_TERMINATOR: char = '\u{7}';
-const MAX_MARKER_BYTES: usize = 512;
 const ESCAPE: char = '\u{1b}';
 const MAX_INPUT_ESCAPE_BYTES: usize = 64;
 const MAX_MIRRORED_LINE_BYTES: usize = 16 * 1024;
@@ -48,9 +45,7 @@ pub struct TerminalSessionV1 {
     verified_prompt_observed: bool,
     readiness_cycle_dirty: bool,
     awaiting_parent_readiness: bool,
-    accept_pty_readiness: bool,
     interpreter: Option<InterpreterSession>,
-    pending_output: String,
     input_buffer: Vec<char>,
     input_buffer_bytes: usize,
     input_cursor: usize,
@@ -71,9 +66,7 @@ impl TerminalSessionV1 {
             verified_prompt_observed: false,
             readiness_cycle_dirty: false,
             awaiting_parent_readiness: false,
-            accept_pty_readiness: true,
             interpreter: None,
-            pending_output: String::new(),
             input_buffer: Vec::new(),
             input_buffer_bytes: 0,
             input_cursor: 0,
@@ -87,11 +80,6 @@ impl TerminalSessionV1 {
         &self.integration_nonce
     }
 
-    pub fn disable_pty_readiness(&mut self) {
-        self.accept_pty_readiness = false;
-        self.pending_output.clear();
-    }
-
     pub fn editor_ready(&self) -> bool {
         self.editing_reliable && self.input_reliable && !self.readiness_cycle_dirty
     }
@@ -102,51 +90,6 @@ impl TerminalSessionV1 {
 
     pub fn powershell_depth(&self) -> u32 {
         self.powershell_depth
-    }
-
-    pub fn ingest_pty_output(&mut self, chunk: &str) -> String {
-        if !self.accept_pty_readiness {
-            return chunk.to_string();
-        }
-        self.pending_output.push_str(chunk);
-        let mut visible = String::new();
-
-        loop {
-            let Some(marker_start) = self.pending_output.find(MARKER_PREFIX) else {
-                let retained = partial_prefix_suffix_len(&self.pending_output);
-                let visible_end = self.pending_output.len() - retained;
-                visible.push_str(&self.pending_output[..visible_end]);
-                self.pending_output.drain(..visible_end);
-                break;
-            };
-
-            visible.push_str(&self.pending_output[..marker_start]);
-            self.pending_output.drain(..marker_start);
-
-            let Some(terminator_offset) = self.pending_output.find(MARKER_TERMINATOR) else {
-                if self.pending_output.len() > MAX_MARKER_BYTES {
-                    let first_character_bytes = self
-                        .pending_output
-                        .chars()
-                        .next()
-                        .map(char::len_utf8)
-                        .unwrap_or_default();
-                    visible.push_str(&self.pending_output[..first_character_bytes]);
-                    self.pending_output.drain(..first_character_bytes);
-                    continue;
-                }
-                break;
-            };
-
-            let frame_end = terminator_offset + MARKER_TERMINATOR.len_utf8();
-            let frame = self.pending_output[..frame_end].to_string();
-            self.pending_output.drain(..frame_end);
-            if !self.apply_prompt_marker(&frame) {
-                visible.push_str(&frame);
-            }
-        }
-
-        visible
     }
 
     pub fn prepare_submission(
@@ -428,18 +371,6 @@ impl TerminalSessionV1 {
         }
     }
 
-    fn apply_prompt_marker(&mut self, frame: &str) -> bool {
-        let Some(body) = frame
-            .strip_prefix(MARKER_PREFIX)
-            .and_then(|value| value.strip_suffix(MARKER_TERMINATOR))
-        else {
-            return false;
-        };
-        parse_editor_readiness_frame(body)
-            .ok()
-            .is_some_and(|readiness| self.apply_editor_readiness(&readiness))
-    }
-
     fn apply_editing_sequence(&mut self, sequence: &str) -> bool {
         if !self.input_reliable {
             return false;
@@ -541,12 +472,4 @@ fn logical_submission_count(data: &str) -> usize {
 fn text_follows_first_line_boundary(data: &str) -> bool {
     data.find(['\r', '\n'])
         .is_some_and(|index| !data[index..].trim_matches(['\r', '\n']).is_empty())
-}
-
-fn partial_prefix_suffix_len(value: &str) -> usize {
-    let maximum = value.len().min(MARKER_PREFIX.len().saturating_sub(1));
-    (1..=maximum)
-        .rev()
-        .find(|length| value.ends_with(&MARKER_PREFIX[..*length]))
-        .unwrap_or(0)
 }

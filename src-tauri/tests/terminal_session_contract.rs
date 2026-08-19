@@ -7,7 +7,7 @@ use wingman_lib::transport::{
 };
 
 #[test]
-fn a_new_session_cannot_prepare_before_a_valid_prompt_marker() {
+fn a_new_session_cannot_prepare_before_a_valid_readiness_frame() {
     let mut session = TerminalSessionV1::new(501, ActiveShell::WindowsPowerShell);
 
     assert!(!session.editor_ready());
@@ -47,56 +47,8 @@ fn editor_readiness_is_observable_only_while_the_verified_editor_cycle_is_clean(
 }
 
 #[test]
-fn production_oob_mode_never_treats_pty_output_as_readiness() {
-    let mut session = TerminalSessionV1::new(513, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    session.disable_pty_readiness();
-
-    assert_eq!(session.ingest_pty_output(&marker), marker);
-    assert_eq!(
-        session.prepare_submission("pwd", true),
-        Err(TerminalPrepareErrorV1::PromptNotValidated)
-    );
-}
-
-#[test]
-fn a_split_private_prompt_marker_is_removed_and_enables_preparation() {
-    let mut session = TerminalSessionV1::new(502, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    let split_at = marker.len() / 2;
-
-    assert_eq!(
-        session.ingest_pty_output(&format!("booted\r\n{}", &marker[..split_at])),
-        "booted\r\n"
-    );
-    assert_eq!(
-        session.ingest_pty_output(&format!("{}PS C:\\work> ", &marker[split_at..])),
-        "PS C:\\work> "
-    );
-
-    let decision = session
-        .prepare_submission("pwd", true)
-        .expect("validated prompt permits preparation");
-    assert!(matches!(
-        decision.decision,
-        FrontendDecisionKindV1::InvokePrepared { .. }
-    ));
-}
-
-#[test]
 fn rust_mirrors_plain_input_and_holds_enter_for_the_prepared_decision() {
-    let mut session = TerminalSessionV1::new(503, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(503);
 
     let actions = session.handle_terminal_input("pwd\r", true);
     assert_eq!(
@@ -123,12 +75,7 @@ fn rust_mirrors_plain_input_and_holds_enter_for_the_prepared_decision() {
 
 #[test]
 fn an_unknown_edit_keeps_the_whole_submission_native() {
-    let mut session = TerminalSessionV1::new(504, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(504);
 
     assert_eq!(
         session.handle_terminal_input("\u{1b}[Zpwd\r", true),
@@ -139,43 +86,8 @@ fn an_unknown_edit_keeps_the_whole_submission_native() {
 }
 
 #[test]
-fn cmd_marker_shaped_output_never_enables_familiar_interception() {
-    let mut session = TerminalSessionV1::new(508, ActiveShell::Cmd);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;cmd;0;filesystem\u{7}",
-        session.integration_nonce()
-    );
-
-    assert_eq!(session.ingest_pty_output(&marker), marker);
-    assert_eq!(
-        session.prepare_submission("pwd", true),
-        Err(TerminalPrepareErrorV1::PromptNotValidated)
-    );
-}
-
-#[test]
-fn powershell_marker_without_replacement_capability_is_not_trusted() {
-    let mut session = TerminalSessionV1::new(509, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem\u{7}",
-        session.integration_nonce()
-    );
-
-    assert_eq!(session.ingest_pty_output(&marker), marker);
-    assert_eq!(
-        session.prepare_submission("pwd", true),
-        Err(TerminalPrepareErrorV1::PromptNotValidated)
-    );
-}
-
-#[test]
 fn an_oversized_line_is_forwarded_without_partial_interpretation() {
-    let mut session = TerminalSessionV1::new(505, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(505);
     let line = "a".repeat(16 * 1024 + 1);
 
     assert_eq!(
@@ -188,12 +100,8 @@ fn an_oversized_line_is_forwarded_without_partial_interpretation() {
 
 #[test]
 fn ctrl_c_discards_the_line_and_only_the_next_prompt_reopens_editing() {
-    let mut session = TerminalSessionV1::new(506, ActiveShell::WindowsPowerShell);
-    let first_marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&first_marker), "");
+    let mut session = ready_session(506);
+    let nonce = session.integration_nonce().to_string();
     assert_eq!(
         session.handle_terminal_input("pwd\u{3}", true),
         vec![TerminalInputActionV1::Forward {
@@ -201,11 +109,7 @@ fn ctrl_c_discards_the_line_and_only_the_next_prompt_reopens_editing() {
         }]
     );
 
-    let second_marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};2;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&second_marker), "");
+    assert!(session.apply_editor_readiness(&readiness(&nonce, 2)));
     let actions = session.handle_terminal_input("pwd\r", true);
     assert!(matches!(
         actions.get(1),
@@ -221,12 +125,7 @@ fn ctrl_c_discards_the_line_and_only_the_next_prompt_reopens_editing() {
 
 #[test]
 fn prepared_action_captures_a_middle_cursor_editor_snapshot() {
-    let mut session = TerminalSessionV1::new(507, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(507);
 
     let actions = session.handle_terminal_input("pwd\u{1b}[D\r", true);
     assert!(matches!(
@@ -404,12 +303,7 @@ fn foreground_children_keep_all_following_input_native_until_parent_readiness() 
 
 #[test]
 fn a_multi_submission_chunk_is_never_partially_prepared() {
-    let mut session = TerminalSessionV1::new(510, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(510);
 
     assert_eq!(
         session.handle_terminal_input("pwd\rwhoami\r", true),
@@ -420,13 +314,8 @@ fn a_multi_submission_chunk_is_never_partially_prepared() {
 }
 
 #[test]
-fn confirmed_line_breaking_paste_suspends_interception_until_a_fresh_marker() {
-    let mut session = TerminalSessionV1::new(72, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+fn confirmed_line_breaking_paste_suspends_interception_until_a_fresh_frame() {
+    let mut session = ready_session(72);
 
     session.suspend_for_native_paste("pwd\r\nwhoami\n");
 

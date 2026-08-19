@@ -433,9 +433,12 @@ fn monitor_session_exit<F>(
 }
 
 fn filter_session_output(session_id: u64, data: &str) -> Option<String> {
-    let mut guard = APP_STATE.session.lock();
-    let session = guard.as_mut().filter(|session| session.id == session_id)?;
-    Some(session.terminal.ingest_pty_output(data))
+    APP_STATE
+        .session
+        .lock()
+        .as_ref()
+        .filter(|session| session.id == session_id)?;
+    Some(data.to_string())
 }
 
 fn deliver_pty_output(
@@ -530,8 +533,7 @@ fn start_shell_inner(
 
     let (program, args) = resolve_shell(active_shell);
     let mut cmd = CommandBuilder::new(program);
-    let mut terminal = TerminalSessionV1::new(client_session_id, active_shell);
-    terminal.disable_pty_readiness();
+    let terminal = TerminalSessionV1::new(client_session_id, active_shell);
     let integration_nonce = terminal.integration_nonce().to_string();
     let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let runtime_files = RuntimeFilesV1::resolve(&current_exe)?;

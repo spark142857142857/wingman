@@ -6,16 +6,13 @@ use uuid::Uuid;
 use wingman_lib::interpreter::ActiveShell;
 use wingman_lib::session_runtime::{execute_terminal_input, TerminalExecutionOutcomeV1};
 use wingman_lib::terminal_session::TerminalSessionV1;
-use wingman_lib::transport::SessionBrokerV1;
+use wingman_lib::transport::{
+    EditorAdapterCapabilityV1, EditorLocationKindV1, EditorReadinessFrameV1, SessionBrokerV1,
+};
 
 #[test]
 fn validated_pwd_dispatches_from_mirrored_input_through_the_real_runner() {
-    let mut session = TerminalSessionV1::new(601, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(601);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -58,12 +55,7 @@ fn validated_pwd_dispatches_from_mirrored_input_through_the_real_runner() {
 
 #[test]
 fn familiar_control_runs_through_the_real_runner_and_reports_its_host_effect() {
-    let mut session = TerminalSessionV1::new(602, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(602);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -165,12 +157,7 @@ fn failed_pty_write_unregisters_the_prepared_request() {
         }
     }
 
-    let mut session = TerminalSessionV1::new(603, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(603);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -218,12 +205,7 @@ fn reliable_cat_head_redirection_runs_through_the_real_broker_and_sidecar() {
     let output_path = sandbox.join("출력 파일.txt");
     fs::write(&input, "첫째\n둘째\n").unwrap();
 
-    let mut session = TerminalSessionV1::new(604, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(604);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -282,12 +264,7 @@ fn reliable_find_pipeline_runs_through_the_real_broker_and_sidecar() {
     fs::write(sandbox.join("nested").join("two.ts"), b"").unwrap();
     fs::write(sandbox.join("nested").join("note.txt"), b"").unwrap();
 
-    let mut session = TerminalSessionV1::new(605, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(605);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -338,12 +315,7 @@ fn reliable_mkdir_runs_through_the_real_broker_and_sidecar() {
     fs::create_dir(&sandbox).unwrap();
     let target = sandbox.join("한글 폴더").join("nested");
 
-    let mut session = TerminalSessionV1::new(606, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(606);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -394,12 +366,7 @@ fn reliable_touch_runs_through_the_real_broker_and_sidecar() {
     fs::create_dir(&sandbox).unwrap();
     let target = sandbox.join("한글 파일.txt");
 
-    let mut session = TerminalSessionV1::new(607, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(607);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -453,12 +420,7 @@ fn reliable_recursive_cp_runs_through_the_real_broker_and_sidecar() {
     fs::create_dir_all(source.join("nested")).unwrap();
     fs::write(source.join("nested").join("내용.txt"), b"copied").unwrap();
 
-    let mut session = TerminalSessionV1::new(608, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(608);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -518,12 +480,7 @@ fn reliable_mv_runs_through_the_real_broker_and_sidecar() {
     fs::create_dir_all(source.join("중첩")).unwrap();
     fs::write(source.join("중첩").join("내용.txt"), b"moved").unwrap();
 
-    let mut session = TerminalSessionV1::new(609, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(609);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -583,12 +540,7 @@ fn reliable_recursive_rm_runs_through_the_real_broker_and_sidecar() {
     fs::create_dir_all(target.join("중첩")).unwrap();
     fs::write(target.join("중첩").join("내용.txt"), b"remove").unwrap();
 
-    let mut session = TerminalSessionV1::new(610, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(610);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),
@@ -633,13 +585,22 @@ fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn run_reliable_line(line: &str, cwd: Option<&Path>, session_id: u64) -> std::process::Output {
+fn ready_session(session_id: u64) -> TerminalSessionV1 {
     let mut session = TerminalSessionV1::new(session_id, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let frame = EditorReadinessFrameV1 {
+        nonce: session.integration_nonce().to_string(),
+        sequence: 1,
+        shell: ActiveShell::WindowsPowerShell,
+        shell_depth: 0,
+        location_kind: EditorLocationKindV1::FileSystem,
+        adapter_capability: EditorAdapterCapabilityV1::PsReadLineReplaceV1,
+    };
+    assert!(session.apply_editor_readiness(&frame));
+    session
+}
+
+fn run_reliable_line(line: &str, cwd: Option<&Path>, session_id: u64) -> std::process::Output {
+    let mut session = ready_session(session_id);
     let pipe_name = format!(
         r"\\.\pipe\wingman-runtime-test-{}-{}",
         std::process::id(),

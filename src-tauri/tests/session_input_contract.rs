@@ -8,7 +8,10 @@ use wingman_lib::session_runtime::{
     TerminalExecutionOutcomeV1,
 };
 use wingman_lib::terminal_session::TerminalSessionV1;
-use wingman_lib::transport::{fetch_prepared_request_channel, SessionBrokerV1};
+use wingman_lib::transport::{
+    fetch_prepared_request_channel, EditorAdapterCapabilityV1, EditorLocationKindV1,
+    EditorReadinessFrameV1, SessionBrokerV1,
+};
 
 #[test]
 fn stale_session_input_writes_zero_bytes() {
@@ -98,12 +101,7 @@ fn ctrl_c_is_forwarded_once_and_cancels_a_request_waiting_for_its_runner() {
 fn prepared_submission_registers_before_one_fixed_editor_write() {
     let pipe_name = unique_pipe_name();
     let broker = SessionBrokerV1::start(&pipe_name).expect("start broker");
-    let mut session = TerminalSessionV1::new(42, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(42);
     let mut writer = Vec::new();
 
     let outcome = execute_terminal_input(
@@ -134,12 +132,7 @@ fn prepared_submission_registers_before_one_fixed_editor_write() {
 fn familiar_control_reports_the_host_state_effect_after_the_fixed_write() {
     let pipe_name = unique_pipe_name();
     let broker = SessionBrokerV1::start(&pipe_name).expect("start broker");
-    let mut session = TerminalSessionV1::new(42, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(42);
     let mut writer = Vec::new();
 
     let outcome = execute_terminal_input(
@@ -187,12 +180,7 @@ fn familiar_state_changes_only_after_persistence_succeeds() {
 fn partial_prepared_write_suspends_without_retrying_the_original_line() {
     let pipe_name = unique_pipe_name();
     let broker = SessionBrokerV1::start(&pipe_name).expect("start broker");
-    let mut session = TerminalSessionV1::new(43, ActiveShell::WindowsPowerShell);
-    let marker = format!(
-        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
-        session.integration_nonce()
-    );
-    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut session = ready_session(43);
     let mut writer = FailingWriter::new(5);
 
     let error = execute_terminal_input(
@@ -265,6 +253,20 @@ impl Write for FailingWriter {
             Ok(())
         }
     }
+}
+
+fn ready_session(session_id: u64) -> TerminalSessionV1 {
+    let mut session = TerminalSessionV1::new(session_id, ActiveShell::WindowsPowerShell);
+    let frame = EditorReadinessFrameV1 {
+        nonce: session.integration_nonce().to_string(),
+        sequence: 1,
+        shell: ActiveShell::WindowsPowerShell,
+        shell_depth: 0,
+        location_kind: EditorLocationKindV1::FileSystem,
+        adapter_capability: EditorAdapterCapabilityV1::PsReadLineReplaceV1,
+    };
+    assert!(session.apply_editor_readiness(&frame));
+    session
 }
 
 fn unique_pipe_name() -> String {
