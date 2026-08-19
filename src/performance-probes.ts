@@ -15,25 +15,29 @@ const bulkScript =
   'for($i=0;$i -lt 100000;$i++){[Console]::Out.Write(("{0:D6}:{1}`r`n" -f $i,$p))};' +
   '[Console]::Out.Write($e+"`r`n")';
 const bulkCommand = foregroundPowerShellCommand(bulkScript);
-const retentionBaselineMilliseconds = 25_000;
+// Leave the external harness enough time to collect a settled baseline before
+// this test-only workload starts.
+const retentionBaselineMilliseconds = 40_000;
 const retentionCleared = "__WINGMAN_RETENTION_CLEARED__";
-const retentionClearCommand =
+const retentionClearCommand = foregroundPowerShellCommand(
   "Clear-Host;$m='__WINGMAN_RETENTION_'+'CLEARED__';" +
-  '[Console]::Out.Write($m+"`r`n")\r';
+    '[Console]::Out.Write($m+"`r`n")',
+);
 const latencyEnd = "__WINGMAN_LATENCY_END__\r\n";
 const latencyMarkerCarryLength =
   "__WINGMAN_LATENCY_READY_000__\r\n".length - 1;
-const latencyCommand =
-  "$p=([char]0xe9).ToString()*55;" +
-  "$r='__WINGMAN_LATENCY_'+'READY_';$a='__WINGMAN_LATENCY_'+'ECHO_';" +
-  "$z='__WINGMAN_LATENCY_'+'END__';" +
-  'for($s=0;$s -lt 100;$s++){for($l=0;$l -lt 1000;$l++){' +
-  '$i=$s*1000+$l;[Console]::Out.Write(("{0:D6}:{1}`r`n" -f $i,$p))};' +
-  '[Console]::Out.Write((($r+"{0:D3}__`r`n") -f $s));' +
-  'while(-not [Console]::KeyAvailable){Start-Sleep -Milliseconds 1};' +
-  '[void][Console]::ReadKey($true);' +
-  '[Console]::Out.Write((($a+"{0:D3}__`r`n") -f $s))};' +
-  '[Console]::Out.Write($z+"`r`n")\r';
+// Keep the synthetic command compact so cmd receives it as one interactive
+// line before the foreground PowerShell workload begins.
+const latencyScript =
+  "$p=([char]233).ToString()*55;$r='__WINGMAN_LATENCY_';" +
+  "for($i=0;$i-lt1e5;$i++){" +
+  '[Console]::Write("{0:D6}:{1}`r`n",$i,$p);' +
+  "if($i%1000-eq999){$n=($i-999)/1000;" +
+  '[Console]::Write($r+"READY_{0:D3}__`r`n",$n);' +
+  '[Console]::ReadKey($true)>$null;' +
+  '[Console]::Write($r+"ECHO_{0:D3}__`r`n",$n)}};' +
+  '[Console]::Write($r+"END__`r`n")';
+const latencyCommand = foregroundPowerShellCommand(latencyScript);
 
 type ProbeKind =
   | "input-echo"
@@ -77,65 +81,72 @@ export class PerformanceProbe {
     private readonly terminal: Terminal,
   ) {}
 
-  static async start(
+  static async create(
     sessionId: number,
     terminal: Terminal,
-    isCurrentSession: () => boolean,
   ): Promise<PerformanceProbe | null> {
     const scrollback = await queryAvailability(
       "performance_scrollback_probe",
       sessionId,
     );
-    if (scrollback.accepted && scrollback.enabled && isCurrentSession()) {
-      const probe = new PerformanceProbe(
+    if (scrollback.accepted && scrollback.enabled) {
+      return new PerformanceProbe(
         sessionId,
         "scrollback-ceiling",
         terminal,
       );
-      terminal.input(bulkCommand, true);
-      return probe;
     }
 
     const retention = await queryAvailability(
       "performance_bulk_retention_probe",
       sessionId,
     );
-    if (retention.accepted && retention.enabled && isCurrentSession()) {
-      const probe = new PerformanceProbe(sessionId, "bulk-retention", terminal);
-      void probe.startRetentionWorkload(isCurrentSession);
-      return probe;
+    if (retention.accepted && retention.enabled) {
+      return new PerformanceProbe(sessionId, "bulk-retention", terminal);
     }
 
     const latency = await queryAvailability(
       "performance_bulk_latency_probe",
       sessionId,
     );
-    if (latency.accepted && latency.enabled && isCurrentSession()) {
-      const probe = new PerformanceProbe(sessionId, "bulk-latency", terminal);
-      terminal.input(latencyCommand, true);
-      return probe;
+    if (latency.accepted && latency.enabled) {
+      return new PerformanceProbe(sessionId, "bulk-latency", terminal);
     }
 
     const bulk = await queryAvailability(
       "performance_bulk_output_probe",
       sessionId,
     );
-    if (bulk.accepted && bulk.enabled && isCurrentSession()) {
-      const probe = new PerformanceProbe(sessionId, "bulk-output", terminal);
-      terminal.input(bulkCommand, true);
-      return probe;
+    if (bulk.accepted && bulk.enabled) {
+      return new PerformanceProbe(sessionId, "bulk-output", terminal);
     }
 
     const input = await queryAvailability(
       "performance_input_echo_probe",
       sessionId,
     );
-    if (input.accepted && input.enabled && isCurrentSession()) {
-      const probe = new PerformanceProbe(sessionId, "input-echo", terminal);
-      terminal.input(inputEchoCommand, true);
-      return probe;
+    if (input.accepted && input.enabled) {
+      return new PerformanceProbe(sessionId, "input-echo", terminal);
     }
     return null;
+  }
+
+  activate(isCurrentSession: () => boolean) {
+    if (!isCurrentSession() || this.observed) return;
+    switch (this.kind) {
+      case "input-echo":
+        this.terminal.input(inputEchoCommand, true);
+        return;
+      case "bulk-latency":
+        this.terminal.input(latencyCommand, true);
+        return;
+      case "bulk-retention":
+        void this.startRetentionWorkload(isCurrentSession);
+        return;
+      case "bulk-output":
+      case "scrollback-ceiling":
+        this.terminal.input(bulkCommand, true);
+    }
   }
 
   write(sessionId: number, data: string, onParsed: () => void): boolean {

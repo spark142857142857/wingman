@@ -101,11 +101,10 @@ async function observeEditorReadiness(clientSessionId: number) {
         void runEnduranceProbe(clientSessionId);
         return;
       }
-      performanceProbe = await PerformanceProbe.start(
-        clientSessionId,
-        term,
-        () => clientSessionId === activeSessionId,
-      );
+      const probe = await PerformanceProbe.create(clientSessionId, term);
+      if (clientSessionId !== activeSessionId) return;
+      performanceProbe = probe;
+      probe?.activate(() => clientSessionId === activeSessionId);
       return;
     }
     await delay(25);
@@ -154,11 +153,10 @@ async function startSession(shell: ShellKind) {
   if (shell === "powershell") {
     void observeEditorReadiness(sessionId);
   } else if (session.performanceProbeEnabled) {
-    performanceProbe = await PerformanceProbe.start(
-      sessionId,
-      term,
-      () => sessionId === activeSessionId,
-    );
+    const probe = await PerformanceProbe.create(sessionId, term);
+    if (sessionId !== activeSessionId) return;
+    performanceProbe = probe;
+    probe?.activate(() => sessionId === activeSessionId);
   }
 }
 
