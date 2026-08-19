@@ -77,6 +77,8 @@ struct SessionInfo {
     shell: String,
     cwd: String,
     elevated: bool,
+    #[serde(rename = "performanceProbeEnabled")]
+    performance_probe_enabled: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -246,6 +248,15 @@ static GUI_HANDOFF: once_cell::sync::OnceCell<Arc<GuiChildHandoffV1>> =
 
 fn performance_input_echo_probe_enabled(value: Option<&str>) -> bool {
     value == Some("1")
+}
+
+fn any_performance_probe_enabled() -> bool {
+    APP_STATE.performance_input_echo_probe
+        || APP_STATE.performance_bulk_output_probe
+        || APP_STATE.performance_bulk_latency_probe
+        || APP_STATE.performance_bulk_retention_probe
+        || APP_STATE.performance_scrollback_probe
+        || APP_STATE.performance_endurance_probe
 }
 
 fn remove_performance_probe_environment(cmd: &mut CommandBuilder) {
@@ -701,6 +712,7 @@ fn start_shell_inner(
         shell: shell_name,
         cwd,
         elevated,
+        performance_probe_enabled: any_performance_probe_enabled(),
     })
 }
 

@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { TERMINAL_SCROLLBACK_ROWS } from "./terminal-config";
 
 const inputEchoToken = "__WINGMAN_INPUT_ECHO_PROBE__";
-const inputEchoCommand = `# ${inputEchoToken}\r`;
+const inputEchoCommand = `echo ${inputEchoToken}\r`;
 const bulkStart = "__WINGMAN_BULK_START__\r\n";
 const bulkEnd = "__WINGMAN_BULK_END__\r\n";
 const bulkExpectedLength = 11_900_000;

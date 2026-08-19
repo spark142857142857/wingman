@@ -135,7 +135,12 @@ async function startSession(shell: ShellKind) {
   performanceProbe = null;
   term.reset();
   const { cols, rows } = term;
-  const session = await invoke<{ shell: string; cwd: string; elevated: boolean }>("start_shell", {
+  const session = await invoke<{
+    shell: string;
+    cwd: string;
+    elevated: boolean;
+    performanceProbeEnabled: boolean;
+  }>("start_shell", {
     shell,
     cols,
     rows,
@@ -146,7 +151,15 @@ async function startSession(shell: ShellKind) {
   elevated = session.elevated;
   updateStatus(session.cwd);
   term.focus();
-  if (shell === "powershell") void observeEditorReadiness(sessionId);
+  if (shell === "powershell") {
+    void observeEditorReadiness(sessionId);
+  } else if (session.performanceProbeEnabled) {
+    performanceProbe = await PerformanceProbe.start(
+      sessionId,
+      term,
+      () => sessionId === activeSessionId,
+    );
+  }
 }
 
 await listen<{ session_id: number; sequence: number; data: string }>("pty-output", (event) => {
