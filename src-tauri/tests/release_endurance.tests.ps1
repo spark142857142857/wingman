@@ -57,6 +57,51 @@ function Get-TreeMemory {
     }
 }
 
+function Get-Median {
+    param([double[]]$Values)
+
+    if ($Values.Count -eq 0) {
+        throw "Cannot calculate a median from an empty sample set."
+    }
+    $sorted = [double[]]@($Values | Sort-Object)
+    $middle = [Math]::Floor($sorted.Count / 2)
+    if ($sorted.Count % 2 -eq 1) {
+        return $sorted[$middle]
+    }
+    return ($sorted[$middle - 1] + $sorted[$middle]) / 2
+}
+
+function Get-SettledTreeMemory {
+    param(
+        [int]$RootProcessId,
+        [int]$SampleCount,
+        [int]$IntervalMilliseconds
+    )
+
+    $samples = [Collections.Generic.List[object]]::new()
+    $lastProcessIds = [uint32[]]@()
+    for ($index = 0; $index -lt $SampleCount; $index++) {
+        if ($index -gt 0) {
+            Start-Sleep -Milliseconds $IntervalMilliseconds
+        }
+        $lastProcessIds = [uint32[]]@(Get-ProcessTreeIds -RootProcessId $RootProcessId)
+        $samples.Add((Get-TreeMemory -ProcessIds $lastProcessIds))
+    }
+
+    $privateWorkingSet = [double[]]@($samples | ForEach-Object { $_.PrivateWorkingSetMiB })
+    $workingSet = [double[]]@($samples | ForEach-Object { $_.WorkingSetMiB })
+    $privateBytes = [double[]]@($samples | ForEach-Object { $_.PrivateBytesMiB })
+    return [pscustomobject]@{
+        ProcessIds = $lastProcessIds
+        PrivateWorkingSetMiB = Get-Median -Values $privateWorkingSet
+        WorkingSetMiB = Get-Median -Values $workingSet
+        PrivateBytesMiB = Get-Median -Values $privateBytes
+        PrivateWorkingSetSamplesMiB = $privateWorkingSet
+        WorkingSetSamplesMiB = $workingSet
+        PrivateBytesSamplesMiB = $privateBytes
+    }
+}
+
 function Wait-ForTitle {
     param(
         [Diagnostics.Process]$Process,
@@ -93,6 +138,8 @@ $probeName = "WINGMAN_PERF_ENDURANCE_PROBE"
 $previousProbe = [Environment]::GetEnvironmentVariable($probeName, "Process")
 $app = $null
 $knownTreeIds = @()
+$settledSampleCount = 5
+$settledSampleIntervalMilliseconds = 250
 
 try {
     try {
@@ -104,7 +151,11 @@ try {
     }
 
     [void](Wait-ForTitle -Process $app -Prefix "Wingman - Endurance Baseline" -TimeoutSeconds $StartupTimeoutSeconds)
-    $baselineIds = [uint32[]]@(Get-ProcessTreeIds -RootProcessId $app.Id)
+    $baseline = Get-SettledTreeMemory `
+        -RootProcessId $app.Id `
+        -SampleCount $settledSampleCount `
+        -IntervalMilliseconds $settledSampleIntervalMilliseconds
+    $baselineIds = [uint32[]]@($baseline.ProcessIds)
     $knownTreeIds = @($baselineIds)
     $baselineProcesses = @(Get-CimInstance Win32_Process | Where-Object {
         $baselineIds -contains [uint32]$_.ProcessId
@@ -113,7 +164,6 @@ try {
     if ($baselineNames -notcontains "msedgewebview2.exe" -or $baselineNames -notcontains "powershell.exe") {
         throw "The endurance baseline did not contain WebView2 and PowerShell."
     }
-    $baseline = Get-TreeMemory -ProcessIds $baselineIds
 
     if ($Smoke) {
         $cycleTitle = Wait-ForTitle -Process $app -Prefix "Wingman - Endurance Cycle 1" -TimeoutSeconds 60
@@ -126,9 +176,12 @@ try {
             throw "The completed smoke cycle left a runner alive."
         }
         [pscustomobject]@{
-            Schema = "wingman.endurance-smoke.v1"
+            Schema = "wingman.endurance-smoke.v2"
             CycleTitle = $cycleTitle
+            SettledSampleCount = $settledSampleCount
+            SettledSampleIntervalMilliseconds = $settledSampleIntervalMilliseconds
             BaselinePrivateWorkingSetMiB = $baseline.PrivateWorkingSetMiB
+            BaselinePrivateWorkingSetSamplesMiB = $baseline.PrivateWorkingSetSamplesMiB
             ProcessNames = @($smokeNames | Sort-Object)
         } | ConvertTo-Json -Depth 3
         exit 0
@@ -169,7 +222,11 @@ try {
         throw "Malformed endurance completion title '$completionTitle'."
     }
     $cycleCount = [int]$Matches[1]
-    $finalIds = [uint32[]]@(Get-ProcessTreeIds -RootProcessId $app.Id)
+    $final = Get-SettledTreeMemory `
+        -RootProcessId $app.Id `
+        -SampleCount $settledSampleCount `
+        -IntervalMilliseconds $settledSampleIntervalMilliseconds
+    $finalIds = [uint32[]]@($final.ProcessIds)
     $knownTreeIds = @($finalIds)
     $finalProcesses = @(Get-CimInstance Win32_Process | Where-Object {
         $finalIds -contains [uint32]$_.ProcessId
@@ -177,7 +234,6 @@ try {
     if (@($finalProcesses | Where-Object { $_.Name -eq "wingman-runner.exe" }).Count -ne 0) {
         throw "The completed endurance workload left a runner alive."
     }
-    $final = Get-TreeMemory -ProcessIds $finalIds
     $growthMiB = $final.PrivateWorkingSetMiB - $baseline.PrivateWorkingSetMiB
     $growthPercent = if ($baseline.PrivateWorkingSetMiB -gt 0) {
         100 * $growthMiB / $baseline.PrivateWorkingSetMiB
@@ -187,12 +243,20 @@ try {
     }
 
     $result = [ordered]@{
-        Schema = "wingman.endurance.v1"
+        Schema = "wingman.endurance.v2"
         DurationMinutes = $DurationMinutes
         CycleCount = $cycleCount
         SampleIntervalSeconds = $SampleIntervalSeconds
+        SettledSampleCount = $settledSampleCount
+        SettledSampleIntervalMilliseconds = $settledSampleIntervalMilliseconds
         BaselinePrivateWorkingSetMiB = $baseline.PrivateWorkingSetMiB
+        BaselinePrivateWorkingSetSamplesMiB = $baseline.PrivateWorkingSetSamplesMiB
+        BaselineWorkingSetSamplesMiB = $baseline.WorkingSetSamplesMiB
+        BaselinePrivateBytesSamplesMiB = $baseline.PrivateBytesSamplesMiB
         FinalPrivateWorkingSetMiB = $final.PrivateWorkingSetMiB
+        FinalPrivateWorkingSetSamplesMiB = $final.PrivateWorkingSetSamplesMiB
+        FinalWorkingSetSamplesMiB = $final.WorkingSetSamplesMiB
+        FinalPrivateBytesSamplesMiB = $final.PrivateBytesSamplesMiB
         GrowthMiB = $growthMiB
         GrowthPercent = $growthPercent
         PrivateWorkingSetMiB = [double[]]$privateSamples.ToArray()
