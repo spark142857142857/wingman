@@ -141,7 +141,6 @@ async function startSession(shell: ShellKind) {
   term.reset();
   const { cols, rows } = term;
   const session = await invoke<{
-    shell: string;
     cwd: string;
     elevated: boolean;
     performanceProbeEnabled: boolean;

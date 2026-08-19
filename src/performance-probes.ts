@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Terminal } from "@xterm/xterm";
+import type { Terminal } from "@xterm/xterm";
 import { TERMINAL_SCROLLBACK_ROWS } from "./terminal-config";
 
 const inputEchoToken = "__WINGMAN_INPUT_ECHO_PROBE__";

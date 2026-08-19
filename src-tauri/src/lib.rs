@@ -75,7 +75,6 @@ pub mod windows_path;
 
 #[derive(Clone, Serialize)]
 struct SessionInfo {
-    shell: String,
     cwd: String,
     elevated: bool,
     #[serde(rename = "performanceProbeEnabled")]
@@ -584,11 +583,6 @@ fn start_shell_inner(
         }
     };
     let cwd = cwd_path.display().to_string();
-    let shell_name = if active_shell == ActiveShell::Cmd {
-        "cmd".to_string()
-    } else {
-        "powershell".to_string()
-    };
     let output_flow = Arc::new(PtyOutputFlowV1::new());
 
     {
@@ -699,7 +693,6 @@ fn start_shell_inner(
     });
 
     Ok(SessionInfo {
-        shell: shell_name,
         cwd,
         elevated,
         performance_probe_enabled: any_performance_probe_enabled(),
