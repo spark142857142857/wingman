@@ -8,7 +8,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:ts && npm run test:windows && npm run test:packaging && npm run test:rust",
-    "test:ts": "tsx src/terminal-input.test.ts && tsx src/terminal-paste.test.ts && tsx src/terminal-shortcuts.test.ts && tsx src/terminal-security.test.ts",
+    "test:ts": "tsx src/terminal-paste.test.ts && tsx src/terminal-shortcuts.test.ts && tsx src/terminal-security.test.ts",
     "test:windows": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/layout_regression.tests.ps1",
     "test:packaging": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/sidecar_packaging.tests.ps1",
     "test:release-bundle": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bundle_contract.tests.ps1",

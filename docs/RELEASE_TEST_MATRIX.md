@@ -48,7 +48,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -
 
 | Area | Authoritative coverage |
 | --- | --- |
-| Frontend input | `terminal-input`, `terminal-paste`, `terminal-shortcuts`, and `terminal-security` TypeScript tests |
+| Frontend boundary | `terminal-paste`, `terminal-shortcuts`, and `terminal-security` TypeScript tests; Rust session suites own input parsing |
 | Windows layout | `layout_regression.tests.ps1` |
 | Sidecar layout | `sidecar_packaging.tests.ps1` |
 | Rust contracts | Every non-ignored unit and integration test under `src-tauri/src` and `src-tauri/tests` |

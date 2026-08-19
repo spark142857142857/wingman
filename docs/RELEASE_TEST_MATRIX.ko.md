@@ -44,7 +44,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -
 
 | 영역 | 기준 coverage |
 | --- | --- |
-| Frontend 입력 | `terminal-input`, `terminal-paste`, `terminal-shortcuts`, `terminal-security` TypeScript test |
+| Frontend 경계 | `terminal-paste`, `terminal-shortcuts`, `terminal-security` TypeScript test. 입력 parsing은 Rust session suite가 소유한다. |
 | Windows layout | `layout_regression.tests.ps1` |
 | Sidecar layout | `sidecar_packaging.tests.ps1` |
 | Rust 계약 | `src-tauri/src`와 `src-tauri/tests`의 ignored가 아닌 모든 unit·integration test |
