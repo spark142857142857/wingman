@@ -31,6 +31,7 @@ const MAX_TERMINAL_INPUT_BYTES: usize = 64 * 1024;
 const MAX_NATIVE_PASTE_BYTES: usize = 1024 * 1024;
 const MAX_PTY_COLS: u16 = 1_000;
 const MAX_PTY_ROWS: u16 = 500;
+const POWERSHELL_TRANSPORT_SCRIPT: &str = include_str!("powershell_runner_transport.ps1");
 
 pub mod app_launch;
 pub mod catalog;
@@ -358,10 +359,8 @@ fn resolve_shell(shell: ActiveShell) -> (String, Vec<String>) {
       vec![
         "-NoLogo".into(),
         "-NoExit".into(),
-        "-ExecutionPolicy".into(),
-        "Bypass".into(),
         "-Command".into(),
-        "chcp 65001 | Out-Null; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; if ($env:WINGMAN_INTEGRATION_SCRIPT) { . $env:WINGMAN_INTEGRATION_SCRIPT }".into(),
+        format!("chcp 65001 | Out-Null; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false; [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; {POWERSHELL_TRANSPORT_SCRIPT}"),
       ],
     ),
   }
@@ -487,11 +486,7 @@ fn start_shell(
     terminal.disable_pty_readiness();
     let integration_nonce = terminal.integration_nonce().to_string();
     let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|error| error.to_string())?;
-    let runtime_files = RuntimeFilesV1::resolve(&current_exe, &resource_dir)?;
+    let runtime_files = RuntimeFilesV1::resolve(&current_exe)?;
     let broker_pipe_name = format!(
         r"\\.\pipe\wingman-{}-{}",
         std::process::id(),
@@ -506,10 +501,6 @@ fn start_shell(
     let readiness = EditorReadinessBrokerV1::start(&readiness_pipe_name, integration_nonce.clone())
         .map_err(|error| error.to_string())?;
     let broker = SessionBrokerV1::start(&broker_pipe_name).map_err(|error| error.to_string())?;
-    cmd.env(
-        "WINGMAN_INTEGRATION_SCRIPT",
-        runtime_files.integration_path().as_os_str(),
-    );
     cmd.env("WINGMAN_SESSION_NONCE", integration_nonce);
     cmd.env("WINGMAN_READINESS_PIPE", readiness_pipe_id);
     cmd.env(
@@ -1122,7 +1113,6 @@ pub fn run() {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use std::sync::mpsc;
 
     #[test]
@@ -1240,13 +1230,12 @@ mod tests {
 
         assert!(!command.contains("WINGMAN_COMPAT_PROFILE"));
         assert!(!command.contains("powershell_compat"));
+        assert!(!arguments.iter().any(|argument| argument == "Bypass"));
+        assert!(!command.contains("WINGMAN_INTEGRATION_SCRIPT"));
     }
 
     #[test]
     fn powershell_bootstrap_loads_the_runner_transport_without_prompt_markers() {
-        let integration_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("powershell_runner_transport.ps1");
         let nonce = "abcdef0123456789abcdef0123456789";
 
         let (program, mut arguments) = resolve_shell(ActiveShell::WindowsPowerShell);
@@ -1258,7 +1247,6 @@ mod tests {
 
         let output = std::process::Command::new(program)
             .args(arguments)
-            .env("WINGMAN_INTEGRATION_SCRIPT", integration_path)
             .env("WINGMAN_SESSION_NONCE", nonce)
             .output()
             .expect("run PowerShell bootstrap");
