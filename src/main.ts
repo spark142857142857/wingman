@@ -71,8 +71,10 @@ const enduranceDurationMs = 30 * 60_000;
 const enduranceSettleMs = 10_000;
 const enduranceOutputCommand =
   "1..250 | ForEach-Object { [Console]::Out.WriteLine(('wingman-endurance-{0:D4}' -f $_)) }\r";
+const enduranceFollowReadyMarker = "__WINGMAN_ENDURANCE_FOLLOW_READY__";
 let performanceProbe: PerformanceProbe | null = null;
 let enduranceStarted = false;
+let enduranceOutputTail = "";
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
@@ -168,6 +170,9 @@ await listen<{ session_id: number; sequence: number; data: string }>("pty-output
     });
   };
   if (event.payload.session_id === activeSessionId) {
+    if (enduranceStarted) {
+      enduranceOutputTail = (enduranceOutputTail + event.payload.data).slice(-8192);
+    }
     if (performanceProbe?.write(activeSessionId, event.payload.data, acknowledge)) return;
     term.write(event.payload.data, acknowledge);
     return;
@@ -192,18 +197,20 @@ async function processTerminalData(data: string, clientSessionId: number) {
   if (/[\r\n]/.test(data)) void refreshCwd();
 }
 
-async function waitForEditorReady(clientSessionId: number) {
+async function waitForEditorReady(clientSessionId: number, stage: string) {
   const deadline = performance.now() + shellReadinessTimeoutMs;
   while (clientSessionId === activeSessionId && performance.now() < deadline) {
     const state = await invoke<{ accepted: boolean; editorReady: boolean }>(
       "poll_shell_readiness",
       { clientSessionId },
     );
-    if (!state.accepted) throw new Error("endurance session became stale");
+    if (!state.accepted) {
+      throw new Error(`endurance session became stale after ${stage}`);
+    }
     if (state.editorReady) return;
     await delay(25);
   }
-  throw new Error("endurance editor readiness timed out");
+  throw new Error(`endurance editor readiness timed out after ${stage}`);
 }
 
 async function markEndurance(
@@ -226,6 +233,19 @@ async function sendEnduranceInput(clientSessionId: number, data: string) {
   }
 }
 
+async function waitForEnduranceOutput(
+  clientSessionId: number,
+  marker: string,
+  stage: string,
+) {
+  const deadline = performance.now() + shellReadinessTimeoutMs;
+  while (clientSessionId === activeSessionId && performance.now() < deadline) {
+    if (enduranceOutputTail.includes(marker)) return;
+    await delay(25);
+  }
+  throw new Error(`endurance output timed out during ${stage}`);
+}
+
 async function runEnduranceProbe(initialSessionId: number) {
   let cycle = 0;
   try {
@@ -241,18 +261,23 @@ async function runEnduranceProbe(initialSessionId: number) {
       let clientSessionId = activeSessionId;
       if (!compat) {
         await sendEnduranceInput(clientSessionId, "familiar on\r");
-        await waitForEditorReady(clientSessionId);
+        await waitForEditorReady(clientSessionId, "familiar on");
       }
 
       await sendEnduranceInput(clientSessionId, enduranceOutputCommand);
-      await waitForEditorReady(clientSessionId);
+      await waitForEditorReady(clientSessionId, "bounded output");
       await sendEnduranceInput(clientSessionId, "clear\r");
-      await waitForEditorReady(clientSessionId);
+      await waitForEditorReady(clientSessionId, "clear");
 
+      enduranceOutputTail = "";
       await sendEnduranceInput(clientSessionId, "tail -f wingman-endurance.txt\r");
-      await delay(350);
+      await waitForEnduranceOutput(
+        clientSessionId,
+        enduranceFollowReadyMarker,
+        "tail startup",
+      );
       await sendEnduranceInput(clientSessionId, "\u0003");
-      await waitForEditorReady(clientSessionId);
+      await waitForEditorReady(clientSessionId, "tail cancellation");
 
       const columns = cycle % 2 === 0 ? 100 : 112;
       const rows = cycle % 2 === 0 ? 28 : 36;
@@ -265,14 +290,14 @@ async function runEnduranceProbe(initialSessionId: number) {
 
       await startSession("powershell");
       clientSessionId = activeSessionId;
-      await waitForEditorReady(clientSessionId);
+      await waitForEditorReady(clientSessionId, "session restart");
       cycle += 1;
       await markEndurance(clientSessionId, "cycle", cycle);
       await delay(1_000);
     }
 
     await delay(enduranceSettleMs);
-    await waitForEditorReady(activeSessionId);
+    await waitForEditorReady(activeSessionId, "final settle");
     await markEndurance(activeSessionId, "complete", cycle);
   } catch (error) {
     console.error("Endurance probe failed", error);

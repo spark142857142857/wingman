@@ -134,7 +134,10 @@ if ($existing.Count -ne 0) {
 
 $sandbox = Join-Path ([IO.Path]::GetTempPath()) ("wingman-endurance-{0}-{1}" -f $PID, [Guid]::NewGuid().ToString("N"))
 [void](New-Item -ItemType Directory -Path $sandbox)
-Set-Content -LiteralPath (Join-Path $sandbox "wingman-endurance.txt") -Encoding utf8 -Value "seed"
+Set-Content `
+    -LiteralPath (Join-Path $sandbox "wingman-endurance.txt") `
+    -Encoding utf8 `
+    -Value "__WINGMAN_ENDURANCE_FOLLOW_READY__"
 $probeName = "WINGMAN_PERF_ENDURANCE_PROBE"
 $previousProbe = [Environment]::GetEnvironmentVariable($probeName, "Process")
 $app = $null
