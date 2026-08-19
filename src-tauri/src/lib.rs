@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use interpreter::ActiveShell;
 use pty_output_flow::PtyOutputFlowV1;
+use runtime_files::RuntimeFilesV1;
 use session_runtime::{apply_familiar_effect, execute_terminal_input, write_session_input};
 use terminal_session::TerminalSessionV1;
 use transport::{EditorReadinessBrokerV1, SessionBrokerV1};
@@ -58,6 +59,7 @@ mod runner_rm;
 mod runner_touch;
 mod runner_transfer;
 pub mod runner_which;
+mod runtime_files;
 mod security_context;
 pub mod session_runtime;
 pub mod shell_adapter;
@@ -179,6 +181,7 @@ struct PtySession {
     #[allow(dead_code)]
     broker: SessionBrokerV1,
     output_flow: Arc<PtyOutputFlowV1>,
+    _runtime_files: Option<RuntimeFilesV1>,
 }
 
 impl Drop for PtySession {
@@ -483,15 +486,12 @@ fn start_shell(
     let mut terminal = TerminalSessionV1::new(client_session_id, active_shell);
     terminal.disable_pty_readiness();
     let integration_nonce = terminal.integration_nonce().to_string();
-    let runner_path = std::env::current_exe()
-        .map_err(|error| error.to_string())?
-        .with_file_name("wingman-runner.exe");
-    let integration_path = app
+    let current_exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|error| error.to_string())?
-        .join("src")
-        .join("powershell_runner_transport.ps1");
+        .map_err(|error| error.to_string())?;
+    let runtime_files = RuntimeFilesV1::resolve(&current_exe, &resource_dir)?;
     let broker_pipe_name = format!(
         r"\\.\pipe\wingman-{}-{}",
         std::process::id(),
@@ -506,10 +506,16 @@ fn start_shell(
     let readiness = EditorReadinessBrokerV1::start(&readiness_pipe_name, integration_nonce.clone())
         .map_err(|error| error.to_string())?;
     let broker = SessionBrokerV1::start(&broker_pipe_name).map_err(|error| error.to_string())?;
-    cmd.env("WINGMAN_INTEGRATION_SCRIPT", integration_path.as_os_str());
+    cmd.env(
+        "WINGMAN_INTEGRATION_SCRIPT",
+        runtime_files.integration_path().as_os_str(),
+    );
     cmd.env("WINGMAN_SESSION_NONCE", integration_nonce);
     cmd.env("WINGMAN_READINESS_PIPE", readiness_pipe_id);
-    cmd.env("WINGMAN_RUNNER_PATH", runner_path.as_os_str());
+    cmd.env(
+        "WINGMAN_RUNNER_PATH",
+        runtime_files.runner_path().as_os_str(),
+    );
     cmd.env("WINGMAN_BROKER_PIPE", &broker_pipe_name);
     remove_performance_probe_environment(&mut cmd);
     for arg in args {
@@ -563,6 +569,7 @@ fn start_shell(
             broker_pipe_name,
             broker,
             output_flow: output_flow.clone(),
+            _runtime_files: Some(runtime_files),
         })
     };
     if let Some(previous) = previous {
@@ -1201,6 +1208,7 @@ mod tests {
             ))
             .expect("start test session broker"),
             output_flow: Arc::new(PtyOutputFlowV1::new()),
+            _runtime_files: None,
         });
 
         let (sender, receiver) = mpsc::channel();
