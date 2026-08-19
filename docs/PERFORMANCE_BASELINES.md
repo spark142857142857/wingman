@@ -838,3 +838,45 @@ A warmed harness smoke completed the real release broker/runner path over the
 deliberately discarded and is not uncached evidence. No controlled-restart
 sample is checked into the repository yet, so uncached targets remain unset
 and this release gate remains open.
+
+## 2026-08-19: 30-minute release endurance workload
+
+- App source: `dc593882fdaedcd4c8ecb3d4c9c1e396d79e41ba`
+- Measurement harness: `9fd1e6844ef0ca2fc262abf170d42527d07e7d52`
+- OS: Windows `10.0.26200.9168`, display version `25H2`
+- CPU: AMD Ryzen 7 9700X, 8 physical cores, 16 logical processors
+- Power: Windows Balanced (`381b4222-f694-41f0-9685-ff5bb260df2e`)
+- WebView2 Runtime: `151.0.4129.93`
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`
+- Build: official Tauri release frontend, no installer bundle
+
+Command:
+
+```powershell
+npm run tauri build -- --no-bundle
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_endurance.tests.ps1 -Executable src-tauri/target/release/wingman.exe
+```
+
+The release-only probe waited ten seconds for initial settling, then ran for 30
+minutes. Every cycle enabled Familiar mode when needed, rendered and cleared
+250 lines, started and cancelled `tail -f`, alternated the PTY size, restarted
+Windows PowerShell, and required authenticated editor readiness before
+continuing. It completed 907 cycles. The harness sampled the complete process
+tree every ten seconds and used the median of five 250 ms-spaced samples for
+each settled endpoint. Failed gates emit the same versioned raw result before
+returning nonzero, so evidence is not lost at the assertion boundary.
+
+| Metric | Result | Release ceiling |
+| --- | ---: | ---: |
+| Baseline private working set | 146.789 MiB | n/a |
+| Final settled private working set | 175.090 MiB | 350 MiB |
+| Growth | 28.301 MiB | 50 MiB |
+| Growth | 19.280% | 20% |
+| Remaining runner processes | 0 | 0 |
+
+The final tree contained only `wingman.exe`, WebView2, PowerShell, and
+`conhost.exe`. All endpoint samples were internally stable, and the process
+exited successfully. This closes the automated PowerShell endurance
+resource-ceiling check on this machine. It is not a substitute for the
+separate input-latency distributions or the current-and-previous Windows
+release matrix.

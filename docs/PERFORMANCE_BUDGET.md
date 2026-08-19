@@ -256,9 +256,12 @@ measurement of the 4,000-row scrollback ceiling. The same release workload is
 also measured against a one-tab Windows Terminal baseline. A controlled-restart
 runner harness now rejects more than one recorded operation per Windows boot
 and requires five unique boots per operation. The five-boot distributions and
-accepted uncached targets are not yet recorded, and endurance automation is
-still missing. These are measurement gaps, not permission to mislabel warmed
-samples or add production telemetry.
+accepted uncached targets are not yet recorded. A release-only 30-minute
+PowerShell endurance harness now covers repeated output, clear, follow/cancel,
+resize, and shell restart with whole-tree sampling and settled endpoint gates;
+its accepted current-machine result is recorded in the baseline document. The
+remaining uncached and Windows-version matrix gaps are not permission to
+mislabel warmed samples or add production telemetry.
 
 ## Research basis
 

@@ -782,3 +782,42 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/
 경로와 versioned result marker를 확인했다. 이 시간값은 의도적으로 버렸고 uncached
 근거가 아니다. 아직 controlled-restart 표본을 저장소에 기록하지 않았으므로 uncached
 target은 미설정이고 이 release gate는 열려 있다.
+
+## 2026-08-19: 30분 release 내구성 workload
+
+- App source: `dc593882fdaedcd4c8ecb3d4c9c1e396d79e41ba`
+- 측정 harness: `9fd1e6844ef0ca2fc262abf170d42527d07e7d52`
+- OS: Windows `10.0.26200.9168`, display version `25H2`
+- CPU: AMD Ryzen 7 9700X, physical core 8개, logical processor 16개
+- Power: Windows 균형 조정 (`381b4222-f694-41f0-9685-ff5bb260df2e`)
+- WebView2 Runtime: `151.0.4129.93`
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`
+- Build: 공식 Tauri release frontend, installer bundle 없음
+
+실행 명령:
+
+```powershell
+npm run tauri build -- --no-bundle
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_endurance.tests.ps1 -Executable src-tauri/target/release/wingman.exe
+```
+
+Release 전용 probe는 처음 10초 동안 안정화를 기다린 뒤 30분 동안 실행했다. 각
+사이클은 필요할 때 Familiar mode를 켜고 250줄을 렌더링한 뒤 clear하고, `tail -f`를
+시작·취소하고, PTY 크기를 번갈아 바꾸고, Windows PowerShell을 재시작한 뒤 다음
+단계로 가기 전에 인증된 editor readiness를 요구했다. 총 907사이클을 완료했다.
+Harness는 10초마다 전체 process tree를 표본화했고, 안정화된 양 끝값은 250ms 간격
+표본 5개의 중앙값으로 계산했다. Gate가 실패해도 0이 아닌 종료에 앞서 같은 versioned
+원시 결과를 출력하므로 assertion 경계에서 근거를 잃지 않는다.
+
+| 지표 | 결과 | Release 상한 |
+| --- | ---: | ---: |
+| 기준 private working set | 146.789 MiB | 해당 없음 |
+| 최종 안정화 private working set | 175.090 MiB | 350 MiB |
+| 증가량 | 28.301 MiB | 50 MiB |
+| 증가율 | 19.280% | 20% |
+| 남은 runner process | 0 | 0 |
+
+최종 tree에는 `wingman.exe`, WebView2, PowerShell, `conhost.exe`만 있었다. 양 끝의
+모든 표본은 내부적으로 안정적이었고 process는 성공 종료했다. 이 결과로 이 machine의
+자동화된 PowerShell 내구성 자원 상한 검사를 닫는다. 별도의 입력 latency 분포나 현재
+및 직전 Windows release matrix를 대신하는 결과는 아니다.

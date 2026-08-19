@@ -231,8 +231,11 @@ process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 �
 상한의 release 측정이 있다. 같은 release workload를 단일 탭 Windows Terminal과도
 비교한다. Controlled-restart runner harness는 Windows boot 하나에서 표본 하나만
 기록하고 operation마다 서로 다른 boot 5개를 요구한다. 하지만 5-boot 분포와 승인할
-uncached target은 아직 기록하지 않았고 지속 실행 자동화도 남아 있다. 이는 warmed
-표본을 cold라고 부르거나 제품 telemetry를 추가해도 된다는 뜻이 아니다.
+uncached target은 아직 기록하지 않았다. Release 전용 30분 PowerShell 내구성 harness는
+반복 출력, clear, follow/cancel, resize, shell restart를 전체 tree 표본과 안정화 양 끝값
+gate로 검사하며, 현재 machine의 승인 결과는 baseline 문서에 기록했다. 남은 uncached 및
+Windows version matrix 공백은 warmed 표본을 cold라고 부르거나 제품 telemetry를
+추가해도 된다는 뜻이 아니다.
 
 ## 조사 근거
 
