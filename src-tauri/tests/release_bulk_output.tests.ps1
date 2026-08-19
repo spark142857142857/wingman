@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
+    [ValidateSet('powershell', 'cmd')]
+    [string]$ShellKind = 'powershell',
     [int]$TimeoutSeconds = 60
 )
 
@@ -19,7 +21,10 @@ $previousProbe = [Environment]::GetEnvironmentVariable($probeVariable, "Process"
 $startedAt = Get-Date
 try {
     [Environment]::SetEnvironmentVariable($probeVariable, "1", "Process")
-    $app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
+    $app = Start-WingmanGuiProcess `
+        -Executable $resolvedExecutable `
+        -WorkingDirectory (Get-Location).Path `
+        -Arguments @('--shell', $ShellKind)
 }
 finally {
     [Environment]::SetEnvironmentVariable($probeVariable, $previousProbe, "Process")
@@ -31,12 +36,7 @@ try {
     do {
         Start-Sleep -Milliseconds 25
         $app.Refresh()
-        $shell = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object {
-            $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-            $process -and
-                $process.StartTime -ge $startedAt -and
-                $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
-        } | Select-Object -First 1
+        $shell = Find-WingmanShellProcess -ShellKind $ShellKind -StartedAt $startedAt
     } while (
         $app.MainWindowTitle -ne "Wingman - Bulk Rendered" -and
         -not $app.HasExited -and
@@ -50,11 +50,11 @@ try {
         throw "Release GUI did not validate and render 100,000 deterministic lines within $TimeoutSeconds seconds; title was '$($app.MainWindowTitle)'."
     }
     if (-not $shell) {
-        throw "Release GUI reported bulk rendering without an active PowerShell PTY session."
+        throw "Release GUI reported bulk rendering without an active $ShellKind PTY session."
     }
 
     $elapsed = ((Get-Date) - $startedAt).TotalMilliseconds
-    Write-Output ("Release GUI validated and rendered 100,000 lines (11,900,000 UTF-8 bytes) in {0:N1} ms." -f $elapsed)
+    Write-Output ("Release GUI validated and rendered 100,000 lines in $ShellKind (11,900,000 UTF-8 bytes) in {0:N1} ms." -f $elapsed)
 }
 finally {
     $liveApp = Get-Process -Id $app.Id -ErrorAction SilentlyContinue

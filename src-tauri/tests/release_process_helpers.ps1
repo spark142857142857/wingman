@@ -49,3 +49,25 @@ function Start-WingmanGuiProcess {
 
   throw 'Wingman launcher returned success without a live GUI child.'
 }
+
+function Find-WingmanShellProcess {
+  param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('powershell', 'cmd')]
+    [string]$ShellKind,
+    [Parameter(Mandatory = $true)]
+    [DateTime]$StartedAt
+  )
+
+  $shellName = if ($ShellKind -eq 'powershell') { 'powershell.exe' } else { 'cmd.exe' }
+  return Get-CimInstance Win32_Process -Filter "Name = '$shellName'" | Where-Object {
+    $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+    if (-not $process -or $process.StartTime -lt $StartedAt) {
+      return $false
+    }
+    if ($ShellKind -eq 'powershell') {
+      return $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
+    }
+    return $_.CommandLine -like '*cmd.exe*/K*chcp 65001*'
+  } | Select-Object -First 1
+}

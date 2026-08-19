@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
+    [ValidateSet('powershell', 'cmd')]
+    [string]$ShellKind = 'powershell',
     [int]$TimeoutSeconds = 120,
     [double]$P95CeilingMilliseconds = 200
 )
@@ -20,7 +22,10 @@ $previousProbe = [Environment]::GetEnvironmentVariable($probeVariable, "Process"
 $startedAt = Get-Date
 try {
     [Environment]::SetEnvironmentVariable($probeVariable, "1", "Process")
-    $app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
+    $app = Start-WingmanGuiProcess `
+        -Executable $resolvedExecutable `
+        -WorkingDirectory (Get-Location).Path `
+        -Arguments @('--shell', $ShellKind)
 }
 finally {
     [Environment]::SetEnvironmentVariable($probeVariable, $previousProbe, "Process")
@@ -34,12 +39,7 @@ try {
         Start-Sleep -Milliseconds 25
         $app.Refresh()
         $title = $app.MainWindowTitle
-        $shell = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object {
-            $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-            $process -and
-                $process.StartTime -ge $startedAt -and
-                $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
-        } | Select-Object -First 1
+        $shell = Find-WingmanShellProcess -ShellKind $ShellKind -StartedAt $startedAt
     } while (
         $title -notlike "Wingman - Bulk Latency *" -and
         -not $app.HasExited -and
@@ -53,7 +53,7 @@ try {
         throw "Release GUI did not report 100 bulk input-latency samples within $TimeoutSeconds seconds; title was '$title'."
     }
     if (-not $shell) {
-        throw "Release GUI reported bulk input latency without an active PowerShell PTY session."
+        throw "Release GUI reported bulk input latency without an active $ShellKind PTY session."
     }
 
     $culture = [Globalization.CultureInfo]::InvariantCulture
@@ -83,7 +83,7 @@ try {
         throw "Bulk output input latency p95 was $p95 ms, above the $P95CeilingMilliseconds ms release ceiling."
     }
 
-    Write-Output ("Bulk input latency: median {0:N1} ms, p95 {1:N1} ms, maximum {2:N1} ms." -f $median, $p95, $maximum)
+    Write-Output ("Bulk $ShellKind input latency: median {0:N1} ms, p95 {1:N1} ms, maximum {2:N1} ms." -f $median, $p95, $maximum)
     Write-Output ("Raw samples (ms): " + (($samples | ForEach-Object { $_.ToString("F1", $culture) }) -join ", "))
 }
 finally {

@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
+    [ValidateSet('powershell', 'cmd')]
+    [string]$ShellKind = 'powershell',
     [int]$PhaseTimeoutSeconds = 40,
     [int]$BaselineSettleSeconds = 10,
     [int]$PostClearSettleSeconds = 10,
@@ -137,7 +139,10 @@ $previousProbe = [Environment]::GetEnvironmentVariable($probeVariable, "Process"
 $startedAt = Get-Date
 try {
     [Environment]::SetEnvironmentVariable($probeVariable, "1", "Process")
-    $app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
+    $app = Start-WingmanGuiProcess `
+        -Executable $resolvedExecutable `
+        -WorkingDirectory (Get-Location).Path `
+        -Arguments @('--shell', $ShellKind)
 }
 finally {
     [Environment]::SetEnvironmentVariable($probeVariable, $previousProbe, "Process")
@@ -147,14 +152,9 @@ $knownTreeIds = @([uint32]$app.Id)
 try {
     Wait-ForTitle -Process $app -Expected "Wingman - Retention Baseline" -TimeoutSeconds $PhaseTimeoutSeconds
 
-    $shell = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object {
-        $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-        $process -and
-            $process.StartTime -ge $startedAt -and
-            $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
-    } | Select-Object -First 1
+    $shell = Find-WingmanShellProcess -ShellKind $ShellKind -StartedAt $startedAt
     if (-not $shell) {
-        throw "Retention baseline started without an active PowerShell PTY session."
+        throw "Retention baseline started without an active $ShellKind PTY session."
     }
 
     Start-Sleep -Seconds $BaselineSettleSeconds
@@ -168,7 +168,7 @@ try {
     $knownTreeIds = @(Get-ProcessTreeIds -RootProcessId $app.Id)
     $retainedByProcess = Get-TreePrivateWorkingSetByProcess -ProcessIds $knownTreeIds
     if ($knownTreeIds -notcontains [uint32]$shell.ProcessId) {
-        throw "The active PowerShell PTY session left the Wingman process tree."
+        throw "The active $ShellKind PTY session left the Wingman process tree."
     }
 
     $baselineMedian = Get-Median -Values $baseline

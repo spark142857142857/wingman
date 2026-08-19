@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
+    [ValidateSet('powershell', 'cmd')]
+    [string]$ShellKind = 'powershell',
     [int]$TimeoutSeconds = 60,
     [int]$ExpectedScrollbackRows = 4000
 )
@@ -20,7 +22,10 @@ $previousProbe = [Environment]::GetEnvironmentVariable($probeVariable, "Process"
 $startedAt = Get-Date
 try {
     [Environment]::SetEnvironmentVariable($probeVariable, "1", "Process")
-    $app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
+    $app = Start-WingmanGuiProcess `
+        -Executable $resolvedExecutable `
+        -WorkingDirectory (Get-Location).Path `
+        -Arguments @('--shell', $ShellKind)
 }
 finally {
     [Environment]::SetEnvironmentVariable($probeVariable, $previousProbe, "Process")
@@ -34,12 +39,7 @@ try {
         Start-Sleep -Milliseconds 25
         $app.Refresh()
         $title = $app.MainWindowTitle
-        $shell = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object {
-            $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-            $process -and
-                $process.StartTime -ge $startedAt -and
-                $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
-        } | Select-Object -First 1
+        $shell = Find-WingmanShellProcess -ShellKind $ShellKind -StartedAt $startedAt
     } while (
         $title -notlike "Wingman - Scrollback *" -and
         -not $app.HasExited -and
@@ -53,7 +53,7 @@ try {
         throw "Release GUI did not report the scrollback measurement within $TimeoutSeconds seconds; title was '$title'."
     }
     if (-not $shell) {
-        throw "Release GUI reported the scrollback measurement without an active PowerShell PTY session."
+        throw "Release GUI reported the scrollback measurement without an active $ShellKind PTY session."
     }
 
     $configuredScrollbackRows = [int]$Matches[1]
@@ -74,7 +74,7 @@ try {
         throw "Retained scrollback was $retainedScrollbackRows rows after the 100,000-line workload, expected the configured $ExpectedScrollbackRows-row ceiling to be full."
     }
 
-    Write-Output "Release GUI retained $retainedScrollbackRows scrollback rows after validating and rendering 100,000 lines; ceiling was $ExpectedScrollbackRows."
+    Write-Output "Release GUI retained $retainedScrollbackRows scrollback rows in $ShellKind after validating and rendering 100,000 lines; ceiling was $ExpectedScrollbackRows."
 }
 finally {
     $liveApp = Get-Process -Id $app.Id -ErrorAction SilentlyContinue
