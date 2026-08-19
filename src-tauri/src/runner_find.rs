@@ -14,18 +14,23 @@ use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
 pub const MAX_FIND_ENTRIES: usize = 100_000;
 pub const MAX_FIND_TRAVERSAL_DEPTH: usize = 256;
 
-struct FindOptionsV1<'a> {
+struct FindOptionsV1 {
     entry_type: Option<FindEntryTypeV1>,
     pattern: Option<FindPatternV1>,
     min_depth: usize,
     max_depth: Option<usize>,
-    _source: &'a ValidatedPathSpecV1,
 }
 
 struct WalkStateV1 {
     records: Vec<RecordFrameV1>,
     diagnostics: Vec<String>,
     visited: usize,
+}
+
+struct FindWalkerV1<'a> {
+    options: &'a FindOptionsV1,
+    state: &'a mut WalkStateV1,
+    cancellation: &'a RunnerCancellationV1,
 }
 
 pub fn execute_find_to<W: Write, E: Write>(
@@ -113,23 +118,19 @@ pub fn execute_find_with_cwd_to<W: Write, E: Write>(
         },
         min_depth: *min_depth,
         max_depth: *max_depth,
-        _source: path,
     };
     let mut state = WalkStateV1 {
         records: Vec::new(),
         diagnostics: Vec::new(),
         visited: 0,
     };
-    if let Err(message) = walk(
-        &root,
-        &display,
-        &basename,
-        root_metadata,
-        0,
-        &options,
-        &mut state,
+    let walk_result = FindWalkerV1 {
+        options: &options,
+        state: &mut state,
         cancellation,
-    ) {
+    }
+    .walk(&root, &display, &basename, root_metadata, 0);
+    if let Err(message) = walk_result {
         if cancellation.is_cancelled() {
             return Ok(130);
         }
@@ -161,101 +162,104 @@ pub fn execute_find_with_cwd_to<W: Write, E: Write>(
     Ok(if source_failed { 1 } else { exit })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn walk(
-    path: &Path,
-    display: &str,
-    basename: &str,
-    metadata: fs::Metadata,
-    depth: usize,
-    options: &FindOptionsV1<'_>,
-    state: &mut WalkStateV1,
-    cancellation: &RunnerCancellationV1,
-) -> Result<(), &'static str> {
-    if cancellation.is_cancelled() {
-        return Ok(());
-    }
-    state.visited = state.visited.saturating_add(1);
-    if state.visited > MAX_FIND_ENTRIES || depth > MAX_FIND_TRAVERSAL_DEPTH {
-        state.records.clear();
-        return Err("recursive traversal resource limit exceeded");
-    }
-    let reparse = metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
-    if depth >= options.min_depth
-        && options.max_depth.is_none_or(|maximum| depth <= maximum)
-        && matches_type(&metadata, reparse, options.entry_type)
-        && options
-            .pattern
-            .as_ref()
-            .is_none_or(|pattern| pattern.is_match(basename))
-    {
-        state.records.push(RecordFrameV1 {
-            text: display.to_string(),
-            terminated: true,
-        });
-    }
-    if reparse || !metadata.is_dir() || options.max_depth.is_some_and(|maximum| depth >= maximum) {
-        return Ok(());
-    }
-    let directory = match fs::read_dir(path) {
-        Ok(directory) => directory,
-        Err(_) => {
-            state
-                .diagnostics
-                .push(diagnostic(display, "directory cannot be read"));
+impl FindWalkerV1<'_> {
+    fn walk(
+        &mut self,
+        path: &Path,
+        display: &str,
+        basename: &str,
+        metadata: fs::Metadata,
+        depth: usize,
+    ) -> Result<(), &'static str> {
+        if self.cancellation.is_cancelled() {
             return Ok(());
         }
-    };
-    let mut children = Vec::new();
-    for child in directory {
-        if cancellation.is_cancelled() {
+        self.state.visited = self.state.visited.saturating_add(1);
+        if self.state.visited > MAX_FIND_ENTRIES || depth > MAX_FIND_TRAVERSAL_DEPTH {
+            self.state.records.clear();
+            return Err("recursive traversal resource limit exceeded");
+        }
+        let reparse = metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        if depth >= self.options.min_depth
+            && self
+                .options
+                .max_depth
+                .is_none_or(|maximum| depth <= maximum)
+            && matches_type(&metadata, reparse, self.options.entry_type)
+            && self
+                .options
+                .pattern
+                .as_ref()
+                .is_none_or(|pattern| pattern.is_match(basename))
+        {
+            self.state.records.push(RecordFrameV1 {
+                text: display.to_string(),
+                terminated: true,
+            });
+        }
+        if reparse
+            || !metadata.is_dir()
+            || self
+                .options
+                .max_depth
+                .is_some_and(|maximum| depth >= maximum)
+        {
             return Ok(());
         }
-        match child {
-            Ok(child) => match child.file_name().to_str() {
-                Some(name) => {
-                    if state.visited.saturating_add(children.len()) >= MAX_FIND_ENTRIES {
-                        state.records.clear();
-                        return Err("recursive traversal resource limit exceeded");
-                    }
-                    children.push((name.to_string(), child.path()));
-                }
-                None => state
+        let directory = match fs::read_dir(path) {
+            Ok(directory) => directory,
+            Err(_) => {
+                self.state
                     .diagnostics
-                    .push(diagnostic(display, "child filename is not valid Unicode")),
-            },
-            Err(_) => state
-                .diagnostics
-                .push(diagnostic(display, "directory entry cannot be read")),
-        }
-    }
-    children.sort_by(|left, right| compare_names(&left.0, &right.0));
-    for (name, child) in children {
-        if cancellation.is_cancelled() {
-            return Ok(());
-        }
-        let child_display = if display == "." {
-            format!(r".\{name}")
-        } else {
-            format!(r"{display}\{name}")
+                    .push(diagnostic(display, "directory cannot be read"));
+                return Ok(());
+            }
         };
-        match fs::symlink_metadata(&child) {
-            Ok(metadata) => walk(
-                &child,
-                &child_display,
-                &name,
-                metadata,
-                depth + 1,
-                options,
-                state,
-                cancellation,
-            )?,
-            Err(_) => state
-                .diagnostics
-                .push(diagnostic(&child_display, "entry cannot be inspected")),
+        let mut children = Vec::new();
+        for child in directory {
+            if self.cancellation.is_cancelled() {
+                return Ok(());
+            }
+            match child {
+                Ok(child) => match child.file_name().to_str() {
+                    Some(name) => {
+                        if self.state.visited.saturating_add(children.len()) >= MAX_FIND_ENTRIES {
+                            self.state.records.clear();
+                            return Err("recursive traversal resource limit exceeded");
+                        }
+                        children.push((name.to_string(), child.path()));
+                    }
+                    None => self
+                        .state
+                        .diagnostics
+                        .push(diagnostic(display, "child filename is not valid Unicode")),
+                },
+                Err(_) => self
+                    .state
+                    .diagnostics
+                    .push(diagnostic(display, "directory entry cannot be read")),
+            }
         }
+        children.sort_by(|left, right| compare_names(&left.0, &right.0));
+        for (name, child) in children {
+            if self.cancellation.is_cancelled() {
+                return Ok(());
+            }
+            let child_display = if display == "." {
+                format!(r".\{name}")
+            } else {
+                format!(r"{display}\{name}")
+            };
+            match fs::symlink_metadata(&child) {
+                Ok(metadata) => self.walk(&child, &child_display, &name, metadata, depth + 1)?,
+                Err(_) => self
+                    .state
+                    .diagnostics
+                    .push(diagnostic(&child_display, "entry cannot be inspected")),
+            }
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn matches_type(metadata: &fs::Metadata, reparse: bool, kind: Option<FindEntryTypeV1>) -> bool {
