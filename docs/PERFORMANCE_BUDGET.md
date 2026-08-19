@@ -162,6 +162,14 @@ must remain at or below 96 MiB. One additional byte-limit record or one record
 beyond 262,144 exits `1`, emits only the fixed bounded diagnostic, leaves a
 redirect target empty, and stays under the same process-memory ceiling.
 
+At the exact traversal/listing limits, both release-runner metrics must remain
+at or below 144 MiB: 100,000 visited `find` entries, 100,000 recursive `grep`
+entries, 262,144 `ls` entries, and 64 MiB of retained UTF-8 `ls` name bytes.
+Adding one entry beyond each bound exits `1` with one bounded diagnostic and no
+unbounded resource growth. Redirect effects retain the command contract:
+pre-collected `find`/`ls` failures leave the seeded target untouched, while the
+flat recursive-`grep` failure leaves the already-opened target empty.
+
 Reproducible component measurements are recorded in
 [PERFORMANCE_BASELINES.md](PERFORMANCE_BASELINES.md); they do not replace the
 whole process-tree release gate.
@@ -237,10 +245,10 @@ probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release
 whole-process-tree retained-memory distribution after clear, and a release
 measurement of the 4,000-row scrollback ceiling. The same release workload is
 also measured against a one-tab Windows Terminal baseline. It still lacks
-controlled-restart uncached runner timing, traversal/listing/mutation
-resource-limit release measurements, and endurance automation. These are
-planned measurement needs, not permission to add production instrumentation
-before implementation approval.
+controlled-restart uncached runner timing, mutation resource-limit release
+measurements, and endurance automation. These are planned measurement needs,
+not permission to add production instrumentation before implementation
+approval.
 
 ## Research basis
 

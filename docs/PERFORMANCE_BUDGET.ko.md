@@ -149,6 +149,13 @@ process lifetime peak working set과 표본 peak private bytes는 각각 96 MiB 
 Byte-limit record 하나 또는 262,144개를 넘는 record 하나를 추가하면 exit `1`, 고정된
 크기 제한 진단 하나, 빈 redirect 결과로 끝나고 같은 process-memory 상한을 지켜야 한다.
 
+Traversal·listing 정확한계에서도 release runner의 두 측정값은 각각 144 MiB 이하여야
+한다. 대상은 `find` 방문 항목 100,000개, 재귀 `grep` 항목 100,000개, `ls` 항목
+262,144개, 보관한 `ls` UTF-8 이름 64 MiB다. 각 경계에 항목 하나를 추가하면 exit `1`,
+고정된 크기 제한 진단 하나로 끝나며 자원이 무제한으로 증가하지 않아야 한다. Redirect
+결과는 명령 계약을 유지한다. 미리 수집하는 `find`·`ls` 실패는 넣어 둔 target을 그대로
+두고, 평평한 재귀 `grep` 실패는 이미 연 target을 빈 상태로 둔다.
+
 재현 가능한 component 측정은 [성능 기준 측정 기록](PERFORMANCE_BASELINES.ko.md)에
 보관하며 전체 process-tree 배포 게이트를 대신하지 않는다.
 
@@ -214,9 +221,9 @@ process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 �
 수락·렌더 startup 및 대용량 출력 중 입력 latency probe, 결정적 100,000줄/10MiB PTY
 완전성 probe, clear 후 release 전체 process-tree retained-memory 분포, 4,000줄 scrollback
 상한의 release 측정이 있다. 같은 release workload를 단일 탭 Windows Terminal과도
-비교한다. controlled-restart uncached runner timing, traversal·listing·mutation 자원
-제한 release 측정, 지속 실행 자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현
-승인 전에 제품 계측을 추가해도 된다는 뜻은 아니다.
+비교한다. controlled-restart uncached runner timing, mutation 자원 제한 release 측정,
+지속 실행 자동화는 아직 없다. 이는 계획된 측정 요구사항이며 구현 승인 전에 제품
+계측을 추가해도 된다는 뜻은 아니다.
 
 ## 조사 근거
 

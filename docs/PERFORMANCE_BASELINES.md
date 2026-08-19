@@ -637,4 +637,92 @@ The overall maximum was 69.50 MiB working set and 65.99 MiB private bytes, so
 all 27 runner processes passed the 96 MiB release ceiling. No partial sorted
 record, unbounded diagnostic, surviving runner, or resource sandbox remained.
 This closes the release process-memory evidence for bounded `sort` while the
-separate traversal, listing, and mutation resource-limit cases remain.
+separate traversal, listing, and mutation resource-limit cases are measured in
+their own gates.
+
+## 2026-08-19: release traversal and listing resource ceilings
+
+- Runner source: `b9b3510d5adb14dbac707839445733ddc16f687a`
+- Harness and accepted ceiling: `c2f8fae67b8c792297e10fe9fea8fdb355b7b5df`
+- OS, CPU, power plan, toolchain, and release profile: unchanged from the
+  preceding runner baselines
+
+Command:
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract traversal_and_listing_resource_limits_are_bounded -- --ignored --exact --nocapture
+```
+
+The real broker and release runner are exercised in a private NTFS sandbox.
+One shared flat tree proves `find` at exactly 100,000 visited objects and
+recursive `grep` at exactly 100,000 directory entries, then adds one file for
+both rejection cases. A fresh directory proves `ls` at 262,144 entries and
+then at 262,145. A second listing directory uses 92,309 fixed 727-byte Unicode
+names plus one 221-byte name for exactly 67,108,864 retained UTF-8 name bytes;
+one final name exceeds that independent limit while remaining below the entry
+limit. Each case runs three release sidecars per distribution.
+
+Exact successes validate every redirected CRLF record. Each over-limit case
+exits `1`, emits exactly one bounded diagnostic, and starts no further
+filesystem work. Seeded redirect targets remain unchanged for pre-collected
+`find` and `ls`; flat recursive `grep` opens its target first and leaves it
+empty, as required by the streaming redirection contract. Lifetime peak
+working set and 2 ms sampled peak private bytes must each remain at or below
+144 MiB.
+
+Peak pairs below are working-set/private-byte MiB. Distribution 1 was the
+diagnostic run used to choose the ceiling; distributions 2 and 3 enforce it in
+the harness. All three distributions are below the finalized ceiling.
+
+| Distribution | Find exact | Find +1 | Recursive grep exact | Recursive grep +1 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 36.05 / 38.58 | 34.61 / 32.99 | 80.93 / 114.59 | 80.94 / 114.60 |
+| 2 | 35.76 / 38.58 | 34.67 / 33.23 | 80.94 / 114.60 | 80.92 / 114.59 |
+| 3 | 35.77 / 38.59 | 34.61 / 32.97 | 80.92 / 114.59 | 80.95 / 114.59 |
+
+| Distribution | ls 262,144 | ls 262,145 | ls 64 MiB names | ls names +1 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 40.66 / 51.68 | 40.59 / 47.28 | 80.29 / 90.41 | 80.21 / 82.74 |
+| 2 | 40.66 / 51.68 | 40.60 / 47.28 | 80.28 / 90.38 | 80.20 / 82.73 |
+| 3 | 40.66 / 51.72 | 40.60 / 47.30 | 80.25 / 90.40 | 80.16 / 82.74 |
+
+Raw samples contain elapsed milliseconds, peak working-set MiB, and peak
+private-byte MiB in that order:
+
+```text
+distribution 1
+find exact: (1704.420, 35.734, 38.582), (1608.360, 36.047, 38.484), (1670.427, 35.762, 38.484)
+find +1: (67.504, 34.379, 32.992), (70.814, 34.559, 32.883), (68.376, 34.613, 32.297)
+grep exact: (4198.368, 80.926, 114.586), (3995.311, 80.934, 114.590), (4209.800, 80.934, 114.590)
+grep +1: (44.171, 80.941, 114.594), (44.356, 80.926, 114.602), (42.695, 80.941, 114.594)
+ls entries exact: (6436.743, 40.656, 51.680), (6226.650, 40.656, 51.676), (6801.617, 40.656, 51.672)
+ls entries +1: (5591.081, 40.594, 47.281), (5421.979, 40.590, 47.281), (5420.708, 40.547, 47.211)
+ls names exact: (4253.949, 80.293, 90.379), (4118.229, 80.258, 90.414), (4135.006, 80.285, 90.379)
+ls names +1: (3730.151, 80.188, 82.738), (3738.254, 80.156, 82.727), (3732.764, 80.207, 82.730)
+
+distribution 2
+find exact: (1611.557, 35.742, 38.582), (1601.542, 35.758, 38.246), (1623.823, 35.730, 38.566)
+find +1: (66.820, 34.672, 33.227), (68.493, 34.625, 32.629), (65.973, 34.617, 32.629)
+grep exact: (4287.382, 80.926, 114.570), (3953.238, 80.938, 114.598), (3954.493, 80.906, 114.602)
+grep +1: (42.503, 80.922, 114.594), (42.749, 80.898, 114.594), (42.673, 80.906, 114.582)
+ls entries exact: (6205.780, 40.664, 51.680), (6199.050, 40.656, 51.672), (6162.222, 40.656, 51.676)
+ls entries +1: (5565.393, 40.563, 47.215), (5397.553, 40.555, 47.242), (5412.735, 40.598, 47.277)
+ls names exact: (4233.677, 80.277, 90.375), (4330.600, 80.277, 90.367), (4226.999, 80.273, 90.355)
+ls names +1: (3756.382, 80.199, 82.727), (3979.974, 80.176, 82.727), (3750.843, 80.191, 82.711)
+
+distribution 3
+find exact: (1604.332, 35.668, 38.574), (1579.947, 35.676, 38.234), (1548.413, 35.773, 38.586)
+find +1: (67.401, 34.523, 32.223), (65.862, 34.328, 32.918), (65.806, 34.609, 32.973)
+grep exact: (3933.848, 80.922, 114.590), (3885.300, 80.910, 114.586), (3894.936, 80.906, 114.594)
+grep +1: (44.362, 80.914, 114.590), (42.881, 80.945, 114.574), (42.652, 80.891, 114.586)
+ls entries exact: (6163.696, 40.660, 51.676), (6222.849, 40.660, 51.723), (6122.143, 40.656, 51.668)
+ls entries +1: (5339.327, 40.602, 47.297), (5341.426, 40.598, 47.281), (5313.350, 40.543, 47.215)
+ls names exact: (4153.648, 80.238, 90.402), (4353.721, 80.254, 90.363), (4153.380, 80.250, 90.375)
+ls names +1: (3703.147, 80.156, 82.734), (3708.163, 80.164, 82.738), (3701.969, 79.531, 82.047)
+```
+
+The overall maximum was 80.95 MiB working set and 114.61 MiB private bytes.
+All 72 runner processes stayed below 144 MiB, every exact boundary was
+accepted, every plus-one boundary was rejected, and no runner process or
+resource sandbox survived cleanup. This closes the traversal and listing
+release resource gate; mutation resource measurements remain separate.
