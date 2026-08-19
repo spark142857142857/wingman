@@ -71,8 +71,8 @@ versioned opaque request encoding.
 - A claimed P0 command with unsupported syntax fails clearly; it is not partly
   converted or silently guessed.
 - Raw native commands and native shell state commands remain available.
-- The displayed and frontend-managed command history retains the user's raw
-  input, not an internal runner invocation.
+- P0 adds no frontend-managed command history. Native history remains available
+  and may contain an internal runner invocation.
 - Cancellation, output streaming, redirection, and errors are validated by
   tests at the runner boundary.
 

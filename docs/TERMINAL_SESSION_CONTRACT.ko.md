@@ -10,7 +10,7 @@
 이 계약은 Wingman이 제출된 줄을 언제 해석할 수 있는지, 네이티브 줄 편집을 어떻게
 거울처럼 추적하는지, 불확실한 입력 뒤에 어떻게 물러나는지, 활성 `cmd.exe` 또는
 Windows PowerShell 5.1 세션을 어떻게 추적하는지 정한다. 터미널 입력, completion
-fallback, 붙여넣기, 화면 recall, prompt 동기화, 중첩 셸 전환, interrupt의 공통
+fallback, 붙여넣기, 네이티브 history fallback, prompt 동기화, 중첩 prompt, interrupt의 공통
 기준이다.
 
 셸은 자체 editor, 네이티브 history, prompt, foreground program, process 상태를
@@ -118,35 +118,41 @@ mirror가 같은 확정 편집 연산을 기록한다. Mirror는 증거이지 �
 - Mirror는 JavaScript UTF-16 code unit이나 터미널 화면 cell을 index로 사용하면
   안 된다. Text boundary 동작은 지원 셸 adapter와 일치해야 한다.
 - 한글 음절·자모, combining mark, surrogate-pair 문자, emoji, double-width CJK는
-  필수 경계 기술 검증·승인 사례다.
+  필수 경계 기술 검증·승인 사례다. Non-BMP text 삽입 자체는 보존하지만 non-BMP
+  scalar를 건드리거나 가로지르는 편집은 `Uncertain`으로 바꾼다. Windows PowerShell
+  5.1 PSReadLine이 UTF-16 surrogate 한쪽만 편집할 수 있어 Rust scalar index와
+  정확히 일치시킬 수 없기 때문이다.
 - Mirror와 네이티브 editor의 편집 경계를 정확히 일치시킬 수 없으면 evidence를
   `Uncertain`으로 만들며, 줄을 추측해 복구하지 않는다.
 - Focus report, bracketed-paste delimiter, allowlist에 든 터미널 protocol 응답은
   명령 text가 아니라 transport event다.
 
-구현 재검토 때 입력 줄 길이 상한을 명시한다. 초과하면 mirror를 멈추고 그 제출은
-네이티브로 통과시킨다. 줄을 자르거나 재해석하거나 일부 실행하지 않는다.
+Mirror는 UTF-8 입력 줄을 최대 16 KiB 보관한다. 이 상한을 넘으면 mirror를 멈추고
+그 제출은 네이티브로 통과시킨다. 줄을 자르거나 재해석하거나 일부 실행하지 않는다.
 
 ## 편집 allowlist와 불확실 상태
 
-P0에서 다음 동작이 `Reliable` 증거를 유지하려면 두 지원 셸에서 먼저 증명해야 한다.
+`Reliable` 증거를 유지할 수 있는 것은 검증된 Windows PowerShell adapter뿐이며
+`cmd.exe` 입력은 항상 네이티브다. 해당 adapter의 P0 allowlist는 다음과 같다.
 
 - 현재 cursor 위치에 확정 text 삽입
-- Backspace와 Delete
-- Left, Right, Home, End
-- Wingman이 소유한 Up/Down recall 교체
+- 대상 scalar가 UTF-16 code unit 하나인 Backspace와 Delete
+- non-BMP scalar를 가로지르지 않는 Left와 Right
+- Home과, mirrored line 안에서 실제로 이동하는 End
 - `Ctrl+C` 줄 취소
 
 Adapter는 normal/application cursor-key encoding의 효과가 같고 테스트됐을 때만
-이를 인식할 수 있다. 그 밖의 편집·control은 네이티브 우선이다. Tab completion,
-prediction 수락, reverse/history search, F7/F8/F9, Ctrl+Arrow, Alt 조합, mouse
+이를 인식할 수 있다. 그 밖의 편집·control은 네이티브 우선이다. 줄 끝의 Right·End,
+Up/Down recall, Tab completion, prediction 수락, reverse/history search,
+F7/F8/F9, Ctrl+Arrow, Alt 조합, mouse
 위치 변경, selection 교체, Vi command mode, 사용자 PSReadLine binding, 알 수 없는
 CSI/SS3/OSC 입력, 미완성·과대 escape sequence는 evidence를 `Uncertain`으로 만들고
 원문 그대로 전달한다.
 
 한 번 uncertain이 되면 뒤 입력이 단순해 보여도 해당 제출은 계속 uncertain이다.
 Enter에서는 `prepare_submission`을 호출하지 않고 네이티브 editor의 실제 buffer를
-받아들이게 한다. 다음 유효 prompt marker나 세션 재시작 때만 reliability가 돌아온다.
+받아들이게 한다. 다음 유효 readiness frame이나 세션 재시작 때만 reliability가
+돌아온다.
 
 ## 제출 알고리즘
 
@@ -185,25 +191,21 @@ session, sequence, line, request 검사가 실패하면 request를 무효화하�
 화면에 보이는 것은 안전한 fallback으로 허용한다. 불안정한 출력 filtering은 필수가
 아니다.
 
-## Completion과 화면 recall
+## Completion과 네이티브 history
 
 셸 completion과 prediction은 editor 내용을 임의로 바꿀 수 있으므로 사용한 제출은
 항상 네이티브 통과한다. Wingman은 화면 출력을 파싱해 completion 결과를 복원하지
 않는다.
 
-Wingman은 사용자가 제출한 비어 있지 않은 원문 줄을 담는 크기 제한·세션 메모리
-전용 화면 recall 목록을 둘 수 있다. 내부 runner 호출을 이 목록에 넣지 않는다.
-Up/Down recall은 `Editing/Reliable`에서 검증된 buffer 교체 adapter로만 가능하다.
-교체 실패는 uncertain이 된다.
+P0에는 Wingman 소유 command recall 목록이 없다. Up/Down과 모든 history search는
+네이티브 셸로 전달하고 현재 제출을 uncertain으로 만든다. 활성 셸은 사용자가 설정한
+기존 history 동작을 유지한다. Wingman은 네이티브 history를 지우거나 이동하거나
+끄지 않고 비밀 저장소라고 약속하지 않는다. 그 history에는 불투명한 내부 runner
+호출이 들어갈 수 있다.
 
-Wingman recall 범위를 넘어가면 history operation을 셸로 보내고 줄을 uncertain으로
-만들어 네이티브 셸 history에 접근할 수 있게 한다. 활성 셸은 사용자가 설정한 기존
-history 동작을 유지한다. Wingman은 네이티브 history를 지우거나 이동하거나 끄지
-않고 비밀 저장소라고 약속하지 않는다. 그 history에는 불투명한 내부 runner 호출이
-들어갈 수 있다.
-
-세션 재시작은 Wingman 화면 recall을 지운다. 영구 Wingman history는 P0 밖이며,
-명시적 opt-in·보존·삭제 control이 필요하다.
+영구 Wingman command history는 P0 밖이며 명시적 opt-in·보존·삭제 control이
+필요하다. 세션 재시작은 터미널의 메모리 display와 scrollback을 지우지만 네이티브
+셸 history는 바꾸지 않는다.
 
 ## 붙여넣기 계약
 
@@ -255,7 +257,7 @@ prompt를 보고 셸 또는 depth를 추측하지 않는다.
 - Wingman runner 실행 중 `Ctrl+C`는 runner 취소 계약도 따르며 prompt 확인 전까지
   편집 상태로 돌아가지 않는다.
 - 네이티브 또는 알 수 없는 foreground 작업 중 interrupt 입력은 그대로 전달한다.
-- 세션 재시작은 새 session nonce를 만들고 셸 stack과 화면 recall을 비우며 준비 중
+- 세션 재시작은 새 session nonce를 만들고 셸 stack과 터미널 display를 비우며 준비 중
   작업을 취소하고 request ID를 무효화하고 모든 이전 PTY event·marker를 무시한다.
 - 셸·process 종료, PTY write 실패, 잘못된 integration 상태, sequence mismatch는
   마지막으로 알던 줄이나 prompt를 재사용하지 못한다.
@@ -267,7 +269,7 @@ prompt를 보고 셸 또는 depth를 추측하지 않는다.
 - Rust만 세션 상태, marker 검증, 준비, request 무효화를 소유한다. WebView는 prompt나
   줄이 reliable이라고 주장할 수 없다.
 - 모든 입력·출력·marker·decision에 활성 session ID를 붙이고 stale event를 버린다.
-- Marker, escape, 입력 줄, paste, recall, pending request 저장량에 상한을 둔다.
+- Marker, escape, 입력 줄, paste, pending request 저장량에 상한을 둔다.
 - 터미널 출력 escape sequence는 Tauri 명령 호출, clipboard 접근, 사용자 줄을
   reliable로 만드는 기능을 가질 수 없다.
 - Familiar OFF는 준비 과정을 끄지만 안전한 paste 확인과 세션 격리는 끄지 않는다.
@@ -282,8 +284,8 @@ prompt를 보고 셸 또는 depth를 추측하지 않는다.
    Backspace, Delete, Home/End, cursor 이동
 3. Tab completion, prediction, Ctrl+R, F7/F8/F9, 사용자·알 수 없는 escape 입력,
    필수 네이티브 통과 fallback
-4. 원문 화면 recall, buffer 교체, 네이티브 history fallback, 세션 초기화, 네이티브
-   history에 들어갈 수 있는 불투명 호출
+4. 네이티브 Up/Down·history search fallback, buffer 교체, 세션 display 초기화,
+   네이티브 history에 들어갈 수 있는 불투명 호출
 5. 한 줄 paste, CR/LF/CRLF와 끝 newline paste, Send·Cancel, 순서, bracketed paste,
    foreground program 실행 중 paste
 6. 네이티브 통과, continuation 입력, 테스트 interactive child, full-screen 형태 child,

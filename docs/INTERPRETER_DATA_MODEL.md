@@ -35,10 +35,11 @@ FrontendDecisionV1 {
 - `PassThrough` returns the authoritative original line for unchanged shell
   submission. It creates no broker entry.
 - `Reject`, `Execute`, and a recognised Familiar control become a prepared
-  request stored in Rust session memory. The frontend receives only its short,
-  unpredictable `request_id` and the original `display_line`.
-- `display_line` is retained for Wingman's visible recall history. The fixed
-  internal runner invocation must not replace it.
+  request stored in Rust session memory. Rust's serialized dispatch retains its
+  short, unpredictable `request_id` and original `display_line`; the WebView
+  receives neither value.
+- `display_line` is the exact mirrored-line consistency value used before editor
+  replacement. P0 does not retain it as Wingman-owned command history.
 
 The [terminal submission and session contract](TERMINAL_SESSION_CONTRACT.md)
 is a precondition to this decision. The WebView cannot declare prompt or line

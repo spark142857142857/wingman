@@ -87,8 +87,8 @@ With Familiar on, native PowerShell cmdlets, cmd built-ins, shell variables, and
 The exact automated, integration, and boundary-spike matrix follows the
 [terminal submission and session contract](TERMINAL_SESSION_CONTRACT.md). It
 covers validated prompt markers and session states; foreground interactive
-pass-through; Unicode/IME editing; completion and unknown-edit fallback; raw
-visible recall versus native history; single- and multiline paste confirmation;
+pass-through; Unicode/IME editing; completion and unknown-edit fallback; native
+history fallback with no Wingman-owned recall; single- and multiline paste confirmation;
 authenticated same-process nested PowerShell depth transitions and native
 foreground-child pass-through; fixed-invocation replacement;
 session restart; and `Ctrl+C`.

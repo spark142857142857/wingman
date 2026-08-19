@@ -85,11 +85,11 @@ cycle을 증명한다. `cmd`는 입증된 editor adapter가 생길 때까지 int
 
 ## 화면과 히스토리
 
-사용자의 원문 입력이 화면과 recall 히스토리의 기준이다. 내부 runner 호출이 Wingman 프론트엔드 히스토리를
-대체하면 안 된다.
-네이티브 editor 내용, prompt 동기화, 정확한 교체 operation은
+사용자의 원문 입력은 교체 전 mirrored 일관성 값의 기준이다. P0에는 Wingman 소유
+프론트엔드 command history가 없으며 네이티브 셸 history에는 내부 runner 호출이
+들어갈 수 있다. 네이티브 editor 내용, prompt 동기화, 정확한 교체 operation은
 [터미널 제출·세션 계약](TERMINAL_SESSION_CONTRACT.ko.md)을 따른다.
 
-호출 echo 숨김은 별도 경계 기술 검증이다. 두 지원 셸에서 생성 echo만 정확히 숨기고, runner 첫 출력과 다음
+호출 echo 숨김은 별도 경계 기술 검증이다. PowerShell에서 생성 echo만 정확히 숨기고, runner 첫 출력과 다음
 prompt를 보존하며, Ctrl+C와 셸 line editing을 망치지 않는다고 증명할 때만 적용한다. 검증되지 않은 PTY 출력
 필터보다는 짧은 내부 호출을 보이는 것이 안전한 fallback이다.

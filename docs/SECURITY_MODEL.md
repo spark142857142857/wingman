@@ -189,8 +189,8 @@ ordering, partial failure, and cancellation behavior are binding in the
 - Terminal input and output are sensitive by default. Production diagnostic
   logs do not record raw commands, PTY output, environment variables, working
   paths, clipboard contents, or serialized execution plans.
-- Wingman-owned scrollback and visible recall are in memory for the current
-  session only. P0 retains at most 4,000 scrollback rows per terminal session,
+- Wingman-owned scrollback is in memory for the current session only. P0 adds
+  no command recall list and retains at most 4,000 scrollback rows per terminal session,
   excluding the active viewport. Wingman does not override the active shell's
   configured native history, which may persist and may contain an opaque runner
   invocation. Any future persistent Wingman history is a separate opt-in

@@ -95,14 +95,14 @@ sessions through a session environment variable.
 
 ## Presentation and history
 
-The user's raw input is the authoritative displayed and recalled history entry.
-An internal runner invocation must not replace it in Wingman's frontend history.
-Native editor contents, prompt synchronization, and the exact replacement
-operation follow the [terminal submission and session
-contract](TERMINAL_SESSION_CONTRACT.md).
+The user's raw input is the authoritative mirrored consistency value before
+replacement. P0 has no Wingman-owned frontend command history; native shell
+history may contain the internal runner invocation. Native editor contents,
+prompt synchronization, and the exact replacement operation follow the
+[terminal submission and session contract](TERMINAL_SESSION_CONTRACT.md).
 
 Hiding the invocation echo is a separate boundary spike. It may ship only if it
-proves that it suppresses exactly the generated echo in both supported shells,
+proves that it suppresses exactly the generated echo in PowerShell,
 preserves the runner's first output and next prompt, survives Ctrl+C, and does
 not corrupt shell line editing. The safe fallback is a short visible internal
 invocation rather than a brittle PTY output filter.

@@ -17,12 +17,12 @@
 
 명령 구현 전에 다음 위험 경계를 확인한다.
 
-1. 패키지 prompt marker가 두 지원 셸에서 root·nested 셸 편집과 네이티브·외부
-   foreground 작업을 구분하는가
-2. Unicode-safe mirror, completion fallback, 화면 recall, 여러 줄 paste, `Ctrl+C`가
+1. 패키지 out-of-band readiness가 root·동일 process 중첩 PowerShell 편집과
+   네이티브 foreground child를 구분하고 `cmd`는 네이티브로 유지하는가
+2. Unicode-safe mirror, completion·history fallback, 여러 줄 paste, `Ctrl+C`가
    터미널 세션 계약을 따르는가
-3. 고정 runner 호출 교체가 prompt, 사용자 원문, history, 첫 출력, 다음 prompt를
-   망치지 않는가
+3. 고정 runner 호출 교체가 prompt, 첫 출력, 다음 prompt를 망치지 않으며 짧은
+   호출 표시와 네이티브 history 기록을 안전한 P0 fallback으로 유지하는가
 4. 별도 `wingman-runner.exe`가 Tauri 설치본에 안정적으로 포함되고 실행되는가
 5. 활성 셸의 현재 파일 시스템 폴더와 환경을 상속하는가
 6. 요청 ID가 셸 문자열 보간 없이 검증된 계획을 전달하는가

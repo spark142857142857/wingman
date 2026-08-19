@@ -116,9 +116,9 @@ Rejected input produces a consistent diagnostic and exit code `2`, naming the
 claimed command and the unsupported construct where possible. A diagnostic may
 suggest disabling Familiar mode for intentional native shell syntax.
 
-The diagnostic is stored in a prepared rejection. The frontend receives only
-its request ID; the runner prints the diagnostic and returns `2` through the
-active shell.
+The diagnostic is stored in a prepared rejection. Rust's atomic input dispatch
+retains only its request ID; the WebView receives neither. The runner prints the
+diagnostic and returns `2` through the active shell.
 
 ## Required classification examples
 

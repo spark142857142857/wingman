@@ -11,7 +11,7 @@ This contract defines when Wingman may interpret a submitted line, how it
 mirrors native line editing, how it falls back after uncertain input, and how
 it tracks the active `cmd.exe` or Windows PowerShell 5.1 session. It is the
 shared authority for terminal input, completion fallback, paste, visible
-recall, prompt synchronization, nested-shell transitions, and interruption.
+native-history fallback, prompt synchronization, nested prompts, and interruption.
 
 The shell remains the owner of its editor, native history, prompt, foreground
 program, and process state. Wingman may intercept only at a validated shell
@@ -125,39 +125,43 @@ evidence, not a second shell editor.
   cells. Its text-boundary behavior must match the supported shell adapter.
 - Korean syllables and Jamo, combining marks, surrogate-pair characters, emoji,
   and double-width CJK text are required boundary-spike and acceptance cases.
+  Non-BMP text insertion is preserved, but an edit that touches or crosses a
+  non-BMP scalar becomes `Uncertain`: Windows PowerShell 5.1 PSReadLine may edit
+  one UTF-16 surrogate at a time, which cannot match Rust scalar indexing.
 - If an edit boundary cannot be matched exactly between the mirror and native
   editor, evidence becomes `Uncertain`; Wingman never repairs the line by
   guessing.
 - Focus reports, bracketed-paste delimiters, and allowlisted terminal protocol
   responses are transport events, not command text.
 
-The implementation review selects an explicit bounded line length. Exceeding
-it stops mirroring and forces native pass-through for that submission; it does
-not truncate, reinterpret, or partly execute the line.
+The mirror retains at most 16 KiB of UTF-8 line data. Exceeding that bound stops
+mirroring and forces native pass-through for that submission; it does not
+truncate, reinterpret, or partly execute the line.
 
 ## Editing allowlist and uncertainty
 
-P0 must prove the following operations in both supported shells before they may
-preserve `Reliable` evidence:
+Only the validated Windows PowerShell adapter may preserve `Reliable` evidence;
+`cmd.exe` input is always native. Within that adapter the P0 allowlist is:
 
 - committed text insertion at the current cursor;
-- Backspace and Delete;
-- Left, Right, Home, and End;
-- Wingman-owned Up/Down recall replacement;
+- Backspace and Delete when the affected scalar is one UTF-16 code unit;
+- Left and Right when they do not cross a non-BMP scalar;
+- Home, and End when it moves within the mirrored line;
 - `Ctrl+C` line cancellation.
 
 An adapter may recognize normal and application cursor-key encodings only when
 their effect is identical and tested. All other editing or control behavior is
-native first. Tab completion, prediction acceptance, reverse/history search,
-F7/F8/F9, Ctrl+Arrow, Alt chords, mouse repositioning, selection replacement,
+native first. Right or End at the end of the line, Up/Down recall, Tab
+completion, prediction acceptance, reverse/history search, F7/F8/F9,
+Ctrl+Arrow, Alt chords, mouse repositioning, selection replacement,
 Vi command mode, custom PSReadLine bindings, unknown CSI/SS3/OSC input, and an
 incomplete or oversized escape sequence set evidence to `Uncertain` and are
 forwarded unchanged.
 
 Once uncertain, the current submission stays uncertain even if later text
 looks simple. Enter then accepts the native editor's actual buffer without
-calling `prepare_submission`. Reliability returns only at a later valid prompt
-marker or session restart.
+calling `prepare_submission`. Reliability returns only at a later valid
+readiness frame or session restart.
 
 ## Submission algorithm
 
@@ -198,26 +202,21 @@ with Unicode and wide text, without deleting prompt content or the runner's
 first output. A visible fixed internal invocation is an acceptable safe
 fallback; brittle output filtering is not required.
 
-## Completion and visible recall
+## Completion and native history
 
 Shell completion and prediction may replace arbitrary editor content, so their
 use always selects native pass-through for that submission. Wingman does not
 parse screen output to recover the completion result.
 
-Wingman may keep a bounded, session-memory-only visible recall list containing
-the nonempty raw lines the user submitted. It never substitutes an internal
-runner invocation into that list. Up/Down may recall those entries only from
-`Editing/Reliable` and only through the proved buffer-replacement adapter. A
-failed replacement becomes uncertain.
+P0 has no Wingman-owned command recall list. Up/Down and every history-search
+operation are forwarded to the native shell and make the current submission
+uncertain. The active shell retains its configured history behavior. Wingman
+does not erase, relocate, disable, or promise secrecy for native history, and
+that history may contain the opaque internal runner invocation.
 
-When the user moves beyond Wingman's available recall range, native shell
-history remains accessible by forwarding the history operation and marking the
-line uncertain. The active shell retains its own configured history behavior.
-Wingman does not erase, relocate, disable, or promise secrecy for native
-history, and that history may contain the opaque internal runner invocation.
-
-Session restart clears Wingman's visible recall. Persistent Wingman history is
-outside P0 and would require explicit opt-in, retention, and deletion controls.
+Persistent Wingman command history is outside P0 and would require explicit
+opt-in, retention, and deletion controls. Session restart clears the terminal's
+in-memory display and scrollback but does not alter native shell history.
 
 ## Paste contract
 
@@ -276,7 +275,7 @@ guesses a shell or depth from command spelling or visible prompts.
 - During native or unknown foreground work, interrupt input is passed through
   unchanged.
 - Session restart creates a new session nonce, clears the shell stack and
-  visible recall, cancels outstanding preparation, invalidates request IDs,
+  terminal display, cancels outstanding preparation, invalidates request IDs,
   and ignores all old PTY events and markers.
 - Shell/process exit, PTY write failure, malformed integration state, or a
   sequence mismatch cannot reuse the last known line or prompt.
@@ -289,7 +288,7 @@ guesses a shell or depth from command spelling or visible prompts.
   invalidation. The WebView cannot assert that a prompt or line is reliable.
 - Every input, output, marker, and decision carries the active session ID; stale
   events are discarded.
-- Marker, escape, line, paste, recall, and pending-request storage are bounded.
+- Marker, escape, line, paste, and pending-request storage are bounded.
 - A terminal output escape sequence cannot invoke Tauri commands, access the
   clipboard, or mark a user line reliable.
 - Familiar OFF disables preparation but does not disable safe paste confirmation
@@ -306,8 +305,8 @@ PowerShell 5.1:
    middle insertion, Backspace, Delete, Home/End, and cursor movement;
 3. Tab completion, prediction, Ctrl+R, F7/F8/F9, custom/unknown escape input,
    and the required native-pass-through fallback;
-4. raw visible recall, buffer replacement, native-history fallback, session
-   clearing, and possible opaque invocation in native history;
+4. native Up/Down and history-search fallback, buffer replacement, session
+   display clearing, and possible opaque invocation in native history;
 5. single-line paste, CR/LF/CRLF and trailing-newline paste, Send and Cancel,
    ordering, bracketed paste, and paste while a foreground program is active;
 6. native pass-through, continuation input, a test interactive child, a

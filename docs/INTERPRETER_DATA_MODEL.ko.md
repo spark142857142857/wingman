@@ -34,10 +34,10 @@ FrontendDecisionV1 {
 - `PassThrough`는 수정 없이 셸에 제출할 기준 원문을 반환하며 broker 항목을 만들지
   않는다.
 - `Reject`, `Execute`, 인식한 Familiar control은 Rust 세션 메모리에 준비 요청으로
-  저장한다. 프론트엔드는 짧고 예측 불가능한 `request_id`와 원래 `display_line`만
-  받는다.
-- `display_line`은 Wingman 화면 recall 히스토리에 보존한다. 고정된 내부 runner
-  호출이 이를 대체하면 안 된다.
+  저장한다. Rust의 직렬화된 dispatch만 짧고 예측 불가능한 `request_id`와 원래
+  `display_line`을 보유하며 WebView는 둘 다 받지 않는다.
+- `display_line`은 editor 교체 전에 쓰는 정확한 mirrored-line 일관성 값이다. P0는
+  이를 Wingman 소유 command history로 보존하지 않는다.
 
 [터미널 제출·세션 계약](TERMINAL_SESSION_CONTRACT.ko.md)은 이 판정의 선행
 조건이다. WebView는 prompt나 줄의 reliability를 선언할 수 없다. Rust가 판정을

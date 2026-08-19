@@ -19,12 +19,13 @@ Before implementation, re-review all product, command, parser, runner, maintenan
 
 Before command implementation, verify these risky boundaries:
 
-1. Packaged prompt markers distinguish root/nested shell editing from native or
-   foreign foreground work in both supported shells.
-2. Unicode-safe mirroring, completion fallback, visible recall, multiline paste,
-   and `Ctrl+C` follow the terminal session contract.
-3. Fixed runner-invocation replacement does not damage the prompt, user-visible
-   raw line, history, first output, or next prompt.
+1. Packaged out-of-band readiness distinguishes root and same-process nested
+   PowerShell editing from native foreground children; `cmd` remains native.
+2. Unicode-safe mirroring, completion/history fallback, multiline paste, and
+   `Ctrl+C` follow the terminal session contract.
+3. Fixed runner-invocation replacement does not damage the prompt, first output,
+   or next prompt; a short visible invocation and native-history entry are safe
+   P0 fallbacks.
 4. A separate `wingman-runner.exe` packages and launches reliably with Tauri.
 5. It inherits the active shell's current filesystem directory and environment.
 6. A request ID transports a validated plan without shell interpolation.
