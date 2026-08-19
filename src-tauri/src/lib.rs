@@ -928,7 +928,6 @@ fn resize_shell(client_session_id: u64, cols: u16, rows: u16) -> Result<(), Stri
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let result = tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_cwd,
             start_shell,

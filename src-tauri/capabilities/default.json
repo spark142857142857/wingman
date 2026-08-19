@@ -4,9 +4,7 @@
   "description": "Default capabilities for Wingman",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "core:event:default",
-    "core:window:default",
-    "shell:allow-open"
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
   ]
 }
