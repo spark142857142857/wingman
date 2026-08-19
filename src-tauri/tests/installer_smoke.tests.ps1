@@ -179,10 +179,11 @@ try {
   }
   if (
     (Test-Path -LiteralPath $InstallDirectory) -or
+    (Test-Path -LiteralPath $appKey) -or
     (Test-Path -LiteralPath $uninstallKey) -or
     $null -ne (Get-PathMarker)
   ) {
-    throw 'Uninstall left an install tree, uninstall registration, or PATH ownership marker.'
+    throw 'Uninstall left an install tree, application registration, uninstall registration, or PATH ownership marker.'
   }
 
   $preexistingPath = if ([string]::IsNullOrEmpty($originalUserPath)) {
@@ -205,8 +206,8 @@ try {
   if (-not ((Get-UserPath) -ceq $preexistingPath)) {
     throw 'Uninstall changed a PATH token that Wingman did not create.'
   }
-  if ($null -ne (Get-PathMarker)) {
-    throw 'Uninstall retained the non-owned PATH marker.'
+  if ((Test-Path -LiteralPath $appKey) -or $null -ne (Get-PathMarker)) {
+    throw 'Uninstall retained the application registration or non-owned PATH marker.'
   }
 
   'Installer smoke tests passed.'

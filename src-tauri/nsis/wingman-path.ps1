@@ -91,7 +91,6 @@ if ($addedByWingman -eq 1) {
   }
 }
 
-Remove-ItemProperty `
-  -LiteralPath $appKey `
-  -Name WingmanPathAdded `
-  -ErrorAction SilentlyContinue
+# This key is created and owned by Wingman's per-user installer. Removing only
+# the PATH marker leaves Tauri's default install-directory value behind.
+Remove-Item -LiteralPath $appKey -Force -ErrorAction SilentlyContinue
