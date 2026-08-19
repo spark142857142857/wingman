@@ -10,7 +10,7 @@ mod windows {
     use std::ptr::{null, null_mut};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::thread::{self, JoinHandle};
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
@@ -18,9 +18,13 @@ mod windows {
         GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
     };
     use windows_sys::Win32::Security::Authorization::{
-        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+        SDDL_REVISION_1,
     };
-    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenGroups, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_GROUPS,
+        TOKEN_QUERY,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
     };
@@ -28,11 +32,13 @@ mod windows {
         ConnectNamedPipe, CreateNamedPipeW, PeekNamedPipe, WaitNamedPipeW, PIPE_READMODE_BYTE,
         PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
     };
+    use windows_sys::Win32::System::SystemServices::SE_GROUP_LOGON_ID;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     const REQUEST_ID_BYTES: usize = 32;
     const PIPE_BUFFER_BYTES: u32 = 64 * 1024;
     const PIPE_WAIT_MILLIS: u32 = 5_000;
-    const PIPE_DACL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;OW)";
+    static PIPE_DACL: OnceLock<String> = OnceLock::new();
     const DEFAULT_PREPARED_REQUEST_TTL: Duration = Duration::from_secs(30);
     const MAX_PENDING_REQUESTS: usize = 128;
     const REQUEST_FRAME_BYTES: u32 = (REQUEST_ID_BYTES + 1) as u32;
@@ -713,7 +719,7 @@ mod windows {
 
     fn create_server_pipe(pipe_name: &str) -> io::Result<File> {
         let pipe_name = wide_null(pipe_name);
-        let security_descriptor = wide_null(PIPE_DACL);
+        let security_descriptor = wide_null(pipe_dacl()?);
         let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
         if unsafe {
             ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -750,6 +756,91 @@ mod windows {
             return Err(io::Error::last_os_error());
         }
         Ok(unsafe { File::from_raw_handle(handle.cast()) })
+    }
+
+    fn pipe_dacl() -> io::Result<&'static str> {
+        if let Some(dacl) = PIPE_DACL.get() {
+            return Ok(dacl);
+        }
+
+        let dacl = format!("D:P(A;;GA;;;SY)(A;;GA;;;{})", current_logon_sid_string()?);
+        let _ = PIPE_DACL.set(dacl);
+        PIPE_DACL
+            .get()
+            .map(String::as_str)
+            .ok_or_else(|| io::Error::other("named-pipe DACL initialization failed"))
+    }
+
+    fn current_logon_sid_string() -> io::Result<String> {
+        let mut token = null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let result = (|| {
+            let mut required = 0;
+            unsafe {
+                GetTokenInformation(token, TokenGroups, null_mut(), 0, &mut required);
+            }
+            if required == 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let word_bytes = std::mem::size_of::<usize>();
+            let words = (required as usize).div_ceil(word_bytes);
+            let mut buffer = vec![0usize; words];
+            if unsafe {
+                GetTokenInformation(
+                    token,
+                    TokenGroups,
+                    buffer.as_mut_ptr().cast(),
+                    required,
+                    &mut required,
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+
+            let groups = unsafe { &*(buffer.as_ptr().cast::<TOKEN_GROUPS>()) };
+            let entries = unsafe {
+                std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize)
+            };
+            let logon_sid = entries
+                .iter()
+                .find(|entry| {
+                    entry.Attributes & (SE_GROUP_LOGON_ID as u32) == SE_GROUP_LOGON_ID as u32
+                })
+                .map(|entry| entry.Sid)
+                .ok_or_else(|| io::Error::other("process token has no logon SID"))?;
+
+            let mut sid_text = null_mut();
+            if unsafe { ConvertSidToStringSidW(logon_sid, &mut sid_text) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let sid = (|| {
+                let mut length = 0usize;
+                while length < 256 && unsafe { *sid_text.add(length) } != 0 {
+                    length += 1;
+                }
+                if length == 256 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "logon SID string exceeds its Windows bound",
+                    ));
+                }
+                String::from_utf16(unsafe { std::slice::from_raw_parts(sid_text, length) })
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid logon SID"))
+            })();
+            unsafe {
+                LocalFree(sid_text.cast());
+            }
+            sid
+        })();
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(token);
+        }
+        result
     }
 
     fn connect_server_pipe(pipe: &File) -> io::Result<()> {

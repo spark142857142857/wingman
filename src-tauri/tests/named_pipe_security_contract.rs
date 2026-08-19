@@ -12,7 +12,7 @@ use wingman_lib::interpreter::{PreparedRequestKindV1, PreparedRequestV1};
 use wingman_lib::transport::OneShotBrokerV1;
 
 #[test]
-fn broker_pipe_dacl_is_protected_for_system_and_its_owner() {
+fn broker_pipe_dacl_is_protected_for_system_and_the_current_logon_session() {
     let pipe_name = format!(
         r"\\.\pipe\wingman-security-test-{}-{}",
         std::process::id(),
@@ -36,10 +36,10 @@ fn broker_pipe_dacl_is_protected_for_system_and_its_owner() {
     assert!(sddl.starts_with("D:P"), "DACL must be protected: {sddl}");
     assert!(sddl.contains(";;;SY)"), "SYSTEM must retain access: {sddl}");
     assert!(
-        sddl.contains(";;;OW)"),
-        "the pipe owner must retain access: {sddl}"
+        sddl.contains(";;;S-1-5-5-"),
+        "the current logon SID must receive access: {sddl}"
     );
-    for forbidden in [";;;WD)", ";;;AN)", ";;;BU)", ";;;AU)"] {
+    for forbidden in [";;;OW)", ";;;WD)", ";;;AN)", ";;;BU)", ";;;AU)"] {
         assert!(
             !sddl.contains(forbidden),
             "broad principal {forbidden} must not access the pipe: {sddl}"
