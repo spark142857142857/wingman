@@ -937,3 +937,101 @@ p95 CPU, and 350 MiB private working set. Together with the earlier PowerShell
 measurements, this closes the current-machine two-shell warm-start and settled
 idle matrix. Controlled-restart cold samples and a separate supported-Windows
 version remain external matrix evidence.
+
+## 2026-08-20: current-release local gate summary
+
+This section supersedes earlier statements that the `cmd.exe` bulk-output
+matrix was pending. It consolidates the final local measurements collected
+across commits `4b9d1aaf081d3746966defc8b578c22ee1241b79` through
+`83d27cd098d867735dc1745d019a8afdfdb33048`. The environment remained Windows
+`10.0.26200.9168` (`25H2`, x64), AMD Ryzen 7 9700X, 16 logical processors,
+Windows Balanced power, WebView2 `151.0.4129.93`, Windows Terminal
+`1.24.11911.0`, and Rust `1.96.1`.
+
+### Cached runner and idle-follow gates
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_process_contract idle_tail_follow_runner_stays_below_the_cpu_ceiling -- --ignored --exact --nocapture
+```
+
+| Runner workload | Raw samples | Median | Target | Result |
+| --- | --- | ---: | ---: | --- |
+| `grep` raw 100 MiB | 836.124, 853.818, 821.350 ms | 836.124 ms | 1,000 ms | Pass |
+| `find` traversal | 466.515, 458.932, 459.499 ms | 459.499 ms | 535 ms | Pass |
+| redirected `cat` | 3,196.221, 3,150.363, 3,136.449 ms | 3,150.363 ms | 3,700 ms | Pass |
+| redirected `sort` | 675.790, 683.106, 671.270 ms | 675.790 ms | 790 ms | Pass |
+
+The optimized `tail -n 0 -f` process recorded ten one-second CPU samples. Its
+median and p95 were both `0.000%`; group cancellation still produced exit
+`130` with empty stdout and stderr.
+
+### Two-shell GUI bulk matrix
+
+The same release-only probe path and 100,000-line, 11,900,000-byte workload
+were used for both shells. Every byte/hash validation completed, xterm retained
+exactly 4,000 scrollback rows, and no sample crossed its release ceiling.
+
+| Shell | Full render | Input latency median / p95 / max | Retained median growth | Retained max growth | Scrollback |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 6,507.3 ms | 27.4 / 34.9 / 35.8 ms | 40.398 MiB | 44.471 MiB | 4,000 |
+| `cmd.exe` | 4,769.6 ms | 26.9 / 34.9 / 35.3 ms | 43.104 MiB | 43.951 MiB | 4,000 |
+
+PowerShell retained-memory baseline samples were `148.328, 148.230, 148.445,
+148.637, 148.746, 148.914, 149.301, 149.402, 149.309, 149.574` MiB. Retained
+samples were `193.238, 193.301, 193.301, 193.301, 188.895, 188.508, 189.563,
+187.945, 188.309, 188.492` MiB. The baseline median was 148.830 MiB, retained
+median 189.229 MiB, and retained maximum 193.301 MiB.
+
+`cmd.exe` retained-memory baseline samples were `116.594, 116.344, 116.344,
+116.355, 116.348, 116.352, 116.352, 116.379, 116.367, 116.355` MiB. Retained
+samples were `159.457, 159.457, 159.457, 159.457, 160.305, 159.992, 159.156,
+159.199, 159.234, 159.273` MiB. The baseline median was 116.354 MiB, retained
+median 159.457 MiB, and retained maximum 160.305 MiB.
+
+### Paired Windows Terminal comparison
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_host_comparison.tests.ps1 -WingmanExecutable src-tauri/target/release/wingman.exe -ShellKind powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_host_comparison.tests.ps1 -WingmanExecutable src-tauri/target/release/wingman.exe -ShellKind cmd
+```
+
+The harness identified its Windows Terminal instance by an exact, unique
+top-level benchmark-window title and closed only that window. It did not reuse
+or terminate an existing user-owned Windows Terminal process.
+
+| Shell | Wingman samples / median | Windows Terminal samples / median | Ratio | 2x target / 3x ceiling |
+| --- | --- | --- | ---: | --- |
+| Windows PowerShell 5.1 | 5,973.242, 5,947.354, 5,870.321 / 5,947.354 ms | 3,850.520, 3,632.636, 3,567.335 / 3,632.636 ms | 1.637x | Pass / Pass |
+| `cmd.exe` | 4,920.106, 4,604.803, 4,659.013 / 4,659.013 ms | 3,792.327, 3,544.846, 3,586.961 / 3,586.961 ms | 1.299x | Pass / Pass |
+
+### Installed footprint and local app data
+
+The final NSIS bundle completed install, reinstall, launch-contract, and
+uninstall smoke. Its installed tree contained 13,307,499 bytes (12.69 MiB),
+passing the 60 MiB ceiling. A separate isolated WebView2 profile test launched
+and closed Wingman with an interactive PowerShell PTY 100 times. The resulting
+profile contained 14,559,049 bytes (13.885 MiB), passing the 100 MiB ceiling;
+the harness removes the isolated profile after a successful run.
+
+```powershell
+npm run test:installer
+npm run test:app-data
+```
+
+### Evidence that remains external
+
+The local gate is closed only for this machine and current Windows release.
+The following items are deliberately **not** recorded as passes:
+
+- five controlled-restart cold-start samples;
+- five unique-boot uncached runner samples per workload;
+- a separate previously supported Windows release;
+- the reference/minimum hardware tier;
+- final Authenticode signing with the release certificate; and
+- any administrator, elevated-shell, cross-login-session, or multi-user matrix
+  required by the final release scope.
+
+Those items require a different machine state, operating-system installation,
+credential, or explicit authorization. Warm results and local smoke tests do
+not substitute for them.

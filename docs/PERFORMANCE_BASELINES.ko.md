@@ -876,3 +876,97 @@ cmd idle harness는 이후 10초 안정화를 기다리고 독립 실행 3회마
 working set 350 MiB를 통과했다. 앞선 PowerShell 측정과 합치면 이 machine의 두 shell
 warm-start 및 안정화 idle matrix가 닫힌다. Controlled-restart cold 표본과 별도의 지원
 Windows version은 외부 matrix 증거로 남는다.
+
+## 2026-08-20: 현재 릴리스 로컬 게이트 종합
+
+이 절은 앞에서 `cmd.exe` 대량 출력 matrix가 남았다고 적은 과거 상태를 대체한다.
+`4b9d1aaf081d3746966defc8b578c22ee1241b79`부터
+`83d27cd098d867735dc1745d019a8afdfdb33048`까지 수집한 최종 로컬 측정을 한곳에
+모았다. 환경은 Windows `10.0.26200.9168`(`25H2`, x64), AMD Ryzen 7 9700X,
+logical processor 16개, Windows 균형 조정 전원, WebView2 `151.0.4129.93`,
+Windows Terminal `1.24.11911.0`, Rust `1.96.1`로 유지됐다.
+
+### Cached runner와 idle follow 게이트
+
+```powershell
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
+cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_process_contract idle_tail_follow_runner_stays_below_the_cpu_ceiling -- --ignored --exact --nocapture
+```
+
+| Runner workload | 원시 표본 | 중앙값 | 목표 | 결과 |
+| --- | --- | ---: | ---: | --- |
+| `grep` raw 100 MiB | 836.124, 853.818, 821.350 ms | 836.124 ms | 1,000 ms | 통과 |
+| `find` traversal | 466.515, 458.932, 459.499 ms | 459.499 ms | 535 ms | 통과 |
+| redirect `cat` | 3,196.221, 3,150.363, 3,136.449 ms | 3,150.363 ms | 3,700 ms | 통과 |
+| redirect `sort` | 675.790, 683.106, 671.270 ms | 675.790 ms | 790 ms | 통과 |
+
+최적화한 `tail -n 0 -f` process의 1초 CPU 표본 10개는 중앙값과 p95가 모두
+`0.000%`였다. Process group 취소 뒤에도 exit `130`, 빈 stdout과 stderr를 유지했다.
+
+### 두 shell GUI 대량 출력 matrix
+
+두 shell 모두 같은 release 전용 probe 경로와 100,000줄, 11,900,000바이트 workload를
+사용했다. 모든 byte/hash 검증이 끝났고 xterm은 scrollback row를 정확히 4,000개
+보존했으며 어느 표본도 release 상한을 넘지 않았다.
+
+| Shell | 전체 render | 입력 latency 중앙값 / p95 / 최대 | 보존 중앙 증가량 | 보존 최대 증가량 | Scrollback |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 6,507.3 ms | 27.4 / 34.9 / 35.8 ms | 40.398 MiB | 44.471 MiB | 4,000 |
+| `cmd.exe` | 4,769.6 ms | 26.9 / 34.9 / 35.3 ms | 43.104 MiB | 43.951 MiB | 4,000 |
+
+PowerShell 보존 메모리 기준 표본은 `148.328, 148.230, 148.445, 148.637,
+148.746, 148.914, 149.301, 149.402, 149.309, 149.574` MiB이고 보존 표본은
+`193.238, 193.301, 193.301, 193.301, 188.895, 188.508, 189.563, 187.945,
+188.309, 188.492` MiB였다. 기준 중앙값은 148.830 MiB, 보존 중앙값은
+189.229 MiB, 보존 최댓값은 193.301 MiB였다.
+
+`cmd.exe` 보존 메모리 기준 표본은 `116.594, 116.344, 116.344, 116.355,
+116.348, 116.352, 116.352, 116.379, 116.367, 116.355` MiB이고 보존 표본은
+`159.457, 159.457, 159.457, 159.457, 160.305, 159.992, 159.156, 159.199,
+159.234, 159.273` MiB였다. 기준 중앙값은 116.354 MiB, 보존 중앙값은
+159.457 MiB, 보존 최댓값은 160.305 MiB였다.
+
+### Windows Terminal 짝 비교
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_host_comparison.tests.ps1 -WingmanExecutable src-tauri/target/release/wingman.exe -ShellKind powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bulk_host_comparison.tests.ps1 -WingmanExecutable src-tauri/target/release/wingman.exe -ShellKind cmd
+```
+
+Harness는 정확하고 고유한 최상위 benchmark window 제목으로 자기 Windows Terminal
+창을 식별하고 그 창만 닫았다. 이미 열려 있던 사용자 소유 Windows Terminal process를
+재사용하거나 종료하지 않았다.
+
+| Shell | Wingman 표본 / 중앙값 | Windows Terminal 표본 / 중앙값 | 비율 | 2배 목표 / 3배 상한 |
+| --- | --- | --- | ---: | --- |
+| Windows PowerShell 5.1 | 5,973.242, 5,947.354, 5,870.321 / 5,947.354 ms | 3,850.520, 3,632.636, 3,567.335 / 3,632.636 ms | 1.637배 | 통과 / 통과 |
+| `cmd.exe` | 4,920.106, 4,604.803, 4,659.013 / 4,659.013 ms | 3,792.327, 3,544.846, 3,586.961 / 3,586.961 ms | 1.299배 | 통과 / 통과 |
+
+### 설치 용량과 로컬 앱 데이터
+
+최종 NSIS bundle은 설치, 재설치, launch contract, 제거 smoke를 완료했다. 설치 tree는
+13,307,499바이트(12.69 MiB)로 60 MiB 상한을 통과했다. 별도의 격리한 WebView2
+profile test는 interactive PowerShell PTY를 포함한 Wingman을 100번 실행하고 닫았다.
+그 profile은 14,559,049바이트(13.885 MiB)로 100 MiB 상한을 통과했고, harness는
+성공한 뒤 격리 profile을 제거한다.
+
+```powershell
+npm run test:installer
+npm run test:app-data
+```
+
+### 외부 증거로 남는 항목
+
+로컬 게이트는 이 machine과 현재 Windows release에 대해서만 닫혔다. 다음 항목은
+의도적으로 **통과로 기록하지 않는다**.
+
+- 통제된 재시작 뒤 cold-start 표본 5개
+- workload마다 서로 다른 boot에서 얻은 uncached runner 표본 5개
+- 별도의 직전 지원 Windows release
+- 기준 또는 최소 hardware tier
+- 릴리스 인증서를 사용한 최종 Authenticode 서명
+- 최종 릴리스 범위가 요구하는 관리자, elevated shell, 다른 login session 또는
+  multi-user matrix
+
+이 항목들은 다른 machine state, OS 설치, 자격 증명 또는 명시적 권한이 필요하다.
+따뜻한 결과와 로컬 smoke test로 대신하지 않는다.
