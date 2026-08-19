@@ -101,18 +101,25 @@ npm run test:app-data
 ### Runner component
 
 ```powershell
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_process_contract idle_tail_follow_runner_stays_below_the_cpu_ceiling -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract sort_resource_limit_stays_bounded_and_fails_closed -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract traversal_and_listing_resource_limits_are_bounded -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_mutation_resource_contract mutation_resource_limits_are_bounded_and_atomic -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_process_contract idle_tail_follow_runner_stays_below_the_cpu_ceiling -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_resource_contract sort_resource_limit_stays_bounded_and_fails_closed -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_resource_contract traversal_and_listing_resource_limits_are_bounded -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_mutation_resource_contract mutation_resource_limits_are_bounded_and_atomic -- --ignored --exact --nocapture
 ```
+
+격리한 Cargo target은 필수다. Tauri의 기본 target에서 release `cargo test`를 실행하면
+hard-link된 Tauri-patched GUI artifact가 raw Cargo 실행 파일로 바뀔 수 있다. 그 실행
+파일은 빈 WebView를 열 수 있으므로 GUI나 installer 게이트에 사용할 수 없다. Release
+Cargo 명령이 기본 target을 건드렸다면 앱 검사 전에 `npm run tauri build`를 다시 실행한다.
 
 ### GUI matrix
 
 Shell parameter가 있는 script는 `powershell`과 `cmd`로 각각 한 번 실행한다. `cmd`
 script는 test 전용 native workload로 terminal transport와 rendering을 검사할 뿐 Familiar
 interception을 켜지 않는다.
+격리한 runner component 게이트 뒤 Tauri artifact를 build하고 이 matrix 전에는 기본
+target release Cargo 명령을 다시 실행하지 않는다.
 
 ```powershell
 $Exe = 'src-tauri\target\release\wingman.exe'

@@ -107,18 +107,26 @@ not the final release identity.
 ### Runner component
 
 ```powershell
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_process_contract idle_tail_follow_runner_stays_below_the_cpu_ceiling -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract sort_resource_limit_stays_bounded_and_fails_closed -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_resource_contract traversal_and_listing_resource_limits_are_bounded -- --ignored --exact --nocapture
-cargo test --release --manifest-path src-tauri/Cargo.toml --test runner_mutation_resource_contract mutation_resource_limits_are_bounded_and_atomic -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_performance_contract cached_runner_timing_baseline -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_process_contract idle_tail_follow_runner_stays_below_the_cpu_ceiling -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_resource_contract sort_resource_limit_stays_bounded_and_fails_closed -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_resource_contract traversal_and_listing_resource_limits_are_bounded -- --ignored --exact --nocapture
+cargo test --release --target-dir src-tauri/target/runner-release-gates --manifest-path src-tauri/Cargo.toml --test runner_mutation_resource_contract mutation_resource_limits_are_bounded_and_atomic -- --ignored --exact --nocapture
 ```
+
+The isolated Cargo target is mandatory. A release `cargo test` in Tauri's
+default target can replace the hard-linked, Tauri-patched GUI artifact with a
+raw Cargo executable. Such an executable may open a blank WebView and cannot
+be used for the GUI or installer gates. If a release Cargo command touched the
+default target, rerun `npm run tauri build` before testing the application.
 
 ### GUI matrix
 
 Run every shell-parameterized script once with `powershell` and once with
 `cmd`. The `cmd` scripts exercise terminal transport and rendering with a
 test-only native workload; they do not activate Familiar interception.
+Build the Tauri artifact after the isolated runner component gate and do not
+run another default-target release Cargo command before this matrix.
 
 ```powershell
 $Exe = 'src-tauri\target\release\wingman.exe'
