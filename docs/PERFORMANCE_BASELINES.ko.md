@@ -1057,20 +1057,25 @@ PowerShell의 인증된 editor readiness는 724.4ms에 도착했다. 같은 조�
 
 이 로컬 실행은 최종 구현과 불필요 코드 검토 후의 정확한 후보를 검증한다.
 
-- 소스와 harness: `7fcfb29c30ba4aee614d6857bd100eca5ee92deb`
+GUI 성능 표본은 `7fcfb29c...`에서 수집했다. 그 다음 `8a4157da...` 변경은
+제거 시 Wingman이 소유한 installer registry key를 정리하며, 아래에서 측정한
+Rust 또는 frontend runtime은 바꾸지 않는다. 이 절의 소스 식별자와 산출물
+hash는 installer 수정 후 다시 빌드한 최종 package 후보를 가리킨다.
+
+- 소스와 harness: `8a4157da631fc80b73d9025ec5385f12caf91887`
 - `wingman.exe` SHA-256:
-  `7754497CBDB027B57A6AAA9E3C1F8B4A2052F6CF18CDF7366153EE21A52BCD5A`
+  `84F2955C335C4E182178A96144473C565A750C912953670A78CEC445501F822C`
 - `wingman-runner.exe` SHA-256:
-  `79D21C1D13C858F371118E2F9CEFF81D8D690282F531A07949F85F42F22A359A`
+  `78073DAB1E3F20FAB0B16F72A599D2F2DF1B4B4A4FBD1A4FE3510A47800C22A4`
 - NSIS 설치 파일 SHA-256:
-  `E721D88072D3CBEB997F5FA30FBA819B8479F3E9FB53DE1A78E26D9C2A9F5B0C`
+  `B8EDD63E726C5A4089AB86C0569B2B442CD40F37A7022E686CBE6E5DC0FE28B5`
 
 ignored가 아닌 모든 Rust·frontend test, formatting, warning을 오류로 처리한
 Clippy, TypeScript type check, production frontend build, Tauri/NSIS build,
 sidecar bundle 검사, release security 검사, CLI launch, 설치·재설치·제거,
 격리된 app-data profile 100회 실행이 모두 통과했다. 개발 산출물은
 의도적으로 서명되지 않았으며, 최종 Authenticode 서명은 배포 gate로
-남아 있다. 설치 용량은 13,297,259바이트, 격리 app-data profile은
+남아 있다. 설치 용량은 13,297,267바이트, 격리 app-data profile은
 15,327,635바이트였다.
 
 | Shell | Warm startup 중앙값 / p95 / 최대 | Idle CPU 중앙값 / p95 | Idle private 최대 | 10만 줄 render | 입력 중앙값 / p95 / 최대 | 보존 중앙 / 최대 증가 | Scrollback |

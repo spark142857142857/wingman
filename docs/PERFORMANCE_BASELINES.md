@@ -1127,20 +1127,26 @@ Windows-version gates.
 This local run validates the exact candidate after the final implementation
 and dead-code review.
 
-- Source and harness: `7fcfb29c30ba4aee614d6857bd100eca5ee92deb`
+The GUI performance samples were collected at `7fcfb29c...`. The subsequent
+`8a4157da...` change only removes Wingman's installer-owned registry key during
+uninstall; it does not change the Rust or frontend runtime measured below. The
+source identifier and artifact hashes here describe the rebuilt packaged
+candidate after that installer fix.
+
+- Source and harness: `8a4157da631fc80b73d9025ec5385f12caf91887`
 - `wingman.exe` SHA-256:
-  `7754497CBDB027B57A6AAA9E3C1F8B4A2052F6CF18CDF7366153EE21A52BCD5A`
+  `84F2955C335C4E182178A96144473C565A750C912953670A78CEC445501F822C`
 - `wingman-runner.exe` SHA-256:
-  `79D21C1D13C858F371118E2F9CEFF81D8D690282F531A07949F85F42F22A359A`
+  `78073DAB1E3F20FAB0B16F72A599D2F2DF1B4B4A4FBD1A4FE3510A47800C22A4`
 - NSIS installer SHA-256:
-  `E721D88072D3CBEB997F5FA30FBA819B8479F3E9FB53DE1A78E26D9C2A9F5B0C`
+  `B8EDD63E726C5A4089AB86C0569B2B442CD40F37A7022E686CBE6E5DC0FE28B5`
 
 The non-ignored Rust and frontend suites, formatting, Clippy with warnings
 denied, TypeScript type checking, production frontend build, Tauri/NSIS
 build, sidecar bundle check, release security check, CLI launch, installer,
 and 100-launch isolated app-data smoke all passed. The development artifacts
 are intentionally unsigned; final Authenticode signing remains a publication
-gate. The installed footprint was 13,297,259 bytes and the isolated app-data
+gate. The installed footprint was 13,297,267 bytes and the isolated app-data
 profile was 15,327,635 bytes.
 
 | Shell | Warm startup median / p95 / max | Idle CPU median / p95 | Idle private max | 100k-line render | Input median / p95 / max | Retained median / max growth | Scrollback |
