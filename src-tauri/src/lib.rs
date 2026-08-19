@@ -298,14 +298,30 @@ fn is_newer_session_generation(current: u64, candidate: u64) -> bool {
     (1..=MAX_CLIENT_SESSION_ID).contains(&candidate) && candidate > current
 }
 
-fn reserve_session_generation(client_session_id: u64) -> Result<(), String> {
+fn reserve_session_slot<T>(
+    generation: &Mutex<u64>,
+    session: &Mutex<Option<T>>,
+    client_session_id: u64,
+) -> Result<Option<T>, String> {
     validate_client_session_id(client_session_id)?;
-    let mut generation = APP_STATE.session_generation.lock();
-    if !is_newer_session_generation(*generation, client_session_id) {
+    let mut current_generation = generation.lock();
+    if !is_newer_session_generation(*current_generation, client_session_id) {
         return Err("client session ID is stale".to_string());
     }
-    *generation = client_session_id;
-    Ok(())
+    *current_generation = client_session_id;
+
+    // Keep the generation lock until the old slot is detached. A concurrent
+    // restart must never reserve a newer generation while an older start is
+    // still able to observe or replace the active session.
+    Ok(session.lock().take())
+}
+
+fn reserve_session_generation(client_session_id: u64) -> Result<Option<PtySession>, String> {
+    reserve_session_slot(
+        &APP_STATE.session_generation,
+        &APP_STATE.session,
+        client_session_id,
+    )
 }
 
 fn validate_bridge_data(data: &str, maximum_bytes: usize, kind: &str) -> Result<(), String> {
@@ -529,10 +545,13 @@ fn start_shell_inner(
 ) -> Result<SessionInfo, String> {
     let _ = compat;
     let active_shell = shell.active_shell();
+    let previous = reserve_session_generation(client_session_id)?;
+    if let Some(previous) = previous {
+        let _ = previous.child.lock().kill();
+    }
     validate_terminal_dimensions(cols, rows)?;
     let elevated = security_context::current_process_is_elevated()
         .map_err(|error| format!("could not read process elevation: {error}"))?;
-    reserve_session_generation(client_session_id)?;
 
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -603,13 +622,15 @@ fn start_shell_inner(
     };
     let output_flow = Arc::new(PtyOutputFlowV1::new());
 
-    let previous = {
-        if *APP_STATE.session_generation.lock() != session_id {
+    {
+        let generation = APP_STATE.session_generation.lock();
+        if *generation != session_id {
             let _ = child.lock().kill();
             return Err("shell start was superseded".to_string());
         }
         let mut guard = APP_STATE.session.lock();
-        guard.replace(PtySession {
+        debug_assert!(guard.is_none());
+        *guard = Some(PtySession {
             id: session_id,
             writer,
             master: pair.master,
@@ -622,10 +643,7 @@ fn start_shell_inner(
             broker,
             output_flow: output_flow.clone(),
             _runtime_files: Some(runtime_files),
-        })
-    };
-    if let Some(previous) = previous {
-        let _ = previous.child.lock().kill();
+        });
     }
 
     if let Some(window) = app.get_webview_window("main") {
@@ -1413,6 +1431,31 @@ mod tests {
             MAX_CLIENT_SESSION_ID,
             MAX_CLIENT_SESSION_ID + 1
         ));
+    }
+
+    #[test]
+    fn reserving_a_generation_atomically_detaches_the_previous_session() {
+        let generation = Mutex::new(4);
+        let session = Mutex::new(Some("old"));
+
+        assert_eq!(
+            reserve_session_slot(&generation, &session, 5),
+            Ok(Some("old"))
+        );
+        assert_eq!(*generation.lock(), 5);
+        assert_eq!(*session.lock(), None);
+
+        session.lock().replace("current");
+        assert!(reserve_session_slot(&generation, &session, 5).is_err());
+        assert_eq!(*generation.lock(), 5);
+        assert_eq!(*session.lock(), Some("current"));
+
+        assert_eq!(
+            reserve_session_slot(&generation, &session, 6),
+            Ok(Some("current"))
+        );
+        assert_eq!(*generation.lock(), 6);
+        assert_eq!(*session.lock(), None);
     }
 
     #[test]
