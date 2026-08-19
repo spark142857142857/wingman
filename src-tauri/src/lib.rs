@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use interpreter::ActiveShell;
+use launch_handoff::GuiChildHandoffV1;
 use pty_output_flow::PtyOutputFlowV1;
 use runtime_files::RuntimeFilesV1;
 use session_runtime::{apply_familiar_effect, execute_terminal_input, write_session_input};
@@ -38,6 +39,7 @@ pub mod catalog;
 pub mod find_pattern;
 pub mod grep_pattern;
 pub mod interpreter;
+mod launch_handoff;
 pub mod lexer;
 pub mod ordered_pipeline;
 pub mod parser;
@@ -236,6 +238,11 @@ static APP_STATE: Lazy<AppState> = Lazy::new(|| AppState {
             .as_deref(),
     ),
 });
+
+static INITIAL_SHELL: once_cell::sync::OnceCell<app_launch::RequestedShellV1> =
+    once_cell::sync::OnceCell::new();
+static GUI_HANDOFF: once_cell::sync::OnceCell<Arc<GuiChildHandoffV1>> =
+    once_cell::sync::OnceCell::new();
 
 fn performance_input_echo_probe_enabled(value: Option<&str>) -> bool {
     value == Some("1")
@@ -460,7 +467,45 @@ fn get_cwd() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_initial_shell() -> &'static str {
+    match INITIAL_SHELL
+        .get()
+        .copied()
+        .unwrap_or(app_launch::RequestedShellV1::WindowsPowerShell)
+    {
+        app_launch::RequestedShellV1::Cmd => "cmd",
+        app_launch::RequestedShellV1::WindowsPowerShell => "powershell",
+    }
+}
+
+#[tauri::command]
 fn start_shell(
+    app: AppHandle,
+    shell: ShellRequest,
+    cols: u16,
+    rows: u16,
+    compat: bool,
+    client_session_id: u64,
+) -> Result<SessionInfo, String> {
+    let result = start_shell_inner(app.clone(), shell, cols, rows, compat, client_session_id);
+    if let Some(handoff) = GUI_HANDOFF.get() {
+        match &result {
+            Ok(_) => {
+                if let Err(error) = handoff.report_ready() {
+                    app.exit(1);
+                    return Err(error.to_string());
+                }
+            }
+            Err(error) => {
+                handoff.report_failed(error);
+                app.exit(1);
+            }
+        }
+    }
+    result
+}
+
+fn start_shell_inner(
     app: AppHandle,
     shell: ShellRequest,
     cols: u16,
@@ -1082,9 +1127,22 @@ fn resize_shell(client_session_id: u64, cols: u16, rows: u16) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    run_gui(app_launch::RequestedShellV1::WindowsPowerShell, None);
+}
+
+pub(crate) fn run_gui(
+    initial_shell: app_launch::RequestedShellV1,
+    handoff: Option<Arc<GuiChildHandoffV1>>,
+) {
+    let _ = INITIAL_SHELL.set(initial_shell);
+    if let Some(handoff) = handoff {
+        handoff.start_deadline_watchdog();
+        let _ = GUI_HANDOFF.set(handoff);
+    }
     let result = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_cwd,
+            get_initial_shell,
             start_shell,
             poll_shell_readiness,
             performance_input_echo_probe,

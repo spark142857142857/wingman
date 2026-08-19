@@ -1,5 +1,6 @@
 use crate::windows_path::{
-    resolve_path_spec, validate_path_value, PathResolutionErrorV1, PathValidationErrorV1,
+    resolve_path_spec, validate_path_value, PathKindV1, PathResolutionErrorV1,
+    PathValidationErrorV1,
 };
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
@@ -152,7 +153,116 @@ pub fn resolve_public_action(
         None => inherited_cwd.into(),
     };
 
-    let metadata = std::fs::symlink_metadata(&resolved).map_err(|error| match error.kind() {
+    validate_resolved_directory(&resolved)?;
+
+    Ok(ResolvedPublicActionV1::OpenWindow(GuiLaunchRequestV1 {
+        shell: shell.unwrap_or(RequestedShellV1::WindowsPowerShell),
+        start_directory: resolved.to_string_lossy().into_owned(),
+    }))
+}
+
+pub(crate) fn validate_gui_launch_request(
+    request: &GuiLaunchRequestV1,
+) -> Result<(), PublicLaunchResolutionErrorV1> {
+    let spec = validate_path_value(&request.start_directory)
+        .map_err(PublicLaunchResolutionErrorV1::InvalidStartPath)?;
+    if spec.kind == PathKindV1::Relative {
+        return Err(PublicLaunchResolutionErrorV1::InvalidStartPath(
+            PathValidationErrorV1::RootRelative,
+        ));
+    }
+    let resolved = resolve_path_spec(&spec, &request.start_directory)
+        .map_err(PublicLaunchResolutionErrorV1::Resolution)?;
+    validate_resolved_directory(&resolved)
+}
+
+pub fn process_main() -> i32 {
+    let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if crate::launch_handoff::is_internal_gui_invocation(&arguments) {
+        return run_internal_gui(&arguments);
+    }
+
+    let action = match parse_public_args(arguments) {
+        Ok(action) => action,
+        Err(error) => {
+            eprintln!("wingman: invalid command line: {error:?}");
+            return 2;
+        }
+    };
+    match action {
+        PublicLaunchActionV1::Help => {
+            println!("wingman [--shell powershell|cmd] [--] [PATH]");
+            println!("wingman --help");
+            println!("wingman --version");
+            return 0;
+        }
+        PublicLaunchActionV1::Version => {
+            println!("wingman {}", env!("CARGO_PKG_VERSION"));
+            return 0;
+        }
+        PublicLaunchActionV1::OpenWindow { .. } => {}
+    }
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            eprintln!("wingman: could not read the current directory: {error}");
+            return 1;
+        }
+    };
+    let action = match resolve_public_action(action, &cwd) {
+        Ok(action) => action,
+        Err(error) => {
+            eprintln!("wingman: invalid start directory: {error:?}");
+            return 1;
+        }
+    };
+    match action {
+        ResolvedPublicActionV1::Help | ResolvedPublicActionV1::Version => unreachable!(),
+        ResolvedPublicActionV1::OpenWindow(request) => {
+            let executable = match std::env::current_exe() {
+                Ok(executable) => executable,
+                Err(error) => {
+                    eprintln!("wingman: could not locate the application: {error}");
+                    return 1;
+                }
+            };
+            let _ctrl_handler = crate::launch_handoff::LauncherCtrlHandlerGuard::install();
+            match crate::launch_handoff::launch_gui(&executable, request) {
+                Ok(crate::launch_handoff::LauncherOutcomeV1::Ready) => 0,
+                Ok(crate::launch_handoff::LauncherOutcomeV1::Failed(diagnostic)) => {
+                    eprintln!("wingman: {diagnostic}");
+                    1
+                }
+                Err(crate::launch_handoff::HandoffErrorV1::Cancelled) => 130,
+                Err(error) => {
+                    eprintln!("wingman: {error}");
+                    1
+                }
+            }
+        }
+    }
+}
+
+fn run_internal_gui(arguments: &[OsString]) -> i32 {
+    let (request, handoff) = match crate::launch_handoff::accept_internal_gui(arguments) {
+        Ok(value) => value,
+        Err(_) => return 2,
+    };
+    if let Err(error) = validate_gui_launch_request(&request) {
+        handoff.report_failed(&format!("invalid start directory: {error:?}"));
+        return 1;
+    }
+    if let Err(error) = std::env::set_current_dir(&request.start_directory) {
+        handoff.report_failed(&format!("could not enter the start directory: {error}"));
+        return 1;
+    }
+
+    crate::run_gui(request.shell, Some(handoff));
+    0
+}
+
+fn validate_resolved_directory(path: &Path) -> Result<(), PublicLaunchResolutionErrorV1> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| match error.kind() {
         std::io::ErrorKind::NotFound => PublicLaunchResolutionErrorV1::Missing,
         _ => PublicLaunchResolutionErrorV1::Metadata,
     })?;
@@ -162,9 +272,5 @@ pub fn resolve_public_action(
     if !metadata.is_dir() {
         return Err(PublicLaunchResolutionErrorV1::NotDirectory);
     }
-
-    Ok(ResolvedPublicActionV1::OpenWindow(GuiLaunchRequestV1 {
-        shell: shell.unwrap_or(RequestedShellV1::WindowsPowerShell),
-        start_directory: resolved.to_string_lossy().into_owned(),
-    }))
+    Ok(())
 }

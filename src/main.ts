@@ -371,4 +371,5 @@ document.addEventListener("keydown", (e) => {
 });
 
 updateStatus();
-await startSession("powershell");
+const initialShell = await invoke<ShellKind>("get_initial_shell");
+await startSession(initialShell);
