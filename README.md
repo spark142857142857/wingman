@@ -2,19 +2,25 @@
 
 [Korean](README.ko.md)
 
-> **Prototype snapshot — not the final P0 compatibility promise.** The features
-> below describe the checked-in prototype and include behavior outside the target.
+> **Prototype snapshot — not the final P0 compatibility promise.** The historical
+> feature and mapping sections below describe the pre-cutover prototype and
+> include behavior outside the target.
 > See the [prototype/target boundary](docs/PROTOTYPE_TARGET_BOUNDARY.md) and
 > [target compatibility contract](docs/COMPATIBILITY_CONTRACT.md).
 >
-> **Current safe-cutover status (2026-08-19): Familiar starts `PAUSED`.**
-> `familiar on` enables the contracted P0 Rust-runner set: `pwd`, `clear`,
+> **Current release-candidate status (2026-08-20): Familiar starts `PAUSED`.**
+> At a validated Windows PowerShell 5.1 prompt, `familiar on` enables the
+> contracted P0 Rust-runner set: `pwd`, `clear`,
 > `which`, `ls`/`ll`, `find`, `cat`, `head`, `tail`, `wc -l`, `grep`, `sort`,
 > `uniq`, `mkdir`, `touch`, `cp`, `mv`, and `rm`, with only their documented
-> pipelines and redirection. Prototype-only commands described later in this
-> snapshot are not sourced by the app.
+> pipelines and redirection. `cmd.exe` is a supported native terminal session
+> but remains pass-through; it does not receive Familiar conversion. Final
+> release acceptance and the external Windows matrix remain open.
 
-Wingman is a lightweight terminal MVP for Windows. It lets you switch between PowerShell and cmd while using familiar Linux commands and pipelines—without WSL.
+Wingman is a lightweight native terminal candidate for Windows. It keeps the
+real PowerShell or `cmd.exe` process and adds a deliberately small Unix-command
+familiarity layer at validated PowerShell prompts—without providing WSL, Bash,
+or a Linux runtime.
 
 **Stack:** Tauri 2, Rust (`portable-pty`), Vite, TypeScript, and xterm.js.
 
@@ -28,7 +34,25 @@ Wingman reduces a few common sources of friction in Windows terminals:
 
 This MVP deliberately focuses on a fast, local terminal experience; it does not include AI features.
 
-## Features
+## Current P0 candidate
+
+- Start a root session with Windows PowerShell 5.1 or native `cmd.exe`.
+- Preserve native shell syntax, environment, current directory, permissions,
+  foreground children, and external programs.
+- Opt into the documented P0 Familiar grammar at a validated PowerShell prompt.
+- Run supported P0 commands through a packaged Rust sidecar with bounded paths,
+  streams, resources, cancellation, and session isolation.
+- Confirm any paste containing a line break before sending its original bytes.
+- Launch installed windows with `wingman [--shell powershell|cmd] [--] [PATH]`.
+
+Current verification: [release test matrix](docs/RELEASE_TEST_MATRIX.md),
+[manual release smoke](docs/RELEASE_SMOKE_TEST.md), and
+[recorded performance baselines](docs/PERFORMANCE_BASELINES.md).
+
+## Historical prototype feature snapshot
+
+The following list is retained as migration evidence. It is not the current P0
+support promise.
 
 - Enter cmd from PowerShell in the same terminal session; `exit` returns to the parent PowerShell.
 - Toggle Linux Familiar mode on or off.
@@ -63,10 +87,10 @@ This MVP deliberately focuses on a fast, local terminal experience; it does not 
 ```text
 wingman/
   src/
-    main.ts          # terminal UI, Linux Familiar mappings, shortcuts
+    main.ts          # terminal UI, session-tagged input, shortcuts
     styles.css       # glass UI
   src-tauri/
-    src/lib.rs       # PTY session start/write/resize
+    src/lib.rs       # PTY/session, broker, launch, and Tauri boundary
     tauri.conf.json  # Tauri configuration
   docs/              # test plan and manual smoke-test guide
   index.html
@@ -74,9 +98,10 @@ wingman/
   README.md
 ```
 
-## Requirements
+## Local build requirements
 
-- Windows 10 or 11
+- Windows 11 for the currently recorded local evidence; the final supported
+  Windows matrix remains an external release gate
 - Node.js 18+
 - Rust (`rustc` and `cargo`)
 - WebView2 (normally included with Windows)
@@ -95,7 +120,10 @@ npm install
 npm run tauri dev
 ```
 
-The app starts in PowerShell by default. Enter `cmd` to open a nested cmd in the same terminal and `exit` to return. Enable Familiar mode to use commands such as `ls`, `pwd`, and `cat` through the appropriate Windows mappings.
+The app starts in PowerShell by default. Entering `cmd` opens an ordinary native
+foreground child and `exit` returns to PowerShell. To start a `cmd.exe` root
+session, use the public release CLI with `--shell cmd`. Familiar interception is
+available only at a validated Windows PowerShell 5.1 prompt.
 
 ## Build
 
@@ -111,14 +139,23 @@ Build artifacts are generated under `src-tauri/target/release/`.
 npm run typecheck
 npm test
 npm run build
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
-`npm test` covers terminal input and shell state, PowerShell Linux Familiar pipelines, standard PowerShell/cmd regressions, Rust PTY session shutdown, and PowerShell profile loading.
+`npm test` runs the frontend input/security checks, Windows layout and packaging
+checks, and the complete non-ignored Rust contract suite.
 
-- Full test plan: [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md)
-- Manual app checks: [docs/MANUAL_SMOKE_TEST.md](docs/MANUAL_SMOKE_TEST.md)
+- Current release matrix: [docs/RELEASE_TEST_MATRIX.md](docs/RELEASE_TEST_MATRIX.md)
+- Current manual app gate: [docs/RELEASE_SMOKE_TEST.md](docs/RELEASE_SMOKE_TEST.md)
+- Historical prototype matrix: [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md)
+- Historical prototype smoke: [docs/MANUAL_SMOKE_TEST.md](docs/MANUAL_SMOKE_TEST.md)
 
-## Linux Familiar Mapping
+## Historical prototype mapping
+
+This table records the old shell-specific prototype. In the current P0
+candidate, only the documented PowerShell adapter may intercept Familiar input;
+`cmd.exe` remains native pass-through.
 
 | Input | PowerShell | cmd |
 | --- | --- | --- |
@@ -139,7 +176,7 @@ npm run build
   - Example problem path: `D:\Agent-projects\wingman`
   - Workaround: copy or move the project to an ASCII-only path, such as `C:\dev\wingman`.
 
-## Demo Checklist
+## Historical prototype demo checklist
 
 - [ ] Start a PowerShell session
 - [ ] Switch to cmd

@@ -2,7 +2,10 @@
 
 > **Prototype baseline — not the common-interpreter acceptance contract.**
 >
-> This matrix describes the pre-common-interpreter prototype and includes behavior now outside P0. Preserve it as migration evidence under the [prototype/target boundary](PROTOTYPE_TARGET_BOUNDARY.md); build target acceptance from [COMMON_INTERPRETER_TEST_PLAN.md](COMMON_INTERPRETER_TEST_PLAN.md) only after implementation approval.
+> This matrix describes the pre-common-interpreter prototype and includes
+> behavior now outside P0. Preserve it as migration evidence under the
+> [prototype/target boundary](PROTOTYPE_TARGET_BOUNDARY.md). Use the current
+> [release test matrix](RELEASE_TEST_MATRIX.md) for candidate acceptance.
 
 This document defines Wingman's regression test baseline. Command behavior is automated where possible; only visual rendering and hands-on input behavior are checked manually.
 

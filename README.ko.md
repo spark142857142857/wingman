@@ -2,18 +2,22 @@
 
 [English](README.md)
 
-> **프로토타입 snapshot — 최종 P0 호환성 약속이 아닙니다.** 아래 기능은 현재
-> repository의 prototype을 설명하며 target 밖 동작도 포함합니다.
+> **프로토타입 snapshot — 최종 P0 호환성 약속이 아닙니다.** 아래의 과거 기능과
+> mapping 절은 cutover 전 prototype을 설명하며 target 밖 동작도 포함합니다.
 > [프로토타입·목표 경계](docs/PROTOTYPE_TARGET_BOUNDARY.ko.md)와
 > [목표 호환성 계약](docs/COMPATIBILITY_CONTRACT.ko.md)을 참고하세요.
 >
-> **현재 안전 cutover 상태(2026-08-19): Familiar는 `PAUSED`로 시작합니다.**
-> `familiar on`은 계약한 P0 Rust-runner 명령인 `pwd`, `clear`, `which`, `ls`/`ll`,
+> **현재 릴리스 후보 상태(2026-08-20): Familiar는 `PAUSED`로 시작합니다.**
+> 검증된 Windows PowerShell 5.1 prompt에서 `familiar on`을 입력하면 계약한 P0
+> Rust-runner 명령인 `pwd`, `clear`, `which`, `ls`/`ll`,
 > `find`, `cat`, `head`, `tail`, `wc -l`, `grep`, `sort`, `uniq`, `mkdir`, `touch`,
-> `cp`, `mv`, `rm`과 문서화한 pipeline·redirection만 활성화합니다. 이 snapshot 뒤쪽에
-> 적힌 prototype 전용 명령은 앱이 source하지 않습니다.
+> `cp`, `mv`, `rm`과 문서화한 pipeline·redirection만 활성화합니다. `cmd.exe`는
+> 지원하는 native terminal session이지만 그대로 전달하며 Familiar 변환을 하지
+> 않습니다. 최종 release 수락과 외부 Windows matrix는 아직 열려 있습니다.
 
-Windows용 가벼운 터미널 MVP입니다. PowerShell과 cmd를 바로 전환하고, WSL 없이도 Linux Familiar 명령과 파이프를 사용할 수 있습니다.
+Windows용 가벼운 native terminal 후보입니다. 실제 PowerShell 또는 `cmd.exe` process를
+유지하고 검증된 PowerShell prompt에서 의도적으로 작은 Unix 명령 친숙성 계층을
+제공합니다. WSL, Bash 또는 Linux runtime을 제공하지 않습니다.
 
 **스택:** Tauri 2, Rust (`portable-pty`), Vite, TypeScript, xterm.js
 
@@ -27,7 +31,22 @@ Wingman은 Windows 터미널에서 자주 겪는 다음 불편을 줄입니다.
 
 이 MVP는 AI 기능 없이 **빠른 로컬 터미널 UX**에 집중합니다.
 
-## 기능
+## 현재 P0 후보
+
+- Windows PowerShell 5.1 또는 native `cmd.exe` root session 실행
+- Native shell 문법, 환경, 현재 directory, 권한, foreground child, 외부 프로그램 보존
+- 검증된 PowerShell prompt에서 문서화한 P0 Familiar 문법 opt-in
+- 제한된 path, stream, resource, 취소, session isolation을 갖춘 packaged Rust sidecar
+- Line break가 있는 paste는 원래 byte를 보내기 전에 확인
+- 설치본은 `wingman [--shell powershell|cmd] [--] [PATH]`로 실행
+
+현재 검증 기준은 [릴리스 테스트 매트릭스](docs/RELEASE_TEST_MATRIX.ko.md),
+[릴리스 수동 smoke](docs/RELEASE_SMOKE_TEST.ko.md),
+[기록한 성능 기준](docs/PERFORMANCE_BASELINES.ko.md)이다.
+
+## 과거 prototype 기능 snapshot
+
+다음 목록은 migration 증거로 보존한다. 현재 P0 지원 약속이 아니다.
 
 - 같은 터미널에서 PowerShell → cmd 진입, `exit`으로 부모 PowerShell 복귀
 - Linux Familiar 모드 ON/OFF
@@ -62,10 +81,10 @@ Wingman은 Windows 터미널에서 자주 겪는 다음 불편을 줄입니다.
 ```text
 wingman/
   src/
-    main.ts          # 터미널 UI, Linux Familiar 매핑, 단축키
+    main.ts          # 터미널 UI, session-tagged 입력, 단축키
     styles.css       # glass UI
   src-tauri/
-    src/lib.rs       # PTY 세션 시작/write/resize
+    src/lib.rs       # PTY/session, broker, launch, Tauri 경계
     tauri.conf.json  # Tauri 설정
   docs/              # 테스트 계획과 수동 스모크 테스트 가이드
   index.html
@@ -73,9 +92,10 @@ wingman/
   README.md
 ```
 
-## 요구 사항
+## 로컬 빌드 요구 사항
 
-- Windows 10/11
+- 현재 기록한 로컬 증거는 Windows 11이며 최종 지원 Windows matrix는 외부 릴리스
+  게이트로 남아 있음
 - Node.js 18+
 - Rust (`rustc`, `cargo`)
 - WebView2 (일반적으로 Windows에 기본 포함)
@@ -94,7 +114,10 @@ npm install
 npm run tauri dev
 ```
 
-기본 세션은 PowerShell입니다. `cmd`를 입력하면 같은 터미널 안에서 cmd로 진입하고, `exit`으로 부모 PowerShell에 복귀합니다. Familiar 모드를 켜면 `ls`, `pwd`, `cat` 등의 명령을 각 Windows 셸에 맞게 매핑해 사용할 수 있습니다.
+기본 session은 PowerShell이다. `cmd`를 입력하면 일반 native foreground child가 열리고
+`exit`으로 PowerShell에 돌아온다. `cmd.exe` root session은 공개 release CLI의
+`--shell cmd`로 시작한다. Familiar interception은 검증된 Windows PowerShell 5.1
+prompt에서만 제공한다.
 
 ## 빌드
 
@@ -110,14 +133,22 @@ npm run tauri build
 npm run typecheck
 npm test
 npm run build
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 ```
 
-`npm test`는 터미널 입력과 셸 상태, PowerShell Linux Familiar 파이프, 일반 PowerShell/cmd 회귀 동작, Rust PTY 세션 종료와 PowerShell 프로필 로딩을 검사합니다.
+`npm test`는 frontend 입력·보안, Windows layout·packaging과 ignored가 아닌 전체 Rust
+계약 suite를 실행한다.
 
-- 전체 테스트 기준: [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md)
-- 실제 앱 수동 확인: [docs/MANUAL_SMOKE_TEST.md](docs/MANUAL_SMOKE_TEST.md)
+- 현재 릴리스 matrix: [docs/RELEASE_TEST_MATRIX.ko.md](docs/RELEASE_TEST_MATRIX.ko.md)
+- 현재 수동 앱 게이트: [docs/RELEASE_SMOKE_TEST.ko.md](docs/RELEASE_SMOKE_TEST.ko.md)
+- 과거 prototype matrix: [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md)
+- 과거 prototype smoke: [docs/MANUAL_SMOKE_TEST.md](docs/MANUAL_SMOKE_TEST.md)
 
-## Linux Familiar 매핑
+## 과거 prototype mapping
+
+이 표는 옛 shell별 prototype 기록이다. 현재 P0 후보에서는 문서화한 PowerShell
+adapter만 Familiar 입력을 가로챌 수 있고 `cmd.exe`는 native pass-through다.
 
 | 입력 | PowerShell | cmd |
 | --- | --- | --- |
@@ -138,7 +169,7 @@ npm run build
   - 문제 예시: `D:\Agent프로젝트\wingman`
   - 해결: `C:\dev\wingman`처럼 ASCII 전용 경로로 복사하거나 이동해 실행하세요.
 
-## 데모 체크리스트
+## 과거 prototype 데모 체크리스트
 
 - [ ] PowerShell 세션 시작
 - [ ] cmd 전환

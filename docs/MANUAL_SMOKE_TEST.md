@@ -2,7 +2,10 @@
 
 > **Prototype checklist — not the common-interpreter acceptance contract.**
 >
-> It contains prototype commands now outside P0. Preserve it as migration evidence under the [prototype/target boundary](PROTOTYPE_TARGET_BOUNDARY.md); build the target checklist from [COMMON_INTERPRETER_TEST_PLAN.md](COMMON_INTERPRETER_TEST_PLAN.md) only after implementation approval.
+> It contains prototype commands now outside P0. Preserve it as migration
+> evidence under the [prototype/target boundary](PROTOTYPE_TARGET_BOUNDARY.md).
+> Use the current [release manual smoke test](RELEASE_SMOKE_TEST.md) for
+> candidate acceptance.
 
 This checklist covers the actual window, fonts, focus, clipboard, and interactive PTY behavior that automated tests cannot reliably verify. It takes about 10 minutes.
 
