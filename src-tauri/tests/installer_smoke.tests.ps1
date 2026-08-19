@@ -30,6 +30,7 @@ $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Wingm
 $originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $originalProcessPath = $env:Path
 $installationActive = $false
+$installedFileCeilingBytes = 60L * 1024L * 1024L
 
 function Get-UserPath {
   $value = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -109,6 +110,15 @@ function Assert-InstalledPayload {
   }
 }
 
+function Assert-InstalledFootprint {
+  $files = @(Get-ChildItem -LiteralPath $InstallDirectory -Recurse -File)
+  $installedBytes = [long](($files | Measure-Object -Property Length -Sum).Sum)
+  if ($installedBytes -gt $installedFileCeilingBytes) {
+    throw "Installed payload uses $installedBytes bytes, exceeding the $installedFileCeilingBytes-byte release ceiling."
+  }
+  Write-Output "WINGMAN_INSTALLED_FOOTPRINT_V1=$installedBytes"
+}
+
 function Assert-PublicCommandLaunch {
   $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   $env:Path = $machinePath + ';' + (Get-UserPath)
@@ -152,6 +162,7 @@ try {
 
   Invoke-Installer
   Assert-InstalledPayload
+  Assert-InstalledFootprint
   if ((Get-ExactTokenCount (Get-UserPath)) -ne 1 -or (Get-PathMarker) -ne 1) {
     throw 'A fresh install did not create one owned PATH token.'
   }
@@ -185,6 +196,7 @@ try {
 
   Invoke-Installer
   Assert-InstalledPayload
+  Assert-InstalledFootprint
   if ((Get-ExactTokenCount (Get-UserPath)) -ne 1 -or (Get-PathMarker) -ne 0) {
     throw 'Installer claimed ownership of a pre-existing PATH token.'
   }
