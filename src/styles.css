@@ -64,6 +64,12 @@ body,
 
 .statusbar .ok { color: #79d7ae; }
 .statusbar .off { color: #f49a9a; }
+.statusbar .admin {
+  color: #ff8a80;
+  text-shadow: 0 0 10px rgba(255, 82, 82, 0.35);
+}
+.statusbar .standard { color: #b5c8d8; }
+.statusbar .unknown { color: #ffd37a; }
 
 .statusbar .cwd {
   flex: 1 1 0;

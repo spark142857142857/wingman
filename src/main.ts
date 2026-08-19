@@ -16,6 +16,7 @@ const termHost = document.getElementById("terminal")!;
 const cwdEl = document.getElementById("cwd")!;
 const shellLabel = document.getElementById("shellLabel")!;
 const familiarLabel = document.getElementById("familiarLabel")!;
+const privilegeLabel = document.getElementById("privilegeLabel")!;
 
 const preferences = {
   fontSize: "wingman.fontSize.v2",
@@ -61,6 +62,7 @@ fitAddon.fit();
 
 let compat = false;
 let activeShell: ShellKind = "powershell";
+let elevated: boolean | null = null;
 let inputQueue = Promise.resolve();
 let activeSessionId = 0;
 
@@ -114,6 +116,8 @@ function updateStatus(cwd?: string) {
   shellLabel.textContent = activeShell === "powershell" ? "PowerShell" : "cmd";
   familiarLabel.textContent = compat ? "ON" : "PAUSED";
   familiarLabel.className = compat ? "ok" : "off";
+  privilegeLabel.textContent = elevated === null ? "Checking…" : elevated ? "ADMINISTRATOR" : "Standard";
+  privilegeLabel.className = elevated === null ? "unknown" : elevated ? "admin" : "standard";
   if (cwd) cwdEl.textContent = cwd;
 }
 
@@ -131,7 +135,7 @@ async function startSession(shell: ShellKind) {
   performanceProbe = null;
   term.reset();
   const { cols, rows } = term;
-  const session = await invoke<{ shell: string; cwd: string }>("start_shell", {
+  const session = await invoke<{ shell: string; cwd: string; elevated: boolean }>("start_shell", {
     shell,
     cols,
     rows,
@@ -139,6 +143,7 @@ async function startSession(shell: ShellKind) {
     clientSessionId: sessionId,
   });
   activeShell = shell;
+  elevated = session.elevated;
   updateStatus(session.cwd);
   term.focus();
   if (shell === "powershell") void observeEditorReadiness(sessionId);

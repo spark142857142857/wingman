@@ -58,6 +58,7 @@ mod runner_rm;
 mod runner_touch;
 mod runner_transfer;
 pub mod runner_which;
+mod security_context;
 pub mod session_runtime;
 pub mod shell_adapter;
 pub mod sort_support;
@@ -70,6 +71,7 @@ pub mod windows_path;
 struct SessionInfo {
     shell: String,
     cwd: String,
+    elevated: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -467,6 +469,8 @@ fn start_shell(
     let _ = compat;
     let active_shell = shell.active_shell();
     validate_terminal_dimensions(cols, rows)?;
+    let elevated = security_context::current_process_is_elevated()
+        .map_err(|error| format!("could not read process elevation: {error}"))?;
     reserve_session_generation(client_session_id)?;
 
     let pty_system = native_pty_system();
@@ -653,6 +657,7 @@ fn start_shell(
     Ok(SessionInfo {
         shell: shell_name,
         cwd,
+        elevated,
     })
 }
 
@@ -1346,5 +1351,10 @@ mod tests {
         assert!(
             validate_bridge_data(&(paste_limit + "한"), MAX_NATIVE_PASTE_BYTES, "paste").is_err()
         );
+    }
+
+    #[test]
+    fn current_process_elevation_is_observable() {
+        security_context::current_process_is_elevated().expect("query current process elevation");
     }
 }
