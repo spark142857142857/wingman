@@ -81,6 +81,9 @@ $applicationText = [Text.Encoding]::ASCII.GetString($applicationBytes)
 if ($applicationText -notmatch '<consoleAllocationPolicy[^>]*>detached</consoleAllocationPolicy>') {
   throw 'Release application does not embed the detached console-allocation policy'
 }
+if ($applicationText -notmatch '<requestedExecutionLevel level="asInvoker" uiAccess="false"\s*/>') {
+  throw 'Release application must explicitly inherit its caller token without elevation'
+}
 
 $tauriConfig = Get-Content -Raw -LiteralPath (Join-Path $tauriRoot 'tauri.conf.json') |
   ConvertFrom-Json
@@ -139,6 +142,9 @@ foreach ($loaderName in 'INSTALL', 'UNINSTALL') {
 $escapedHookPath = [regex]::Escape($pathHook)
 if (-not ($scriptLines | Where-Object { $_ -match "^!include `"$escapedHookPath`"$" })) {
   throw 'Generated NSIS source does not include the reviewed PATH registration hook'
+}
+if (-not ($scriptLines | Where-Object { $_.Trim() -eq 'RequestExecutionLevel user' })) {
+  throw 'Current-user NSIS installer must not request administrator elevation'
 }
 
 Write-Output "Release bundle contract passed: $($installer.FullName)"
