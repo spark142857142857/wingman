@@ -432,13 +432,13 @@ fn monitor_session_exit<F>(
     });
 }
 
-fn filter_session_output(session_id: u64, data: &str) -> Option<String> {
+fn filter_session_output(session_id: u64, data: String) -> Option<String> {
     APP_STATE
         .session
         .lock()
         .as_ref()
         .filter(|session| session.id == session_id)?;
-    Some(data.to_string())
+    Some(data)
 }
 
 fn deliver_pty_output(
@@ -648,7 +648,7 @@ fn start_shell_inner(
             match reader.read(&mut buf) {
                 Ok(0) => {
                     let trailing = decoder.finish();
-                    let visible = filter_session_output(session_id, &trailing).unwrap_or_default();
+                    let visible = filter_session_output(session_id, trailing).unwrap_or_default();
                     let _ = deliver_pty_output(
                         &app_handle,
                         &output_flow,
@@ -660,7 +660,7 @@ fn start_shell_inner(
                 }
                 Ok(n) => {
                     let chunk = decoder.push(&buf[..n]);
-                    let visible = filter_session_output(session_id, &chunk).unwrap_or_default();
+                    let visible = filter_session_output(session_id, chunk).unwrap_or_default();
                     if !deliver_pty_output(
                         &app_handle,
                         &output_flow,
@@ -673,7 +673,7 @@ fn start_shell_inner(
                 }
                 Err(_) => {
                     let trailing = decoder.finish();
-                    let visible = filter_session_output(session_id, &trailing).unwrap_or_default();
+                    let visible = filter_session_output(session_id, trailing).unwrap_or_default();
                     let _ = deliver_pty_output(
                         &app_handle,
                         &output_flow,
