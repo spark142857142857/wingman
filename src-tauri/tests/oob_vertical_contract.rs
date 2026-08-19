@@ -340,6 +340,49 @@ fn powershell_oob_readiness_reaches_the_real_runner_and_next_editor_cycle() {
     assert!(session.apply_editor_readiness(&twelfth));
     assert_eq!(session.powershell_depth(), 0);
 
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        "cmd.exe /d /q\r",
+        familiar_enabled,
+    )
+    .expect("enter native foreground cmd child");
+    assert_eq!(outcome, TerminalExecutionOutcomeV1::Native);
+    let _ = receive_output_containing(&receiver, "Microsoft Windows [Version");
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        "echo __WINGMAN_CMD_CHILD__\r",
+        familiar_enabled,
+    )
+    .expect("write native input to cmd child");
+    assert_eq!(outcome, TerminalExecutionOutcomeV1::Native);
+    let child_output = receive_output_containing(&receiver, "__WINGMAN_CMD_CHILD__");
+    assert!(
+        readiness.drain().expect("drain child readiness").is_empty(),
+        "foreground cmd child unexpectedly signaled parent readiness: {child_output:?}",
+    );
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        "exit\r",
+        familiar_enabled,
+    )
+    .expect("leave native foreground cmd child");
+    assert_eq!(outcome, TerminalExecutionOutcomeV1::Native);
+    let thirteenth = receive_readiness(&readiness, 13);
+    assert!(
+        session.apply_editor_readiness(&thirteenth),
+        "parent PowerShell did not resume after cmd child input",
+    );
+    assert!(session.editor_ready());
+
     let _ = child.kill();
     drop(writer);
     requests.stop().expect("stop request broker");

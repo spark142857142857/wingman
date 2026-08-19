@@ -387,6 +387,18 @@ fn foreground_children_keep_all_following_input_native_until_parent_readiness() 
                 data: "pwd\r".to_string(),
             }],
         );
+        assert_eq!(
+            session.handle_terminal_input("\u{1b}[Aq", true),
+            vec![TerminalInputActionV1::Forward {
+                data: "\u{1b}[Aq".to_string(),
+            }],
+        );
+        let nonce = session.integration_nonce().to_string();
+        assert!(
+            session.apply_editor_readiness(&readiness(&nonce, 2)),
+            "foreground child input advanced the parent sequence for {child_line:?}",
+        );
+        assert!(session.editor_ready());
     }
 }
 

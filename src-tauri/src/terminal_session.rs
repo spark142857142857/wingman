@@ -47,6 +47,7 @@ pub struct TerminalSessionV1 {
     editing_reliable: bool,
     verified_prompt_observed: bool,
     readiness_cycle_dirty: bool,
+    awaiting_parent_readiness: bool,
     accept_pty_readiness: bool,
     interpreter: Option<InterpreterSession>,
     pending_output: String,
@@ -69,6 +70,7 @@ impl TerminalSessionV1 {
             editing_reliable: false,
             verified_prompt_observed: false,
             readiness_cycle_dirty: false,
+            awaiting_parent_readiness: false,
             accept_pty_readiness: true,
             interpreter: None,
             pending_output: String::new(),
@@ -170,6 +172,7 @@ impl TerminalSessionV1 {
             })
             .map_err(TerminalPrepareErrorV1::Interpreter)?;
         self.editing_reliable = false;
+        self.awaiting_parent_readiness = true;
         self.expected_sequence = self.expected_sequence.saturating_add(1);
         Ok(decision)
     }
@@ -193,6 +196,7 @@ impl TerminalSessionV1 {
             self.input_reliable = false;
             self.input_escape.clear();
             self.editing_reliable = false;
+            self.awaiting_parent_readiness = true;
             self.expected_sequence = self
                 .expected_sequence
                 .saturating_add(submission_count.max(1) as u64);
@@ -244,6 +248,7 @@ impl TerminalSessionV1 {
                 } else {
                     push_forward(&mut actions, character.to_string());
                     self.editing_reliable = false;
+                    self.awaiting_parent_readiness = true;
                     self.expected_sequence = self.expected_sequence.saturating_add(1);
                 }
                 self.input_buffer.clear();
@@ -261,6 +266,7 @@ impl TerminalSessionV1 {
                 self.input_reliable = false;
                 self.input_escape.clear();
                 self.editing_reliable = false;
+                self.awaiting_parent_readiness = true;
                 self.expected_sequence = self.expected_sequence.saturating_add(1);
                 push_forward(&mut actions, character.to_string());
                 continue;
@@ -319,6 +325,7 @@ impl TerminalSessionV1 {
         self.ignore_next_line_feed = false;
         self.editing_reliable = false;
         self.readiness_cycle_dirty = !matches!(data.chars().last(), Some('\r' | '\n'));
+        self.awaiting_parent_readiness = !self.readiness_cycle_dirty;
         self.expected_sequence = self
             .expected_sequence
             .saturating_add(logical_submission_count(data).max(1) as u64);
@@ -333,6 +340,7 @@ impl TerminalSessionV1 {
         self.ignore_next_line_feed = false;
         self.editing_reliable = false;
         self.readiness_cycle_dirty = true;
+        self.awaiting_parent_readiness = false;
     }
 
     pub fn apply_editor_readiness(&mut self, frame: &EditorReadinessFrameV1) -> bool {
@@ -367,6 +375,7 @@ impl TerminalSessionV1 {
         self.verified_prompt_observed = true;
         self.powershell_depth = frame.shell_depth;
         self.readiness_cycle_dirty = false;
+        self.awaiting_parent_readiness = false;
         self.input_buffer.clear();
         self.input_buffer_bytes = 0;
         self.input_cursor = 0;
@@ -377,6 +386,12 @@ impl TerminalSessionV1 {
     }
 
     fn record_unvalidated_input(&mut self, data: &str) {
+        if self.awaiting_parent_readiness {
+            // The parent PowerShell line editor is not active while a native
+            // foreground child owns the PTY. Child Enter/escape input does not
+            // advance the parent's PSConsoleHostReadLine sequence.
+            return;
+        }
         for character in data.chars() {
             if !self.input_escape.is_empty() {
                 self.input_escape.push(character);
@@ -400,11 +415,13 @@ impl TerminalSessionV1 {
                 '\r' => {
                     self.expected_sequence = self.expected_sequence.saturating_add(1);
                     self.readiness_cycle_dirty = false;
+                    self.awaiting_parent_readiness = true;
                     self.ignore_next_line_feed = true;
                 }
                 '\n' => {
                     self.expected_sequence = self.expected_sequence.saturating_add(1);
                     self.readiness_cycle_dirty = false;
+                    self.awaiting_parent_readiness = true;
                 }
                 _ => self.readiness_cycle_dirty = true,
             }
