@@ -65,6 +65,23 @@ if (-not (Test-Path -LiteralPath $releaseRunner -PathType Leaf) -or
   throw "Cargo-built release runner is missing or empty: $releaseRunner"
 }
 
+$releaseApplication = Join-Path $releaseRoot 'wingman.exe'
+$applicationBytes = [System.IO.File]::ReadAllBytes($releaseApplication)
+$peOffset = [BitConverter]::ToInt32($applicationBytes, 0x3c)
+$optionalHeaderOffset = $peOffset + 24
+$optionalHeaderMagic = [BitConverter]::ToUInt16($applicationBytes, $optionalHeaderOffset)
+if ($optionalHeaderMagic -ne 0x10b -and $optionalHeaderMagic -ne 0x20b) {
+  throw 'Release application has an invalid PE optional header'
+}
+$subsystem = [BitConverter]::ToUInt16($applicationBytes, $optionalHeaderOffset + 0x44)
+if ($subsystem -ne 3) {
+  throw 'wingman.exe must use the console subsystem so shells wait for launcher status'
+}
+$applicationText = [Text.Encoding]::ASCII.GetString($applicationBytes)
+if ($applicationText -notmatch '<consoleAllocationPolicy[^>]*>detached</consoleAllocationPolicy>') {
+  throw 'Release application does not embed the detached console-allocation policy'
+}
+
 $tauriConfig = Get-Content -Raw -LiteralPath (Join-Path $tauriRoot 'tauri.conf.json') |
   ConvertFrom-Json
 if ($tauriConfig.bundle.externalBin -contains 'binaries/wingman-runner') {
