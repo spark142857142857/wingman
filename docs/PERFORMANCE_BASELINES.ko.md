@@ -1005,3 +1005,50 @@ npm run test:app-data
 
 이 항목들은 다른 machine state, OS 설치, 자격 증명 또는 명시적 권한이 필요하다.
 따뜻한 결과와 로컬 smoke test로 대신하지 않는다.
+
+## 2026-08-20: runner 취소 수정 뒤 릴리스 재검증
+
+이 실행은 session broker가 active runner에 인증된 역방향 취소 신호를 보내도록 수정한
+뒤의 릴리스 후보를 검증한다.
+
+- App source와 harness: `161c7818ac5bc61a1ac189f4feefd9f8b8a89f6e`
+- `wingman.exe` SHA-256:
+  `145402F5111C386C19B6C9BC37134CE893CED35FEE257D19BCBE2A995190D588`
+- Build: 공식 Tauri release와 NSIS bundle
+- OS: Windows `10.0.26200.0`, x64
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`
+
+30분 PowerShell endurance gate는 1,140사이클을 완료했다. 각 사이클은 250줄 출력과
+clear, `tail -f` 시작·취소, PTY resize, PowerShell 재시작, 인증된 editor readiness
+대기를 반복했다. 최종 tree에는 runner가 없었고 Wingman, WebView2, PowerShell,
+`conhost.exe`만 남았다.
+
+| Endurance 항목 | 결과 | 목표 | 배포 상한 | 판정 |
+| --- | ---: | ---: | ---: | --- |
+| 기준 private working set | 148.770 MiB | 해당 없음 | 해당 없음 | 기록 |
+| 최종 private working set | 176.727 MiB | 해당 없음 | 350 MiB | 통과 |
+| 증가량 | 27.957 MiB | 25 MiB | 50 MiB | 목표 미달, 상한 통과 |
+| 증가율 | 18.792% | 10% | 20% | 목표 미달, 상한 통과 |
+| 남은 runner process | 0 | 0 | 0 | 통과 |
+
+목표를 넘은 값은 목표 통과로 포장하지 않고 실제 측정 결과로 남긴다. 배포 상한은
+넘지 않았다.
+
+같은 실행 파일을 사용한 두 shell GUI matrix도 전부 통과했다.
+
+| Shell | Warm startup 중앙값 / p95 / 최대 | Idle CPU 중앙값 / p95 | Idle private 최대 | 10만 줄 render | 입력 중앙값 / p95 / 최대 | 보존 중앙 / 최대 증가 | Scrollback |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 724.5 / 744.4 / 744.6 ms | 0.195 / 0.977% | 152.352 MiB | 4,535.5 ms | 27.1 / 34.2 / 35.0 ms | 39.795 / 43.156 MiB | 4,000 |
+| `cmd.exe` | 458.1 / 482.7 / 488.4 ms | 0.195 / 0.488% | 118.887 MiB | 4,055.3 ms | 27.1 / 34.3 / 35.0 ms | 40.020 / 43.539 MiB | 4,000 |
+
+PowerShell의 인증된 editor readiness는 724.4ms에 도착했다. 같은 조건의 host 비교는
+다음과 같다.
+
+| Shell | Wingman 표본 / 중앙값 | Windows Terminal 표본 / 중앙값 | 비율 | 2배 목표 / 3배 상한 |
+| --- | --- | --- | ---: | --- |
+| Windows PowerShell 5.1 | 4,357.548, 4,267.022, 4,314.859 / 4,314.859 ms | 3,200.734, 3,083.395, 3,055.755 / 3,083.395 ms | 1.399배 | 통과 / 통과 |
+| `cmd.exe` | 4,044.762, 4,004.264, 3,992.944 / 4,004.264 ms | 3,150.317, 2,970.756, 3,146.088 / 3,146.088 ms | 1.273배 | 통과 / 통과 |
+
+이 측정은 이전 절을 역사적 증거로 보존하면서 성능 비교에 사용하는 최신 로컬 후보값을
+대체한다. 수동 IME, clipboard, 시각 layout 또는 외부 Windows version gate를 면제하지
+않는다.

@@ -1072,3 +1072,52 @@ The following items are deliberately **not** recorded as passes:
 Those items require a different machine state, operating-system installation,
 credential, or explicit authorization. Warm results and local smoke tests do
 not substitute for them.
+
+## 2026-08-20: post-cancellation release revalidation
+
+This run validates the release candidate after the session broker gained an
+authenticated reverse cancellation signal for active runners.
+
+- App source and harness: `161c7818ac5bc61a1ac189f4feefd9f8b8a89f6e`
+- `wingman.exe` SHA-256:
+  `145402F5111C386C19B6C9BC37134CE893CED35FEE257D19BCBE2A995190D588`
+- Build: official Tauri release and NSIS bundle
+- OS: Windows `10.0.26200.0`, x64
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`
+
+The 30-minute PowerShell endurance gate completed 1,140 cycles. Each cycle
+rendered and cleared 250 lines, started and cancelled `tail -f`, resized the
+PTY, restarted PowerShell, and waited for authenticated editor readiness. The
+final tree had no runner and contained only Wingman, WebView2, PowerShell, and
+`conhost.exe`.
+
+| Endurance metric | Result | Target | Release ceiling | Result |
+| --- | ---: | ---: | ---: | --- |
+| Baseline private working set | 148.770 MiB | n/a | n/a | Recorded |
+| Final private working set | 176.727 MiB | n/a | 350 MiB | Pass |
+| Growth | 27.957 MiB | 25 MiB | 50 MiB | Target miss; ceiling pass |
+| Growth | 18.792% | 10% | 20% | Target miss; ceiling pass |
+| Remaining runner processes | 0 | 0 | 0 | Pass |
+
+The target miss is retained as measured evidence rather than being described
+as a target pass. It does not cross the release ceiling.
+
+The complete two-shell GUI matrix then passed against the same executable:
+
+| Shell | Warm startup median / p95 / max | Idle CPU median / p95 | Idle private maximum | 100k-line render | Input median / p95 / max | Retained median / max growth | Scrollback |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 724.5 / 744.4 / 744.6 ms | 0.195 / 0.977% | 152.352 MiB | 4,535.5 ms | 27.1 / 34.2 / 35.0 ms | 39.795 / 43.156 MiB | 4,000 |
+| `cmd.exe` | 458.1 / 482.7 / 488.4 ms | 0.195 / 0.488% | 118.887 MiB | 4,055.3 ms | 27.1 / 34.3 / 35.0 ms | 40.020 / 43.539 MiB | 4,000 |
+
+PowerShell authenticated editor readiness arrived in 724.4 ms. The matched
+host comparison produced these current-candidate results:
+
+| Shell | Wingman samples / median | Windows Terminal samples / median | Ratio | 2x target / 3x ceiling |
+| --- | --- | --- | ---: | --- |
+| Windows PowerShell 5.1 | 4,357.548, 4,267.022, 4,314.859 / 4,314.859 ms | 3,200.734, 3,083.395, 3,055.755 / 3,083.395 ms | 1.399x | Pass / Pass |
+| `cmd.exe` | 4,044.762, 4,004.264, 3,992.944 / 4,004.264 ms | 3,150.317, 2,970.756, 3,146.088 / 3,146.088 ms | 1.273x | Pass / Pass |
+
+These measurements replace the earlier local candidate values for performance
+comparisons, while preserving the earlier sections as historical evidence.
+They do not waive the manual IME, clipboard, visual-layout, or external
+Windows-version gates.
