@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { classifyTerminalPaste } from "./terminal-paste";
 import { blockedTerminalLinkHandler } from "./terminal-security";
 import { isPasteShortcut } from "./terminal-shortcuts";
-import { PerformanceProbe } from "./performance-probes";
+import type { PerformanceProbe } from "./performance-probes";
 import { TERMINAL_SCROLLBACK_ROWS } from "./terminal-config";
 
 type ShellKind = "powershell" | "cmd";
@@ -80,7 +80,15 @@ function delay(milliseconds: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-async function observeEditorReadiness(clientSessionId: number) {
+async function createPerformanceProbe(clientSessionId: number) {
+  const { PerformanceProbe } = await import("./performance-probes");
+  return PerformanceProbe.create(clientSessionId, term);
+}
+
+async function observeEditorReadiness(
+  clientSessionId: number,
+  performanceProbeEnabled: boolean,
+) {
   const deadline = performance.now() + shellReadinessTimeoutMs;
   while (clientSessionId === activeSessionId && performance.now() < deadline) {
     const state = await invoke<{ accepted: boolean; editorReady: boolean }>(
@@ -89,6 +97,7 @@ async function observeEditorReadiness(clientSessionId: number) {
     ).catch(() => ({ accepted: false, editorReady: false }));
     if (!state.accepted || clientSessionId !== activeSessionId) return;
     if (state.editorReady) {
+      if (!performanceProbeEnabled) return;
       const endurance = await invoke<{ accepted: boolean; enabled: boolean }>(
         "performance_endurance_probe",
         { clientSessionId },
@@ -103,7 +112,7 @@ async function observeEditorReadiness(clientSessionId: number) {
         void runEnduranceProbe(clientSessionId);
         return;
       }
-      const probe = await PerformanceProbe.create(clientSessionId, term);
+      const probe = await createPerformanceProbe(clientSessionId);
       if (clientSessionId !== activeSessionId) return;
       performanceProbe = probe;
       probe?.activate(() => clientSessionId === activeSessionId);
@@ -153,9 +162,9 @@ async function startSession(shell: ShellKind) {
   updateStatus(session.cwd);
   term.focus();
   if (shell === "powershell") {
-    void observeEditorReadiness(sessionId);
+    void observeEditorReadiness(sessionId, session.performanceProbeEnabled);
   } else if (session.performanceProbeEnabled) {
-    const probe = await PerformanceProbe.create(sessionId, term);
+    const probe = await createPerformanceProbe(sessionId);
     if (sessionId !== activeSessionId) return;
     performanceProbe = probe;
     probe?.activate(() => sessionId === activeSessionId);
