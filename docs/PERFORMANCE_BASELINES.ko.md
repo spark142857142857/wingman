@@ -886,6 +886,41 @@ Windows version은 외부 matrix 증거로 남는다.
 logical processor 16개, Windows 균형 조정 전원, WebView2 `151.0.4129.93`,
 Windows Terminal `1.24.11911.0`, Rust `1.96.1`로 유지됐다.
 
+### 결정적인 두 shell warm startup 재검증
+
+- App source: `d5ffe439f4ae32fa71e9fd29206f0928be82a878`
+- Build: 공식 Tauri release와 NSIS bundle
+- 절차: shell마다 3회 warmup 뒤 20회 기록
+
+격리하지 않은 진단 실행에서는 인증된 editor readiness가 약 0.7초에 도착했는데도
+PowerShell 중앙값이 1,731.0ms로 느려졌다. Frontend timing으로 xterm 입력이 Rust PTY
+write까지 갔다가 돌아오는 데 약 1.2ms만 걸렸고, 첫 PSReadLine read 안에서 약 986ms가
+지난다는 것을 확인했다. 이 machine의 PSReadLine 2.0.0은 초기 history load에서 공유
+history mutex를 최대 1,000ms 기다리며, 현재 공유 history에는 8,650줄이 있었다. 표준
+probe는 이제 probe shell 안에서만 비영구 history를 사용한다. 일반 Wingman 실행은 설정된
+PSReadLine history mode와 경로를 그대로 유지하고, 내부 플래그는 foreground child가
+상속하기 전에 제거된다. 1.5초 상한을 완화하지 않고 transport contract test로 이 동작을
+고정했다.
+
+| Shell | 중앙값 | p95 | 최댓값 | 1.5초 상한 |
+| --- | ---: | ---: | ---: | --- |
+| Windows PowerShell 5.1 | 744.9 ms | 809.9 ms | 844.2 ms | 통과 |
+| `cmd.exe` | 521.8 ms | 553.4 ms | 561.9 ms | 통과 |
+
+PowerShell 원시 표본(ms):
+
+```text
+724.4, 742.1, 745.6, 744.1, 741.3, 732.0, 773.9, 741.4, 729.9, 809.9,
+764.5, 774.1, 756.6, 788.0, 757.0, 729.5, 728.5, 769.4, 844.2, 730.3
+```
+
+`cmd.exe` 원시 표본(ms):
+
+```text
+516.3, 529.4, 535.8, 545.8, 515.6, 520.2, 552.5, 490.6, 521.7, 540.1,
+530.6, 561.9, 514.4, 496.7, 520.9, 504.1, 553.4, 505.5, 532.7, 521.9
+```
+
 ### Cached runner와 idle follow 게이트
 
 ```powershell

@@ -948,6 +948,43 @@ across commits `4b9d1aaf081d3746966defc8b578c22ee1241b79` through
 Windows Balanced power, WebView2 `151.0.4129.93`, Windows Terminal
 `1.24.11911.0`, and Rust `1.96.1`.
 
+### Deterministic two-shell warm startup revalidation
+
+- App source: `d5ffe439f4ae32fa71e9fd29206f0928be82a878`
+- Build: official Tauri release plus NSIS bundle
+- Procedure: three warmups followed by 20 recorded runs per shell
+
+An unisolated diagnostic run had regressed to a 1,731.0 ms PowerShell median
+even though authenticated editor readiness still arrived in about 0.7 seconds.
+Frontend timing then proved that xterm input reached and returned from the Rust
+PTY write in about 1.2 ms; roughly 986 ms elapsed inside the first PSReadLine
+read. This machine used PSReadLine 2.0.0, whose initial history load takes the
+shared history mutex with a 1,000 ms timeout, and the current shared history
+contained 8,650 lines. The standardized probe now uses non-persistent history
+only inside the probe shell. Ordinary Wingman launches retain the configured
+PSReadLine history mode and path, and the internal flag is removed before a
+foreground child can inherit it. The behavior is fixed by transport contract
+tests rather than by relaxing the 1.5-second ceiling.
+
+| Shell | Median | p95 | Maximum | 1.5 s ceiling |
+| --- | ---: | ---: | ---: | --- |
+| Windows PowerShell 5.1 | 744.9 ms | 809.9 ms | 844.2 ms | Pass |
+| `cmd.exe` | 521.8 ms | 553.4 ms | 561.9 ms | Pass |
+
+PowerShell raw samples (ms):
+
+```text
+724.4, 742.1, 745.6, 744.1, 741.3, 732.0, 773.9, 741.4, 729.9, 809.9,
+764.5, 774.1, 756.6, 788.0, 757.0, 729.5, 728.5, 769.4, 844.2, 730.3
+```
+
+`cmd.exe` raw samples (ms):
+
+```text
+516.3, 529.4, 535.8, 545.8, 515.6, 520.2, 552.5, 490.6, 521.7, 540.1,
+530.6, 561.9, 514.4, 496.7, 520.9, 504.1, 553.4, 505.5, 532.7, 521.9
+```
+
 ### Cached runner and idle-follow gates
 
 ```powershell
