@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
+    [ValidateSet('powershell', 'cmd')]
+    [string]$ShellKind = 'powershell',
     [int]$ShellTimeoutSeconds = 30,
     [int]$SettleSeconds = 10,
     [int]$SampleCount = 10,
@@ -105,28 +107,36 @@ if ($existing.Count -ne 0) {
 }
 
 $startedAt = Get-Date
-$app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
+$app = Start-WingmanGuiProcess `
+    -Executable $resolvedExecutable `
+    -WorkingDirectory (Get-Location).Path `
+    -Arguments @('--shell', $ShellKind)
 $knownTreeIds = @([uint32]$app.Id)
 try {
     $shell = $null
     $deadline = (Get-Date).AddSeconds($ShellTimeoutSeconds)
     do {
         Start-Sleep -Milliseconds 100
-        $shell = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object {
+        $shellName = if ($ShellKind -eq 'powershell') { 'powershell.exe' } else { 'cmd.exe' }
+        $shell = Get-CimInstance Win32_Process -Filter "Name = '$shellName'" | Where-Object {
             $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-            $process -and
-                $process.StartTime -ge $startedAt -and
-                $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
+            if (-not $process -or $process.StartTime -lt $startedAt) {
+                return $false
+            }
+            if ($ShellKind -eq 'powershell') {
+                return $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
+            }
+            return $_.CommandLine -like '*cmd.exe*/K*chcp 65001*'
         } | Select-Object -First 1
     } while (-not $shell -and (Get-Date) -lt $deadline)
 
     if (-not $shell) {
-        throw "Release GUI did not start its PowerShell PTY session within $ShellTimeoutSeconds seconds."
+        throw "Release GUI did not start its $ShellKind PTY session within $ShellTimeoutSeconds seconds."
     }
 
     $initialTreeIds = @(Get-ProcessTreeIds -RootProcessId $app.Id)
     if ($initialTreeIds -notcontains [uint32]$shell.ProcessId) {
-        throw "The active PowerShell PTY session is not owned by the Wingman process tree."
+        throw "The active $ShellKind PTY session is not owned by the Wingman process tree."
     }
 
     Start-Sleep -Seconds $SettleSeconds
@@ -169,14 +179,15 @@ try {
         $knownTreeIds -contains [uint32]$_.ProcessId
     })
     $names = @($finalTree.Name | Sort-Object -Unique)
-    if ($names -notcontains "msedgewebview2.exe" -or $names -notcontains "powershell.exe") {
-        throw "The measured process tree did not contain both WebView2 and the active PowerShell session."
+    if ($names -notcontains "msedgewebview2.exe" -or $names -notcontains $shellName) {
+        throw "The measured process tree did not contain both WebView2 and the active $ShellKind session."
     }
 
     $cpuArray = [double[]]$cpuSamples.ToArray()
     $privateWorkingSetArray = [double[]]$privateWorkingSetSamples.ToArray()
     $result = [ordered]@{
         Executable = $resolvedExecutable
+        Shell = $ShellKind
         RootProcessId = $app.Id
         ShellProcessId = [int]$shell.ProcessId
         LogicalProcessors = $logicalProcessors

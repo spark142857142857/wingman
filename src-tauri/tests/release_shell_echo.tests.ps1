@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Executable,
+    [ValidateSet('powershell', 'cmd')]
+    [string]$ShellKind = 'powershell',
     [int]$TimeoutSeconds = 30,
     [switch]$PassThru
 )
@@ -20,7 +22,10 @@ $previousProbe = [Environment]::GetEnvironmentVariable($probeVariable, "Process"
 $startedAt = Get-Date
 try {
     [Environment]::SetEnvironmentVariable($probeVariable, "1", "Process")
-    $app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
+    $app = Start-WingmanGuiProcess `
+        -Executable $resolvedExecutable `
+        -WorkingDirectory (Get-Location).Path `
+        -Arguments @('--shell', $ShellKind)
 }
 finally {
     [Environment]::SetEnvironmentVariable($probeVariable, $previousProbe, "Process")
@@ -32,11 +37,16 @@ try {
     do {
         Start-Sleep -Milliseconds 25
         $app.Refresh()
-        $shell = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object {
+        $shellName = if ($ShellKind -eq 'powershell') { 'powershell.exe' } else { 'cmd.exe' }
+        $shell = Get-CimInstance Win32_Process -Filter "Name = '$shellName'" | Where-Object {
             $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-            $process -and
-                $process.StartTime -ge $startedAt -and
-                $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
+            if (-not $process -or $process.StartTime -lt $startedAt) {
+                return $false
+            }
+            if ($ShellKind -eq 'powershell') {
+                return $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
+            }
+            return $_.CommandLine -like '*cmd.exe*/K*chcp 65001*'
         } | Select-Object -First 1
     } while (
         $app.MainWindowTitle -ne "Wingman - Echoed" -and
@@ -51,17 +61,18 @@ try {
         throw "Release GUI did not accept and render the normal-input echo probe within $TimeoutSeconds seconds; title was '$($app.MainWindowTitle)'."
     }
     if (-not $shell) {
-        throw "Release GUI reported the normal-input echo without an active PowerShell PTY session."
+        throw "Release GUI reported the normal-input echo without an active $ShellKind PTY session."
     }
 
     $elapsed = ((Get-Date) - $startedAt).TotalMilliseconds
     if ($PassThru) {
         Write-Output ([pscustomobject]@{
+            Shell = $ShellKind
             ElapsedMilliseconds = [double]$elapsed
         })
     }
     else {
-        Write-Output ("Release GUI accepted and rendered normal PowerShell input in {0:N1} ms." -f $elapsed)
+        Write-Output ("Release GUI accepted and rendered normal $ShellKind input in {0:N1} ms." -f $elapsed)
     }
 }
 finally {

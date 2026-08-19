@@ -4,14 +4,21 @@ function Start-WingmanGuiProcess {
     [string]$Executable,
     [Parameter(Mandatory = $true)]
     [string]$WorkingDirectory,
+    [string[]]$Arguments = @(),
     [int]$TimeoutSeconds = 15
   )
 
   $resolvedExecutable = (Resolve-Path -LiteralPath $Executable).Path
   $startedAt = Get-Date
-  $launcher = Start-Process -FilePath $resolvedExecutable `
-    -WorkingDirectory $WorkingDirectory `
-    -PassThru
+  $startArguments = @{
+    FilePath = $resolvedExecutable
+    WorkingDirectory = $WorkingDirectory
+    PassThru = $true
+  }
+  if ($Arguments.Count -ne 0) {
+    $startArguments.ArgumentList = $Arguments
+  }
+  $launcher = Start-Process @startArguments
   $null = $launcher.Handle
   if (-not $launcher.WaitForExit($TimeoutSeconds * 1000)) {
     Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
