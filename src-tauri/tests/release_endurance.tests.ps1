@@ -185,17 +185,8 @@ try {
     else {
         [double]::PositiveInfinity
     }
-    if ($growthMiB -gt 50) {
-        throw "Endurance private working-set growth $growthMiB MiB exceeded the 50 MiB release ceiling."
-    }
-    if ($growthPercent -gt 20) {
-        throw "Endurance private working-set growth $growthPercent% exceeded the 20% release ceiling."
-    }
-    if ($final.PrivateWorkingSetMiB -gt 350) {
-        throw "Final settled private working set exceeded the 350 MiB release ceiling."
-    }
 
-    [pscustomobject]@{
+    $result = [ordered]@{
         Schema = "wingman.endurance.v1"
         DurationMinutes = $DurationMinutes
         CycleCount = $cycleCount
@@ -209,7 +200,18 @@ try {
         PrivateBytesMiB = [double[]]$privateBytesSamples.ToArray()
         ProcessCounts = [int[]]$processCountSamples.ToArray()
         FinalProcessNames = @($finalProcesses.Name | Sort-Object -Unique)
-    } | ConvertTo-Json -Depth 5
+    }
+    [pscustomobject]$result | ConvertTo-Json -Depth 5
+
+    if ($growthMiB -gt 50) {
+        throw "Endurance private working-set growth $growthMiB MiB exceeded the 50 MiB release ceiling."
+    }
+    if ($growthPercent -gt 20) {
+        throw "Endurance private working-set growth $growthPercent% exceeded the 20% release ceiling."
+    }
+    if ($final.PrivateWorkingSetMiB -gt 350) {
+        throw "Final settled private working set exceeded the 350 MiB release ceiling."
+    }
 }
 finally {
     if ($app) {
