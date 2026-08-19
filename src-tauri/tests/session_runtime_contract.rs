@@ -103,6 +103,49 @@ fn familiar_control_runs_through_the_real_runner_and_reports_its_host_effect() {
 }
 
 #[test]
+fn reliable_clear_runs_through_the_real_broker_and_sidecar() {
+    let output = run_reliable_line("clear\r", None, 611);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"\x1b[2J\x1b[H");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn reliable_which_runs_through_the_real_broker_and_sidecar() {
+    let output = run_reliable_line("which cmd\r", None, 612);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let path = String::from_utf8(output.stdout)
+        .expect("which output is UTF-8")
+        .trim_end_matches("\r\n")
+        .to_string();
+    assert!(path.to_ascii_lowercase().ends_with("cmd.exe"));
+    assert!(Path::new(&path).is_file());
+}
+
+#[test]
+fn reliable_ls_runs_through_the_real_broker_and_sidecar() {
+    let sandbox = std::env::temp_dir().join(format!(
+        "wingman-runtime-ls-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&sandbox).unwrap();
+    fs::write(sandbox.join("alpha.txt"), b"").unwrap();
+    fs::write(sandbox.join("한글.txt"), b"").unwrap();
+    let line = format!("ls -a \"{}\"\r", display_path(&sandbox));
+
+    let output = run_reliable_line(&line, None, 613);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, "alpha.txt\r\n한글.txt\r\n".as_bytes());
+    assert!(output.stderr.is_empty());
+    fs::remove_dir_all(&sandbox).unwrap();
+}
+
+#[test]
 fn failed_pty_write_unregisters_the_prepared_request() {
     struct FlushFailureWriter {
         bytes: Vec<u8>,
@@ -588,4 +631,48 @@ fn reliable_recursive_rm_runs_through_the_real_broker_and_sidecar() {
 
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn run_reliable_line(line: &str, cwd: Option<&Path>, session_id: u64) -> std::process::Output {
+    let mut session = TerminalSessionV1::new(session_id, ActiveShell::WindowsPowerShell);
+    let marker = format!(
+        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
+        session.integration_nonce()
+    );
+    assert_eq!(session.ingest_pty_output(&marker), "");
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-runtime-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start session broker");
+    let mut terminal_wire = Vec::new();
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &broker,
+        &mut terminal_wire,
+        line,
+        true,
+    )
+    .expect("dispatch reliable P0 input");
+    let TerminalExecutionOutcomeV1::Prepared { request_id, .. } = outcome else {
+        panic!("expected a prepared runner dispatch");
+    };
+    assert!(String::from_utf8(terminal_wire)
+        .expect("UTF-8 terminal write")
+        .ends_with(&format!(
+            "Invoke-WingmanPrepared -RequestId '{request_id}'\r"
+        )));
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_wingman-runner"));
+    command
+        .arg(&request_id)
+        .env("WINGMAN_BROKER_PIPE", &pipe_name);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let output = command.output().expect("start packaged runner binary");
+    broker.stop().expect("stop session broker");
+    output
 }
