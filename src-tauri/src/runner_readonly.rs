@@ -360,7 +360,6 @@ fn execute_stream_to<W: Write, E: Write>(
     let stream = stream_inputs_ordered(inputs, plan, source, &mut sink, cancellation)?;
     if stream.cancelled || cancellation.is_cancelled() {
         drop(sink);
-        let _ = writer.flush();
         return Ok(130);
     }
     let finish_result = sink.finish();

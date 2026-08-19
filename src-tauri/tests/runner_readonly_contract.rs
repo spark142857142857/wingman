@@ -182,6 +182,7 @@ fn cancellation_during_streaming_keeps_only_completed_output() {
     let cancellation = RunnerCancellationV1::new();
     let mut stdout = CancellingWriter {
         bytes: Vec::new(),
+        flushes: 0,
         cancellation: cancellation.clone(),
     };
     let mut stderr = Vec::new();
@@ -199,6 +200,7 @@ fn cancellation_during_streaming_keeps_only_completed_output() {
 
     assert_eq!(exit_code, 130);
     assert_eq!(stdout.bytes, b"first\r\n");
+    assert_eq!(stdout.flushes, 0, "cancellation must not flush the sink");
     assert!(stderr.is_empty());
     cleanup(&sandbox);
 }
@@ -1706,6 +1708,7 @@ struct FailingWriter {
 
 struct CancellingWriter {
     bytes: Vec<u8>,
+    flushes: usize,
     cancellation: RunnerCancellationV1,
 }
 
@@ -1717,6 +1720,7 @@ impl Write for CancellingWriter {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.flushes += 1;
         Ok(())
     }
 }
