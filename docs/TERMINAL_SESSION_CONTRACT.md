@@ -90,12 +90,12 @@ state. The readiness worker never acquires application or terminal locks;
 `handle_terminal_input` drains its inbox while holding the active session lock.
 Ordinary PTY OSC/CSI data has no production readiness authority.
 
-**Current cutover status (2026-08-09):** the OOB channel is connected to
+**Current implementation status (2026-08-20):** the OOB channel is connected to
 production PowerShell sessions and has passed repeated ConPTY
 PowerShell → readiness → Rust decision → request broker → real sidecar → next
-readiness tests. PTY readiness parsing is explicitly disabled in production.
-Familiar remains default-paused, but an explicit `familiar on` now activates
-the proved `cat`/`head`/finite `tail -n N`/single-file `tail -f`/`wc -l`/`grep` read-only slice, including pipelines and final output
+readiness tests. Production has no PTY readiness parser. Familiar remains
+default-paused, but an explicit `familiar on` activates the contracted P0
+catalog through the typed Rust runner, including pipelines and final output
 redirection. Familiar off, uncertain editing, and `cmd` remain native. A
 `prompt` PTY hook and a
 `PSConsoleHostReadLine` PTY-writing wrapper were both rejected by earlier

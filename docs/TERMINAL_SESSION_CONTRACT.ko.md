@@ -85,12 +85,12 @@ nonce와 정확한 예상 sequence가 맞을 때만 세션 상태를 바꾼다. 
 terminal lock을 잡지 않고, `handle_terminal_input`이 활성 session lock 안에서
 inbox를 drain한다. 일반 PTY OSC·CSI 데이터에는 production readiness 권한이 없다.
 
-**현재 cutover 상태(2026-08-09):** OOB 채널은 production PowerShell session에
+**현재 구현 상태(2026-08-20):** OOB 채널은 production PowerShell session에
 연결됐고, 반복 ConPTY PowerShell → readiness → Rust 판정 → request broker →
-실제 sidecar → 다음 readiness 수직 테스트를 통과했다. Production에서는 PTY
-readiness parser를 명시적으로 끈다. Familiar 기본값은 `PAUSED`로 유지하지만 명시적
-`familiar on`은 이제 pipeline과 최종 output redirection을 포함한 입증된 `cat`·`head`·유한 `tail -n N`·단일 파일 `tail -f`·`wc -l`·`grep`
-read-only slice를 활성화한다. Familiar OFF, Uncertain editing, `cmd`는 native를 유지한다.
+실제 sidecar → 다음 readiness 수직 테스트를 통과했다. Production에는 PTY
+readiness parser가 없다. Familiar 기본값은 `PAUSED`로 유지하지만 명시적
+`familiar on`은 typed Rust runner를 통해 pipeline과 최종 output redirection을 포함한
+계약된 P0 catalog를 활성화한다. Familiar OFF, Uncertain editing, `cmd`는 native를 유지한다.
 앞선 경계 테스트에서
 폐기한 `prompt` PTY hook과 PTY에 쓰는 `PSConsoleHostReadLine` wrapper는 사용하지
 않는다.
