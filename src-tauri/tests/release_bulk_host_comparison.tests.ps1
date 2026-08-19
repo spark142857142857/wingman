@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'release_process_helpers.ps1')
 if ($RunCount -lt 3) {
     throw "RunCount must be at least 3."
 }
@@ -160,7 +161,7 @@ function Measure-WingmanBulkRender {
     $startedAt = Get-Date
     try {
         [Environment]::SetEnvironmentVariable($probeVariable, "1", "Process")
-        $app = Start-Process -FilePath $resolvedWingman -WorkingDirectory (Get-Location).Path -PassThru
+        $app = Start-WingmanGuiProcess -Executable $resolvedWingman -WorkingDirectory (Get-Location).Path
     }
     finally {
         [Environment]::SetEnvironmentVariable($probeVariable, $previousProbe, "Process")

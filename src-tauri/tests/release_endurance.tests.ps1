@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'release_process_helpers.ps1')
 
 if (-not $Smoke -and $DurationMinutes -ne 30) {
     throw "The release endurance gate has a fixed 30-minute duration."
@@ -144,7 +145,7 @@ $settledSampleIntervalMilliseconds = 250
 try {
     try {
         [Environment]::SetEnvironmentVariable($probeName, "1", "Process")
-        $app = Start-Process -FilePath $resolvedExecutable -WorkingDirectory $sandbox -PassThru
+        $app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory $sandbox
     }
     finally {
         [Environment]::SetEnvironmentVariable($probeName, $previousProbe, "Process")

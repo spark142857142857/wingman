@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'release_process_helpers.ps1')
 
 if ($SampleCount -lt 2) {
     throw "SampleCount must be at least 2."
@@ -104,7 +105,7 @@ if ($existing.Count -ne 0) {
 }
 
 $startedAt = Get-Date
-$app = Start-Process -FilePath $resolvedExecutable -WorkingDirectory (Get-Location).Path -PassThru
+$app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
 $knownTreeIds = @([uint32]$app.Id)
 try {
     $shell = $null

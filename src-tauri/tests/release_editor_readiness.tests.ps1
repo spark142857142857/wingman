@@ -5,6 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'release_process_helpers.ps1')
 $resolvedExecutable = (Resolve-Path -LiteralPath $Executable).Path
 $existing = @(Get-CimInstance Win32_Process -Filter "Name = 'wingman.exe'" | Where-Object {
     $_.ExecutablePath -eq $resolvedExecutable
@@ -14,7 +15,7 @@ if ($existing.Count -ne 0) {
 }
 
 $startedAt = Get-Date
-$app = Start-Process -FilePath $resolvedExecutable -WorkingDirectory (Get-Location).Path -PassThru
+$app = Start-WingmanGuiProcess -Executable $resolvedExecutable -WorkingDirectory (Get-Location).Path
 $shell = $null
 try {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
