@@ -290,6 +290,56 @@ fn powershell_oob_readiness_reaches_the_real_runner_and_next_editor_cycle() {
     );
     assert_eq!(fs::read(&sort_output).unwrap(), b"1\r\n2\r\n10\r\n");
 
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        "$host.EnterNestedPrompt()\r",
+        familiar_enabled,
+    )
+    .expect("enter authenticated nested PowerShell prompt");
+    assert_eq!(outcome, TerminalExecutionOutcomeV1::Native);
+    let tenth = receive_readiness(&readiness, 10);
+    assert_eq!(tenth.shell_depth, 1);
+    assert!(
+        session.apply_editor_readiness(&tenth),
+        "nested readiness frame was not accepted"
+    );
+    assert_eq!(session.powershell_depth(), 1);
+
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        "pwd\r",
+        familiar_enabled,
+    )
+    .expect("execute prepared command in nested PowerShell prompt");
+    assert!(matches!(
+        outcome,
+        TerminalExecutionOutcomeV1::Prepared { .. }
+    ));
+    let eleventh = receive_readiness(&readiness, 11);
+    assert_eq!(eleventh.shell_depth, 1);
+    assert!(session.apply_editor_readiness(&eleventh));
+
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &requests,
+        writer.as_mut(),
+        "exit\r",
+        familiar_enabled,
+    )
+    .expect("leave authenticated nested PowerShell prompt");
+    assert_eq!(outcome, TerminalExecutionOutcomeV1::Native);
+    let twelfth = receive_readiness(&readiness, 12);
+    assert_eq!(twelfth.shell_depth, 0);
+    assert!(session.apply_editor_readiness(&twelfth));
+    assert_eq!(session.powershell_depth(), 0);
+
     let _ = child.kill();
     drop(writer);
     requests.stop().expect("stop request broker");

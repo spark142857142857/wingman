@@ -53,6 +53,8 @@ mod windows {
         PsReadLineReplaceV1,
     }
 
+    pub const MAX_POWERSHELL_NESTED_DEPTH: u32 = 16;
+
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct EditorReadinessFrameV1 {
         pub nonce: String,
@@ -113,6 +115,12 @@ mod windows {
                 "invalid editor readiness shell depth",
             )
         })?;
+        if shell_depth > MAX_POWERSHELL_NESTED_DEPTH {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "editor readiness shell depth exceeds the supported limit",
+            ));
+        }
         let location_kind = match fields[5] {
             "filesystem" => EditorLocationKindV1::FileSystem,
             "non-filesystem" => EditorLocationKindV1::NonFileSystem,
@@ -912,5 +920,5 @@ mod windows {
 pub use windows::{
     fetch_prepared_request, parse_editor_readiness_frame, EditorAdapterCapabilityV1,
     EditorLocationKindV1, EditorReadinessBrokerV1, EditorReadinessFrameV1, OneShotBrokerV1,
-    SessionBrokerV1,
+    SessionBrokerV1, MAX_POWERSHELL_NESTED_DEPTH,
 };

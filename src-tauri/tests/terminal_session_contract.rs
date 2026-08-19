@@ -357,12 +357,84 @@ fn split_crlf_after_native_fallback_advances_only_one_readiness_cycle() {
     assert!(session.apply_editor_readiness(&readiness(&nonce, 2)));
 }
 
+#[test]
+fn authenticated_nested_powershell_depth_pushes_and_pops_one_level() {
+    let mut session = TerminalSessionV1::new(517, ActiveShell::WindowsPowerShell);
+    let nonce = session.integration_nonce().to_string();
+    assert!(session.apply_editor_readiness(&readiness_at_depth(&nonce, 1, 0)));
+    assert_eq!(session.powershell_depth(), 0);
+
+    let native_enter = session.handle_terminal_input("$host.EnterNestedPrompt()\r", true);
+    assert!(matches!(
+        native_enter.last(),
+        Some(TerminalInputActionV1::Prepared {
+            decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                decision: FrontendDecisionKindV1::PassThrough { raw_line },
+                ..
+            },
+            ..
+        }) if raw_line == "$host.EnterNestedPrompt()"
+    ));
+    assert!(session.apply_editor_readiness(&readiness_at_depth(&nonce, 2, 1)));
+    assert_eq!(session.powershell_depth(), 1);
+    assert!(matches!(
+        session.handle_terminal_input("pwd\r", true).last(),
+        Some(TerminalInputActionV1::Prepared {
+            decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                decision: FrontendDecisionKindV1::InvokePrepared { .. },
+                ..
+            },
+            ..
+        })
+    ));
+
+    assert!(session.apply_editor_readiness(&readiness_at_depth(&nonce, 3, 1)));
+    let native_exit = session.handle_terminal_input("exit\r", true);
+    assert!(matches!(
+        native_exit.last(),
+        Some(TerminalInputActionV1::Prepared {
+            decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                decision: FrontendDecisionKindV1::PassThrough { raw_line },
+                ..
+            },
+            ..
+        }) if raw_line == "exit"
+    ));
+    assert!(session.apply_editor_readiness(&readiness_at_depth(&nonce, 4, 0)));
+    assert_eq!(session.powershell_depth(), 0);
+}
+
+#[test]
+fn nested_powershell_depth_cannot_jump_or_start_above_root() {
+    let mut new_session = TerminalSessionV1::new(518, ActiveShell::WindowsPowerShell);
+    let new_nonce = new_session.integration_nonce().to_string();
+    assert!(!new_session.apply_editor_readiness(&readiness_at_depth(&new_nonce, 1, 1)));
+    assert!(!new_session.editor_ready());
+
+    let mut session = TerminalSessionV1::new(519, ActiveShell::WindowsPowerShell);
+    let nonce = session.integration_nonce().to_string();
+    assert!(session.apply_editor_readiness(&readiness_at_depth(&nonce, 1, 0)));
+    assert_eq!(
+        session
+            .handle_terminal_input("$host.EnterNestedPrompt()\r", true)
+            .len(),
+        2
+    );
+    assert!(!session.apply_editor_readiness(&readiness_at_depth(&nonce, 2, 2)));
+    assert!(!session.editor_ready());
+    assert_eq!(session.powershell_depth(), 0);
+}
+
 fn readiness(nonce: &str, sequence: u64) -> EditorReadinessFrameV1 {
+    readiness_at_depth(nonce, sequence, 0)
+}
+
+fn readiness_at_depth(nonce: &str, sequence: u64, shell_depth: u32) -> EditorReadinessFrameV1 {
     EditorReadinessFrameV1 {
         nonce: nonce.to_string(),
         sequence,
         shell: ActiveShell::WindowsPowerShell,
-        shell_depth: 0,
+        shell_depth,
         location_kind: EditorLocationKindV1::FileSystem,
         adapter_capability: EditorAdapterCapabilityV1::PsReadLineReplaceV1,
     }

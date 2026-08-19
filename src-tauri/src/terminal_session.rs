@@ -4,7 +4,7 @@ use crate::interpreter::{
 };
 use crate::transport::{
     parse_editor_readiness_frame, EditorAdapterCapabilityV1, EditorLocationKindV1,
-    EditorReadinessFrameV1,
+    EditorReadinessFrameV1, MAX_POWERSHELL_NESTED_DEPTH,
 };
 use uuid::Uuid;
 
@@ -43,6 +43,7 @@ pub struct TerminalSessionV1 {
     expected_shell: ActiveShell,
     integration_nonce: String,
     expected_sequence: u64,
+    powershell_depth: u32,
     editing_reliable: bool,
     verified_prompt_observed: bool,
     readiness_cycle_dirty: bool,
@@ -64,6 +65,7 @@ impl TerminalSessionV1 {
             expected_shell,
             integration_nonce: Uuid::new_v4().as_simple().to_string(),
             expected_sequence: 1,
+            powershell_depth: 0,
             editing_reliable: false,
             verified_prompt_observed: false,
             readiness_cycle_dirty: false,
@@ -94,6 +96,10 @@ impl TerminalSessionV1 {
 
     pub fn verified_prompt_observed(&self) -> bool {
         self.verified_prompt_observed
+    }
+
+    pub fn powershell_depth(&self) -> u32 {
+        self.powershell_depth
     }
 
     pub fn ingest_pty_output(&mut self, chunk: &str) -> String {
@@ -326,7 +332,10 @@ impl TerminalSessionV1 {
             || frame.nonce != self.integration_nonce
             || frame.sequence != self.expected_sequence
             || frame.shell != self.expected_shell
-            || frame.shell_depth != 0
+            || frame.shell_depth > MAX_POWERSHELL_NESTED_DEPTH
+            || (!self.verified_prompt_observed && frame.shell_depth != 0)
+            || (self.verified_prompt_observed
+                && self.powershell_depth.abs_diff(frame.shell_depth) > 1)
             || frame.location_kind != EditorLocationKindV1::FileSystem
             || frame.adapter_capability != EditorAdapterCapabilityV1::PsReadLineReplaceV1
             || !self.input_escape.is_empty()
@@ -347,6 +356,7 @@ impl TerminalSessionV1 {
         }
         self.editing_reliable = true;
         self.verified_prompt_observed = true;
+        self.powershell_depth = frame.shell_depth;
         self.readiness_cycle_dirty = false;
         self.input_buffer.clear();
         self.input_buffer_bytes = 0;

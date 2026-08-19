@@ -34,6 +34,7 @@ fn parser_accepts_only_the_bounded_versioned_readiness_shape() {
         "1;abcdef0123456789abcdef0123456789;0;powershell;0;filesystem;psreadline-replace-v1",
         "1;abcdef0123456789abcdef0123456789;1;bash;0;filesystem;psreadline-replace-v1",
         "1;abcdef0123456789abcdef0123456789;1;powershell;0;filesystem;unknown",
+        "1;abcdef0123456789abcdef0123456789;1;powershell;17;filesystem;psreadline-replace-v1",
         "1;abcdef0123456789abcdef0123456789;1;powershell;0;filesystem;psreadline-replace-v1\r",
     ] {
         assert!(
