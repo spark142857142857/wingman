@@ -134,15 +134,6 @@ function updateStatus(cwd?: string) {
   if (cwd) cwdEl.textContent = cwd;
 }
 
-async function refreshCwd() {
-  try {
-    const cwd = await invoke<string>("get_cwd");
-    updateStatus(cwd);
-  } catch {
-    // ignore transient startup races
-  }
-}
-
 async function startSession(shell: ShellKind) {
   const sessionId = ++activeSessionId;
   performanceProbe = null;
@@ -190,10 +181,6 @@ await listen<{ session_id: number; sequence: number; data: string }>("pty-output
   acknowledge();
 });
 
-await listen<string>("cwd-changed", (event) => {
-  updateStatus(event.payload);
-});
-
 async function processTerminalData(data: string, clientSessionId: number) {
   const result = await invoke<{ accepted: boolean; familiarEnabled: boolean }>(
     "handle_terminal_input",
@@ -204,7 +191,6 @@ async function processTerminalData(data: string, clientSessionId: number) {
     compat = result.familiarEnabled;
     updateStatus();
   }
-  if (/[\r\n]/.test(data)) void refreshCwd();
 }
 
 function enqueueInputTask(task: () => Promise<void>) {

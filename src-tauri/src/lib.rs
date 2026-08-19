@@ -178,7 +178,6 @@ struct PtySession {
     master: Box<dyn MasterPty + Send>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     shell: ActiveShell,
-    cwd: String,
     compat_enabled: bool,
     terminal: TerminalSessionV1,
     readiness: EditorReadinessBrokerV1,
@@ -403,25 +402,6 @@ fn resolve_shell(shell: ActiveShell) -> (String, Vec<String>) {
   }
 }
 
-fn detect_cwd(shell: ActiveShell) -> String {
-    let output = if shell == ActiveShell::Cmd {
-        std::process::Command::new("cmd.exe")
-            .args(["/C", "cd"])
-            .output()
-    } else {
-        std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-Command", "(Get-Location).Path"])
-            .output()
-    };
-
-    match output {
-        Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        Err(_) => std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "C:\\".into()),
-    }
-}
-
 fn monitor_session_exit<F>(
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     session_id: u64,
@@ -484,16 +464,6 @@ fn deliver_pty_output(
         )
         .is_ok()
     })
-}
-
-#[tauri::command]
-fn get_cwd() -> Result<String, String> {
-    let guard = APP_STATE.session.lock();
-    if let Some(session) = guard.as_ref() {
-        Ok(session.cwd.clone())
-    } else {
-        Ok(detect_cwd(ActiveShell::WindowsPowerShell))
-    }
 }
 
 #[tauri::command]
@@ -636,7 +606,6 @@ fn start_shell_inner(
             master: pair.master,
             child: child.clone(),
             shell: active_shell,
-            cwd: cwd.clone(),
             compat_enabled: false,
             terminal,
             readiness,
@@ -730,7 +699,6 @@ fn start_shell_inner(
         }
     });
 
-    let _ = app.emit("cwd-changed", cwd.clone());
     Ok(SessionInfo {
         shell: shell_name,
         cwd,
@@ -1176,7 +1144,6 @@ pub(crate) fn run_gui(
     }
     let result = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            get_cwd,
             get_initial_shell,
             start_shell,
             poll_shell_readiness,
@@ -1279,7 +1246,6 @@ mod tests {
             master: pair.master,
             child: child.clone(),
             shell: ActiveShell::Cmd,
-            cwd: "C:\\".into(),
             compat_enabled: true,
             terminal: TerminalSessionV1::new(session_id, ActiveShell::Cmd),
             readiness: EditorReadinessBrokerV1::start(
