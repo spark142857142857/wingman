@@ -150,7 +150,7 @@ try {
         $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
         $process -and
             $process.StartTime -ge $startedAt -and
-            $_.CommandLine -like '*-NoLogo*-NoExit*-ExecutionPolicy*Bypass*-Command*WINGMAN_INTEGRATION_SCRIPT*'
+            $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
     } | Select-Object -First 1
     if (-not $shell) {
         throw "Retention baseline started without an active PowerShell PTY session."

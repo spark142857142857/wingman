@@ -182,7 +182,7 @@ function Measure-WingmanBulkRender {
         $treeIds = @(Get-ProcessTreeIds -RootProcessId $app.Id)
         $shell = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object {
             $treeIds -contains [uint32]$_.ProcessId -and
-                $_.CommandLine -like '*-NoLogo*-NoExit*-ExecutionPolicy*Bypass*-Command*WINGMAN_INTEGRATION_SCRIPT*'
+                $_.CommandLine -like '*-NoLogo*-NoExit*-Command*WingmanReadinessPipe*'
         } | Select-Object -First 1
         if (-not $shell) {
             throw "Wingman reported bulk rendering without an active integrated PowerShell session."

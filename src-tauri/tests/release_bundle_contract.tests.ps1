@@ -48,18 +48,15 @@ $runnerInstall = @($scriptLines | Where-Object {
 $runnerDelete = @($scriptLines | Where-Object {
   $_ -eq '    Delete "$INSTDIR\wingman-runner.exe"'
 })
-$transportInstall = @($scriptLines | Where-Object {
-  $_ -match '^\s*File /a "/oname=powershell_runner_transport\.ps1" '
-})
-$transportDelete = @($scriptLines | Where-Object {
-  $_ -eq '    Delete "$INSTDIR\powershell_runner_transport.ps1"'
+$transportReferences = @($scriptLines | Where-Object {
+  $_ -match 'powershell_runner_transport\.ps1'
 })
 
 if ($runnerInstall.Count -ne 1 -or $runnerDelete.Count -ne 1) {
   throw 'NSIS must install and uninstall exactly one wingman-runner.exe'
 }
-if ($transportInstall.Count -ne 1 -or $transportDelete.Count -ne 1) {
-  throw 'NSIS must install and uninstall the PowerShell transport at the runtime resource root'
+if ($transportReferences.Count -ne 0) {
+  throw 'NSIS must not expose the compiled PowerShell transport as a writable installed script'
 }
 
 $releaseRunner = Join-Path $releaseRoot 'wingman-runner.exe'
@@ -73,9 +70,8 @@ $tauriConfig = Get-Content -Raw -LiteralPath (Join-Path $tauriRoot 'tauri.conf.j
 if ($tauriConfig.bundle.externalBin -contains 'binaries/wingman-runner') {
   throw 'Runner is a Cargo bin and must not also be declared as externalBin'
 }
-if ($tauriConfig.bundle.resources.'src/powershell_runner_transport.ps1' -ne
-    'powershell_runner_transport.ps1') {
-  throw 'PowerShell transport resource mapping does not match the runtime lookup path'
+if ($tauriConfig.bundle.resources) {
+  throw 'PowerShell transport must remain compiled into wingman.exe'
 }
 
 Write-Output "Release bundle contract passed: $($installer.FullName)"
