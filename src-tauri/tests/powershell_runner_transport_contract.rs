@@ -140,6 +140,65 @@ fn powershell_prompt_nonce_is_not_inherited_by_child_processes() {
 }
 
 #[test]
+fn performance_history_is_isolated_without_leaking_the_control_flag() {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("powershell_runner_transport.ps1");
+    let quoted_script = script.display().to_string().replace('\'', "''");
+    let command = format!(
+        "& {{ . '{quoted_script}'; [Console]::Out.Write(\"$((Get-PSReadLineOption).HistorySaveStyle)|$env:WINGMAN_PERF_ISOLATED_HISTORY\") }}"
+    );
+
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &command,
+        ])
+        .env("WINGMAN_SESSION_NONCE", "abcdef0123456789abcdef0123456789")
+        .env("WINGMAN_READINESS_PIPE", "wingman-history-test")
+        .env("WINGMAN_PERF_ISOLATED_HISTORY", "1")
+        .output()
+        .expect("inspect isolated PSReadLine history mode");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, b"SaveNothing|");
+}
+
+#[test]
+fn ordinary_transport_preserves_the_default_psreadline_history_style() {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("powershell_runner_transport.ps1");
+    let quoted_script = script.display().to_string().replace('\'', "''");
+    let command = format!(
+        "& {{ . '{quoted_script}'; [Console]::Out.Write((Get-PSReadLineOption).HistorySaveStyle) }}"
+    );
+
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &command,
+        ])
+        .env("WINGMAN_SESSION_NONCE", "abcdef0123456789abcdef0123456789")
+        .env("WINGMAN_READINESS_PIPE", "wingman-history-test")
+        .output()
+        .expect("inspect ordinary PSReadLine history mode");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, b"SaveIncrementally");
+}
+
+#[test]
 fn powershell_registers_a_dedicated_psreadline_replacement_chord() {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")

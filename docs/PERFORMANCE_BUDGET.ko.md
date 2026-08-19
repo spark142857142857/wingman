@@ -90,6 +90,14 @@ Launch 시간은 공개 launcher process부터 시작하며 [CLI 실행 계약](
 readiness를 acknowledge하고 종료한 뒤에만 settled 측정을 시작한다. 남은 GUI-role
 process도 이름은 `wingman.exe`이며 아래 runtime tree를 소유한다.
 
+환경 플래그로만 켜지는 GUI 성능 probe는 probe 셸 안에서 저장된 PSReadLine history를
+격리한다. 제어 플래그는 foreground child가 상속하기 전에 제거하며, 일반 Wingman 실행은
+사용자의 `HistorySaveStyle`이나 history 경로를 바꾸지 않는다. 따라서 표준 warm gate는
+무제한으로 커질 수 있는 기존 history 파일이나 다른 PowerShell 세션의 history 파일 lock에
+좌우되지 않으면서 실제 사용자 history 동작은 보존한다. 수동 `SM-07` gate는 production
+history recall을 계속 검증한다. 별도의 profile/history stress 측정은 셸 소유 startup 비용을
+진단할 수 있지만 표준 launch gate를 대체하거나 완화할 수는 없다.
+
 공유 working set을 더하면 공유 runtime page를 중복 계산할 수 있으므로 private
 working set을 주 메모리 지표로 사용한다. 진단을 위해 total working set, private
 bytes, process 수, JavaScript heap, Rust allocation도 함께 기록한다. 공유 설치된

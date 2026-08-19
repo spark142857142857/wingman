@@ -1,13 +1,19 @@
 $script:WingmanReadinessNonce = $env:WINGMAN_SESSION_NONCE
 $script:WingmanReadinessPipe = $env:WINGMAN_READINESS_PIPE
+$script:WingmanIsolatedPerformanceHistory =
+  $env:WINGMAN_PERF_ISOLATED_HISTORY -ceq '1'
 Remove-Item Env:WINGMAN_SESSION_NONCE -ErrorAction SilentlyContinue
 Remove-Item Env:WINGMAN_READINESS_PIPE -ErrorAction SilentlyContinue
+Remove-Item Env:WINGMAN_PERF_ISOLATED_HISTORY -ErrorAction SilentlyContinue
 
 if (
   $script:WingmanReadinessNonce -cmatch '\A[0-9A-Fa-f]{32}\z' -and
   $script:WingmanReadinessPipe -cmatch '\A[A-Za-z0-9._-]{1,128}\z'
 ) {
   Import-Module PSReadLine -ErrorAction Stop
+  if ($script:WingmanIsolatedPerformanceHistory) {
+    Set-PSReadLineOption -HistorySaveStyle SaveNothing
+  }
   Set-PSReadLineKeyHandler `
     -Chord 'Ctrl+x,Ctrl+w' `
     -BriefDescription 'WingmanReplaceLineV1' `

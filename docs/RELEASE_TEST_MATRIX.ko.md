@@ -118,6 +118,9 @@ Cargo 명령이 기본 target을 건드렸다면 앱 검사 전에 `npm run taur
 Shell parameter가 있는 script는 `powershell`과 `cmd`로 각각 한 번 실행한다. `cmd`
 script는 test 전용 native workload로 terminal transport와 rendering을 검사할 뿐 Familiar
 interception을 켜지 않는다.
+환경 플래그로 켜지는 모든 GUI probe는 격리된 비영구 PSReadLine history mode를 사용한다.
+내장 adapter는 그 내부 플래그를 즉시 제거한다. 일반 실행은 사용자가 설정한 history 동작을
+그대로 유지하며, 이는 별도의 `SM-07`에서 검증한다.
 격리한 runner component 게이트 뒤 Tauri artifact를 build하고 이 matrix 전에는 기본
 target release Cargo 명령을 다시 실행하지 않는다.
 

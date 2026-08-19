@@ -96,6 +96,16 @@ The launcher is included while alive; settled measurements begin only after it
 has acknowledged readiness and exited. The surviving GUI-role process remains
 `wingman.exe` and owns the listed runtime tree.
 
+Environment-gated GUI performance probes isolate persisted PSReadLine history
+inside the probe shell. The control flag is removed before foreground children
+can inherit it, and ordinary Wingman launches never override the user's
+`HistorySaveStyle` or history path. This keeps the standardized warm gate from
+depending on an unbounded pre-existing history file or another PowerShell
+session's history-file lock while preserving normal history behavior for users.
+The manual `SM-07` gate still verifies production history recall. A separate
+profile/history stress measurement may diagnose shell-owned startup cost, but
+it cannot replace or relax the standardized launch gate.
+
 Private working set is the primary memory figure because summing shared working
 sets can double-count shared runtime pages. Total working set, private bytes,
 process count, JavaScript heap, and Rust allocations are also recorded for

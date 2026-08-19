@@ -125,6 +125,10 @@ default target, rerun `npm run tauri build` before testing the application.
 Run every shell-parameterized script once with `powershell` and once with
 `cmd`. The `cmd` scripts exercise terminal transport and rendering with a
 test-only native workload; they do not activate Familiar interception.
+All environment-gated GUI probes use an isolated, non-persistent PSReadLine
+history mode. The embedded adapter removes that internal flag immediately;
+normal launches retain the user's configured history behavior, which is
+covered separately by `SM-07`.
 Build the Tauri artifact after the isolated runner component gate and do not
 run another default-target release Cargo command before this matrix.
 

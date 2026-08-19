@@ -26,6 +26,7 @@ const PERFORMANCE_BULK_LATENCY_PROBE_ENV: &str = "WINGMAN_PERF_BULK_LATENCY_PROB
 const PERFORMANCE_BULK_RETENTION_PROBE_ENV: &str = "WINGMAN_PERF_BULK_RETENTION_PROBE";
 const PERFORMANCE_SCROLLBACK_PROBE_ENV: &str = "WINGMAN_PERF_SCROLLBACK_PROBE";
 const PERFORMANCE_ENDURANCE_PROBE_ENV: &str = "WINGMAN_PERF_ENDURANCE_PROBE";
+const PERFORMANCE_ISOLATED_HISTORY_ENV: &str = "WINGMAN_PERF_ISOLATED_HISTORY";
 const PERFORMANCE_SCROLLBACK_ROWS: u32 = 4_000;
 const MAX_CLIENT_SESSION_ID: u64 = (1_u64 << 53) - 1;
 const MAX_TERMINAL_INPUT_BYTES: usize = 64 * 1024;
@@ -259,13 +260,18 @@ fn any_performance_probe_enabled() -> bool {
         || APP_STATE.performance_endurance_probe
 }
 
-fn remove_performance_probe_environment(cmd: &mut CommandBuilder) {
+fn configure_performance_probe_environment(cmd: &mut CommandBuilder, isolate_history: bool) {
     cmd.env_remove(PERFORMANCE_INPUT_ECHO_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_BULK_OUTPUT_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_BULK_LATENCY_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_BULK_RETENTION_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_SCROLLBACK_PROBE_ENV);
     cmd.env_remove(PERFORMANCE_ENDURANCE_PROBE_ENV);
+    if isolate_history {
+        cmd.env(PERFORMANCE_ISOLATED_HISTORY_ENV, "1");
+    } else {
+        cmd.env_remove(PERFORMANCE_ISOLATED_HISTORY_ENV);
+    }
 }
 
 fn terminal_pty_size(cols: u16, rows: u16) -> PtySize {
@@ -564,7 +570,10 @@ fn start_shell_inner(
         runtime_files.runner_path().as_os_str(),
     );
     cmd.env("WINGMAN_BROKER_PIPE", &broker_pipe_name);
-    remove_performance_probe_environment(&mut cmd);
+    configure_performance_probe_environment(
+        &mut cmd,
+        active_shell == ActiveShell::WindowsPowerShell && any_performance_probe_enabled(),
+    );
     for arg in args {
         cmd.arg(arg);
     }
@@ -1194,7 +1203,7 @@ mod tests {
     }
 
     #[test]
-    fn performance_input_probe_is_removed_from_shell_environment() {
+    fn performance_probe_controls_are_scoped_to_the_shell_adapter() {
         let mut command = CommandBuilder::new("cmd.exe");
         command.env(PERFORMANCE_INPUT_ECHO_PROBE_ENV, "1");
         command.env(PERFORMANCE_BULK_OUTPUT_PROBE_ENV, "1");
@@ -1202,13 +1211,25 @@ mod tests {
         command.env(PERFORMANCE_BULK_RETENTION_PROBE_ENV, "1");
         command.env(PERFORMANCE_SCROLLBACK_PROBE_ENV, "1");
         command.env(PERFORMANCE_ENDURANCE_PROBE_ENV, "1");
-        remove_performance_probe_environment(&mut command);
+        configure_performance_probe_environment(&mut command, true);
         assert_eq!(command.get_env(PERFORMANCE_INPUT_ECHO_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_OUTPUT_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_LATENCY_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_BULK_RETENTION_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_SCROLLBACK_PROBE_ENV), None);
         assert_eq!(command.get_env(PERFORMANCE_ENDURANCE_PROBE_ENV), None);
+        assert_eq!(
+            command.get_env(PERFORMANCE_ISOLATED_HISTORY_ENV),
+            Some(std::ffi::OsStr::new("1"))
+        );
+    }
+
+    #[test]
+    fn ordinary_shell_removes_an_inherited_history_isolation_flag() {
+        let mut command = CommandBuilder::new("cmd.exe");
+        command.env(PERFORMANCE_ISOLATED_HISTORY_ENV, "1");
+        configure_performance_probe_environment(&mut command, false);
+        assert_eq!(command.get_env(PERFORMANCE_ISOLATED_HISTORY_ENV), None);
     }
 
     #[test]
