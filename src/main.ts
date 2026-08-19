@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { classifyTerminalPaste } from "./terminal-paste";
 import { blockedTerminalLinkHandler } from "./terminal-security";
 import { isPasteShortcut } from "./terminal-shortcuts";
+import type { EnduranceProbe } from "./performance-endurance";
 import type { PerformanceProbe } from "./performance-probes";
 import { TERMINAL_SCROLLBACK_ROWS } from "./terminal-config";
 
@@ -67,14 +68,8 @@ let inputQueue = Promise.resolve();
 let activeSessionId = 0;
 
 const shellReadinessTimeoutMs = 30_000;
-const enduranceDurationMs = 30 * 60_000;
-const enduranceSettleMs = 10_000;
-const enduranceOutputCommand =
-  "1..250 | ForEach-Object { [Console]::Out.WriteLine(('wingman-endurance-{0:D4}' -f $_)) }\r";
-const enduranceFollowReadyMarker = "__WINGMAN_ENDURANCE_FOLLOW_READY__";
 let performanceProbe: PerformanceProbe | null = null;
-let enduranceStarted = false;
-let enduranceOutputTail = "";
+let enduranceProbe: EnduranceProbe | null = null;
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
@@ -105,11 +100,19 @@ async function observeEditorReadiness(
       if (
         endurance.accepted &&
         endurance.enabled &&
-        !enduranceStarted &&
+        enduranceProbe === null &&
         clientSessionId === activeSessionId
       ) {
-        enduranceStarted = true;
-        void runEnduranceProbe(clientSessionId);
+        const { EnduranceProbe } = await import("./performance-endurance");
+        if (clientSessionId !== activeSessionId) return;
+        enduranceProbe = new EnduranceProbe({
+          terminal: term,
+          activeSessionId: () => activeSessionId,
+          familiarEnabled: () => compat,
+          processInput: processTerminalData,
+          restartPowerShell: () => startSession("powershell"),
+        });
+        void enduranceProbe.run(clientSessionId);
         return;
       }
       const probe = await createPerformanceProbe(clientSessionId);
@@ -179,9 +182,7 @@ await listen<{ session_id: number; sequence: number; data: string }>("pty-output
     });
   };
   if (event.payload.session_id === activeSessionId) {
-    if (enduranceStarted) {
-      enduranceOutputTail = (enduranceOutputTail + event.payload.data).slice(-8192);
-    }
+    enduranceProbe?.write(event.payload.data);
     if (performanceProbe?.write(activeSessionId, event.payload.data, acknowledge)) return;
     term.write(event.payload.data, acknowledge);
     return;
@@ -204,118 +205,6 @@ async function processTerminalData(data: string, clientSessionId: number) {
     updateStatus();
   }
   if (/[\r\n]/.test(data)) void refreshCwd();
-}
-
-async function waitForEditorReady(clientSessionId: number, stage: string) {
-  const deadline = performance.now() + shellReadinessTimeoutMs;
-  while (clientSessionId === activeSessionId && performance.now() < deadline) {
-    const state = await invoke<{ accepted: boolean; editorReady: boolean }>(
-      "poll_shell_readiness",
-      { clientSessionId },
-    );
-    if (!state.accepted) {
-      throw new Error(`endurance session became stale after ${stage}`);
-    }
-    if (state.editorReady) return;
-    await delay(25);
-  }
-  throw new Error(`endurance editor readiness timed out after ${stage}`);
-}
-
-async function markEndurance(
-  clientSessionId: number,
-  phase: "baseline" | "cycle" | "complete" | "failed",
-  cycle: number,
-) {
-  const accepted = await invoke<boolean>("mark_performance_endurance", {
-    clientSessionId,
-    phase,
-    cycle,
-  });
-  if (!accepted) throw new Error(`endurance marker ${phase} was rejected`);
-}
-
-async function sendEnduranceInput(clientSessionId: number, data: string) {
-  await processTerminalData(data, clientSessionId);
-  if (clientSessionId !== activeSessionId) {
-    throw new Error("endurance input crossed a session generation");
-  }
-}
-
-async function waitForEnduranceOutput(
-  clientSessionId: number,
-  marker: string,
-  stage: string,
-) {
-  const deadline = performance.now() + shellReadinessTimeoutMs;
-  while (clientSessionId === activeSessionId && performance.now() < deadline) {
-    if (enduranceOutputTail.includes(marker)) return;
-    await delay(25);
-  }
-  throw new Error(`endurance output timed out during ${stage}`);
-}
-
-async function runEnduranceProbe(initialSessionId: number) {
-  let cycle = 0;
-  try {
-    await delay(enduranceSettleMs);
-    if (initialSessionId !== activeSessionId) {
-      throw new Error("initial endurance session changed during settle");
-    }
-    await markEndurance(initialSessionId, "baseline", 0);
-    await delay(5_000);
-    const startedAt = performance.now();
-
-    while (performance.now() - startedAt < enduranceDurationMs) {
-      let clientSessionId = activeSessionId;
-      if (!compat) {
-        await sendEnduranceInput(clientSessionId, "familiar on\r");
-        await waitForEditorReady(clientSessionId, "familiar on");
-      }
-
-      await sendEnduranceInput(clientSessionId, enduranceOutputCommand);
-      await waitForEditorReady(clientSessionId, "bounded output");
-      await sendEnduranceInput(clientSessionId, "clear\r");
-      await waitForEditorReady(clientSessionId, "clear");
-
-      enduranceOutputTail = "";
-      await sendEnduranceInput(clientSessionId, "tail -f wingman-endurance.txt\r");
-      await waitForEnduranceOutput(
-        clientSessionId,
-        enduranceFollowReadyMarker,
-        "tail startup",
-      );
-      await sendEnduranceInput(clientSessionId, "\u0003");
-      await waitForEditorReady(clientSessionId, "tail cancellation");
-
-      const columns = cycle % 2 === 0 ? 100 : 112;
-      const rows = cycle % 2 === 0 ? 28 : 36;
-      term.resize(columns, rows);
-      await invoke("resize_shell", {
-        clientSessionId,
-        cols: columns,
-        rows,
-      });
-
-      await startSession("powershell");
-      clientSessionId = activeSessionId;
-      await waitForEditorReady(clientSessionId, "session restart");
-      cycle += 1;
-      await markEndurance(clientSessionId, "cycle", cycle);
-      await delay(1_000);
-    }
-
-    await delay(enduranceSettleMs);
-    await waitForEditorReady(activeSessionId, "final settle");
-    await markEndurance(activeSessionId, "complete", cycle);
-  } catch (error) {
-    console.error("Endurance probe failed", error);
-    try {
-      await markEndurance(activeSessionId, "failed", cycle);
-    } catch (markError) {
-      console.error("Endurance failure marker failed", markError);
-    }
-  }
 }
 
 function enqueueInputTask(task: () => Promise<void>) {
