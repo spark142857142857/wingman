@@ -15,6 +15,7 @@
     "test:release-security": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_security_contract.tests.ps1",
     "test:cli-launch": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/cli_launch_e2e.tests.ps1",
     "test:installer": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/installer_smoke.tests.ps1",
+    "test:app-data": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_local_app_data.tests.ps1 -Executable src-tauri/target/release/wingman.exe",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "preview": "vite preview",
     "tauri": "tauri"
