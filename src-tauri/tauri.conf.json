@@ -27,7 +27,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "nsis/wingman-path.nsh"
+      }
+    },
     "icon": [
       "icons/icon.png",
       "icons/icon.ico"
