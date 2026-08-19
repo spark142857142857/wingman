@@ -129,12 +129,20 @@ pub fn execute_terminal_input<W: Write + ?Sized>(
     data: &str,
     familiar_enabled: bool,
 ) -> io::Result<TerminalExecutionOutcomeV1> {
+    let cancellation_error = data
+        .contains('\u{3}')
+        .then(|| broker.cancel_current_requests())
+        .transpose()
+        .err();
     let dispatch = match dispatch_terminal_input(session, shell, broker, data, familiar_enabled) {
         Ok(dispatch) => dispatch,
         Err(_) => {
             session.suspend_after_transport_failure();
             writer.write_all(data.as_bytes())?;
             writer.flush()?;
+            if let Some(error) = cancellation_error {
+                return Err(error);
+            }
             return Ok(TerminalExecutionOutcomeV1::NativeFallback);
         }
     };
@@ -162,6 +170,10 @@ pub fn execute_terminal_input<W: Write + ?Sized>(
         if let Some(request_id) = registered_request_id {
             let _ = broker.unregister(&request_id);
         }
+        return Err(error);
+    }
+    if let Some(error) = cancellation_error {
+        session.suspend_after_transport_failure();
         return Err(error);
     }
     Ok(outcome)

@@ -1,12 +1,14 @@
 use std::io::{self, Write};
 use uuid::Uuid;
-use wingman_lib::interpreter::{ActiveShell, FamiliarControlEffectV1};
+use wingman_lib::interpreter::{
+    ActiveShell, FamiliarControlEffectV1, PreparedRequestKindV1, PreparedRequestV1,
+};
 use wingman_lib::session_runtime::{
     apply_familiar_effect, execute_terminal_input, write_session_input, SessionWriteOutcomeV1,
     TerminalExecutionOutcomeV1,
 };
 use wingman_lib::terminal_session::TerminalSessionV1;
-use wingman_lib::transport::SessionBrokerV1;
+use wingman_lib::transport::{fetch_prepared_request_channel, SessionBrokerV1};
 
 #[test]
 fn stale_session_input_writes_zero_bytes() {
@@ -49,6 +51,46 @@ fn native_submission_is_forwarded_exactly_once_by_the_atomic_input_path() {
 
     assert_eq!(outcome, TerminalExecutionOutcomeV1::Native);
     assert_eq!(writer, b"whoami\r");
+    broker.stop().expect("stop broker");
+}
+
+#[test]
+fn ctrl_c_is_forwarded_once_and_cancels_a_request_waiting_for_its_runner() {
+    let pipe_name = unique_pipe_name();
+    let request_id = Uuid::new_v4().as_simple().to_string();
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start broker");
+    broker
+        .register(
+            request_id.clone(),
+            PreparedRequestV1 {
+                protocol: "wingman.run".to_string(),
+                version: 1,
+                kind: PreparedRequestKindV1::Reject {
+                    diagnostic: "cancel me".to_string(),
+                    exit_code: 2,
+                },
+            },
+        )
+        .expect("register pending request");
+    let mut session = TerminalSessionV1::new(42, ActiveShell::WindowsPowerShell);
+    let mut writer = Vec::new();
+
+    let outcome = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &broker,
+        &mut writer,
+        "\u{3}",
+        true,
+    )
+    .expect("forward Ctrl+C and signal the pending request");
+
+    assert_eq!(outcome, TerminalExecutionOutcomeV1::Native);
+    assert_eq!(writer, b"\x03");
+    let channel = fetch_prepared_request_channel(pipe_name.as_ref(), &request_id)
+        .expect("fetch the already-cancelled request");
+    let (_, cancellation) = channel.into_parts();
+    assert!(cancellation.wait().expect("receive pending cancellation"));
     broker.stop().expect("stop broker");
 }
 

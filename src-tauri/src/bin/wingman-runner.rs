@@ -2,7 +2,7 @@ use std::io::{self, Write};
 use wingman_lib::interpreter::decode_prepared_request;
 use wingman_lib::runner::{execute_prepared_to_with_cancellation, RunnerDispatchErrorV1};
 use wingman_lib::runner_cancel::ConsoleCancellationGuardV1;
-use wingman_lib::transport::fetch_prepared_request;
+use wingman_lib::transport::fetch_prepared_request_channel;
 
 fn main() {
     let Some(pipe_name) = std::env::var_os("WINGMAN_BROKER_PIPE") else {
@@ -17,10 +17,18 @@ fn main() {
         fail_transport();
     }
 
-    let wire = fetch_prepared_request(&pipe_name, &request_id).unwrap_or_else(|_| fail_transport());
+    let channel = fetch_prepared_request_channel(&pipe_name, &request_id)
+        .unwrap_or_else(|_| fail_transport());
+    let (wire, cancellation_receiver) = channel.into_parts();
     let request = decode_prepared_request(&wire).unwrap_or_else(|_| fail_request());
     let (_cancellation_guard, cancellation) =
         ConsoleCancellationGuardV1::install().unwrap_or_else(|_| fail_request());
+    let channel_cancellation = cancellation.clone();
+    let _channel_watcher = std::thread::spawn(move || {
+        if matches!(cancellation_receiver.wait(), Ok(true)) {
+            channel_cancellation.cancel();
+        }
+    });
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
     let exit_code = match execute_prepared_to_with_cancellation(

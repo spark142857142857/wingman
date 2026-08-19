@@ -6,7 +6,80 @@ use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 use wingman_lib::interpreter::{PreparedRequestKindV1, PreparedRequestV1};
-use wingman_lib::transport::SessionBrokerV1;
+use wingman_lib::transport::{fetch_prepared_request_channel, SessionBrokerV1};
+
+#[test]
+fn active_request_receives_one_broker_cancellation_signal() {
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-session-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let request_id = Uuid::new_v4().as_simple().to_string();
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start session broker");
+    broker
+        .register(
+            request_id.clone(),
+            PreparedRequestV1 {
+                protocol: "wingman.run".to_string(),
+                version: 1,
+                kind: PreparedRequestKindV1::Reject {
+                    diagnostic: "cancel me".to_string(),
+                    exit_code: 2,
+                },
+            },
+        )
+        .expect("register cancellable request");
+
+    let channel = fetch_prepared_request_channel(pipe_name.as_ref(), &request_id)
+        .expect("fetch request while retaining its cancellation channel");
+    let (wire, cancellation) = channel.into_parts();
+    assert!(!wire.is_empty());
+    assert_eq!(
+        broker
+            .cancel_current_requests()
+            .expect("signal current request"),
+        1
+    );
+    assert!(cancellation.wait().expect("receive cancellation signal"));
+
+    broker.stop().expect("stop session broker");
+}
+
+#[test]
+fn stopping_a_session_signals_its_active_request_before_disconnect() {
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-session-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let request_id = Uuid::new_v4().as_simple().to_string();
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start session broker");
+    broker
+        .register(
+            request_id.clone(),
+            PreparedRequestV1 {
+                protocol: "wingman.run".to_string(),
+                version: 1,
+                kind: PreparedRequestKindV1::Reject {
+                    diagnostic: "cancel on stop".to_string(),
+                    exit_code: 2,
+                },
+            },
+        )
+        .expect("register active request");
+    let channel = fetch_prepared_request_channel(pipe_name.as_ref(), &request_id)
+        .expect("fetch active request");
+    let (_, cancellation) = channel.into_parts();
+    let waiter = thread::spawn(move || cancellation.wait());
+
+    broker.stop().expect("stop session broker");
+
+    assert!(waiter
+        .join()
+        .expect("cancellation waiter")
+        .expect("receive cancellation before disconnect"));
+}
 
 #[test]
 fn wrong_id_does_not_prevent_the_next_valid_one_shot_request() {

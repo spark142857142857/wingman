@@ -19,7 +19,7 @@ use wingman_lib::interpreter::{
     ExecutionPlanV1, PreparedRequestKindV1, PreparedRequestV1, RedirectModeV1, StagePlanV1,
     ValidatedRedirectPlanV1,
 };
-use wingman_lib::transport::OneShotBrokerV1;
+use wingman_lib::transport::{OneShotBrokerV1, SessionBrokerV1};
 use wingman_lib::windows_path::validate_path_value;
 
 #[test]
@@ -407,6 +407,92 @@ fn idle_tail_follow_process_observes_group_cancellation() {
     assert_eq!(status.code(), Some(130));
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
+    fs::remove_dir_all(&sandbox).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn idle_tail_follow_process_observes_session_broker_cancellation() {
+    let sandbox = std::env::temp_dir().join(format!(
+        "wingman-runner-follow-broker-cancel-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    ));
+    fs::create_dir(&sandbox).unwrap();
+    let input = sandbox.join("idle.log");
+    fs::write(&input, b"").unwrap();
+    let request_id = Uuid::new_v4().as_simple().to_string();
+    let pipe_name = format!(
+        r"\\.\pipe\wingman-session-test-{}-{}",
+        std::process::id(),
+        Uuid::new_v4().as_simple()
+    );
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start session broker");
+    broker
+        .register(
+            request_id.clone(),
+            PreparedRequestV1 {
+                protocol: "wingman.run".to_string(),
+                version: 1,
+                kind: PreparedRequestKindV1::Execute {
+                    plan: ExecutionPlanV1 {
+                        stages: vec![StagePlanV1::FollowFile {
+                            count: 0,
+                            path: validate_path_value(&input.to_string_lossy()).unwrap(),
+                        }],
+                        redirect: None,
+                    },
+                },
+            },
+        )
+        .expect("register idle follow request");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wingman-runner"))
+        .arg(&request_id)
+        .env("WINGMAN_BROKER_PIPE", &pipe_name)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start idle follow runner");
+    thread::sleep(Duration::from_millis(100));
+    assert!(child.try_wait().unwrap().is_none());
+
+    assert_eq!(
+        broker
+            .cancel_current_requests()
+            .expect("cancel runner through its session broker"),
+        1
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("idle follow runner did not stop after broker cancellation");
+        }
+        thread::sleep(Duration::from_millis(5));
+    };
+    let mut stdout = Vec::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut stdout)
+        .unwrap();
+    let mut stderr = Vec::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_end(&mut stderr)
+        .unwrap();
+
+    assert_eq!(status.code(), Some(130));
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    broker.stop().expect("stop session broker");
     fs::remove_dir_all(&sandbox).unwrap();
 }
 

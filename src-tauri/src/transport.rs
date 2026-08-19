@@ -234,9 +234,12 @@ mod windows {
         }
     }
 
+    const REQUEST_CANCEL_BYTE: u8 = 0x03;
+
     struct StoredPreparedRequest {
-        request: PreparedRequestV1,
+        request: Option<PreparedRequestV1>,
         expires_at: Instant,
+        cancelled: Arc<AtomicBool>,
     }
 
     struct SessionBrokerShared {
@@ -310,7 +313,7 @@ mod windows {
                 .lock()
                 .map_err(|_| io::Error::other("session broker registry is poisoned"))?;
             let now = Instant::now();
-            requests.retain(|_, stored| stored.expires_at > now);
+            requests.retain(|_, stored| stored.request.is_none() || stored.expires_at > now);
             if requests.len() >= MAX_PENDING_REQUESTS {
                 return Err(io::Error::new(
                     io::ErrorKind::OutOfMemory,
@@ -326,11 +329,24 @@ mod windows {
             requests.insert(
                 request_id,
                 StoredPreparedRequest {
-                    request,
+                    request: Some(request),
                     expires_at,
+                    cancelled: Arc::new(AtomicBool::new(false)),
                 },
             );
             Ok(())
+        }
+
+        pub fn cancel_current_requests(&self) -> io::Result<usize> {
+            let requests = self
+                .shared
+                .requests
+                .lock()
+                .map_err(|_| io::Error::other("session broker registry is poisoned"))?;
+            for stored in requests.values() {
+                stored.cancelled.store(true, Ordering::Release);
+            }
+            Ok(requests.len())
         }
 
         pub fn unregister(&self, request_id: &str) -> io::Result<bool> {
@@ -349,6 +365,7 @@ mod windows {
         }
 
         fn stop_and_join(&mut self) -> io::Result<()> {
+            let _ = self.cancel_current_requests();
             self.shared.stopped.store(true, Ordering::Release);
             let _ = wake_session_broker(&self.shared.pipe_name);
             if let Some(worker) = self.worker.take() {
@@ -624,7 +641,52 @@ mod windows {
         }
     }
 
-    pub fn fetch_prepared_request(pipe_name: &OsStr, request_id: &str) -> io::Result<Vec<u8>> {
+    pub struct PreparedRequestChannelV1 {
+        wire: Vec<u8>,
+        pipe: File,
+    }
+
+    impl PreparedRequestChannelV1 {
+        pub fn into_parts(self) -> (Vec<u8>, PreparedCancellationReceiverV1) {
+            (
+                self.wire,
+                PreparedCancellationReceiverV1 { pipe: self.pipe },
+            )
+        }
+    }
+
+    pub struct PreparedCancellationReceiverV1 {
+        pipe: File,
+    }
+
+    impl PreparedCancellationReceiverV1 {
+        pub fn wait(mut self) -> io::Result<bool> {
+            let mut signal = [0u8; 1];
+            match self.pipe.read_exact(&mut signal) {
+                Ok(()) if signal[0] == REQUEST_CANCEL_BYTE => Ok(true),
+                Ok(()) => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid prepared request cancellation signal",
+                )),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::UnexpectedEof
+                            | io::ErrorKind::BrokenPipe
+                            | io::ErrorKind::ConnectionReset
+                    ) =>
+                {
+                    Ok(false)
+                }
+                Err(error) => Err(error),
+            }
+        }
+    }
+
+    pub fn fetch_prepared_request_channel(
+        pipe_name: &OsStr,
+        request_id: &str,
+    ) -> io::Result<PreparedRequestChannelV1> {
         validate_request_id(request_id)?;
         let mut pipe = connect_client_pipe(pipe_name)?;
         pipe.write_all(request_id.as_bytes())?;
@@ -642,6 +704,11 @@ mod windows {
         }
         let mut wire = vec![0; length];
         pipe.read_exact(&mut wire)?;
+        Ok(PreparedRequestChannelV1 { wire, pipe })
+    }
+
+    pub fn fetch_prepared_request(pipe_name: &OsStr, request_id: &str) -> io::Result<Vec<u8>> {
+        let (wire, _) = fetch_prepared_request_channel(pipe_name, request_id)?.into_parts();
         Ok(wire)
     }
 
@@ -682,14 +749,27 @@ mod windows {
                         .lock()
                         .map_err(|_| io::Error::other("session broker registry is poisoned"))?;
                     let now = Instant::now();
-                    requests.retain(|_, stored| stored.expires_at > now);
-                    requests.remove(&request_id).map(|stored| stored.request)
+                    requests
+                        .retain(|_, stored| stored.request.is_none() || stored.expires_at > now);
+                    requests.get_mut(&request_id).and_then(|stored| {
+                        stored
+                            .request
+                            .take()
+                            .map(|request| (request, stored.cancelled.clone()))
+                    })
                 };
-                if let Some(request) = request {
+                if let Some((request, cancelled)) = request {
                     // A runner disconnect is scoped to this connection. The
                     // one-shot request stays consumed, but later requests must
                     // continue through the same session broker.
-                    let _ = write_prepared_request(&mut pipe, &request);
+                    if write_prepared_request(&mut pipe, &request).is_ok() {
+                        let _ = serve_request_cancellation(&mut pipe, &cancelled, &shared.stopped);
+                    }
+                    shared
+                        .requests
+                        .lock()
+                        .map_err(|_| io::Error::other("session broker registry is poisoned"))?
+                        .remove(&request_id);
                 }
             }
 
@@ -959,6 +1039,35 @@ mod windows {
         pipe.flush()
     }
 
+    fn serve_request_cancellation(
+        pipe: &mut File,
+        cancelled: &AtomicBool,
+        stopped: &AtomicBool,
+    ) -> io::Result<()> {
+        loop {
+            if cancelled.load(Ordering::Acquire) || stopped.load(Ordering::Acquire) {
+                pipe.write_all(&[REQUEST_CANCEL_BYTE])?;
+                return pipe.flush();
+            }
+
+            let mut available = 0;
+            if unsafe {
+                PeekNamedPipe(
+                    pipe.as_raw_handle().cast(),
+                    null_mut(),
+                    0,
+                    null_mut(),
+                    &mut available,
+                    null_mut(),
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            thread::sleep(CONNECTION_POLL_INTERVAL);
+        }
+    }
+
     fn validate_request_id(request_id: &str) -> io::Result<()> {
         if request_id.len() == REQUEST_ID_BYTES
             && request_id.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1009,7 +1118,8 @@ mod windows {
 
 #[cfg(windows)]
 pub use windows::{
-    fetch_prepared_request, parse_editor_readiness_frame, EditorAdapterCapabilityV1,
-    EditorLocationKindV1, EditorReadinessBrokerV1, EditorReadinessFrameV1, OneShotBrokerV1,
-    SessionBrokerV1, MAX_POWERSHELL_NESTED_DEPTH,
+    fetch_prepared_request, fetch_prepared_request_channel, parse_editor_readiness_frame,
+    EditorAdapterCapabilityV1, EditorLocationKindV1, EditorReadinessBrokerV1,
+    EditorReadinessFrameV1, OneShotBrokerV1, PreparedCancellationReceiverV1,
+    PreparedRequestChannelV1, SessionBrokerV1, MAX_POWERSHELL_NESTED_DEPTH,
 };
