@@ -10,8 +10,8 @@ Korean version: [TERMINAL_SESSION_CONTRACT.ko.md](TERMINAL_SESSION_CONTRACT.ko.m
 This contract defines when Wingman may interpret a submitted line, how it
 mirrors native line editing, how it falls back after uncertain input, and how
 it tracks the active `cmd.exe` or Windows PowerShell 5.1 session. It is the
-shared authority for terminal input, completion fallback, paste, visible
-native-history fallback, prompt synchronization, nested prompts, and interruption.
+shared authority for terminal input, completion fallback, paste, native-history
+fallback, prompt synchronization, nested prompts, and interruption.
 
 The shell remains the owner of its editor, native history, prompt, foreground
 program, and process state. Wingman may intercept only at a validated shell
@@ -57,6 +57,12 @@ While `Running`, `Suspended`, or `Closed`, every terminal input operation is
 native pass-through except Wingman's separate window shortcuts. In particular,
 input to `ssh`, a REPL, an editor, a pager, or another foreground program is
 never classified as a Wingman command.
+
+Submitting the verified parent line advances the expected PowerShell readiness
+sequence exactly once. While Wingman awaits that next authenticated parent
+frame, native input owned by a foreground child never advances the parent
+sequence or reopens interception. This includes child Enter, escape, and
+full-screen key input. Only the exact next parent frame restores editing.
 
 ## Prompt synchronization evidence
 

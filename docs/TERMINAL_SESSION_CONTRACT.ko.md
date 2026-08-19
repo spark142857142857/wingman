@@ -55,6 +55,11 @@ LineEvidence = Reliable | Uncertain { reason }
 터미널 입력이 네이티브 통과다. 특히 `ssh`, REPL, editor, pager 등 foreground
 program 입력을 Wingman 명령으로 판정하지 않는다.
 
+검증된 부모 줄을 제출할 때 PowerShell readiness 예상 sequence를 정확히 한 번만
+올린다. 다음 인증 부모 frame을 기다리는 동안 foreground child가 소유한 네이티브
+입력은 부모 sequence를 올리거나 interception을 다시 열지 않는다. Child의 Enter,
+escape, full-screen key 입력도 같다. 정확한 다음 부모 frame만 편집을 복구한다.
+
 ## Prompt 동기화 증거
 
 목표 구조는 Windows PowerShell 5.1에 최소한의 패키지 shell-integration hook을
