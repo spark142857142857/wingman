@@ -50,8 +50,9 @@ $tauriConfig = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'src-tauri\
 if ($tauriConfig.bundle.externalBin -contains 'binaries/wingman-runner') {
   throw 'Tauri must not duplicate the Cargo-built runner as an external binary'
 }
-if ($tauriConfig.bundle.resources -notcontains 'src/powershell_runner_transport.ps1') {
-  throw 'Tauri bundle does not include the protected PowerShell integration script'
+if ($tauriConfig.bundle.resources.'src/powershell_runner_transport.ps1' -ne
+    'powershell_runner_transport.ps1') {
+  throw 'Tauri bundle does not map the PowerShell integration script to the runtime resource path'
 }
 
 $cargoManifest = Get-Content -Raw -LiteralPath $manifestPath
