@@ -1052,3 +1052,47 @@ PowerShell의 인증된 editor readiness는 724.4ms에 도착했다. 같은 조�
 이 측정은 이전 절을 역사적 증거로 보존하면서 성능 비교에 사용하는 최신 로컬 후보값을
 대체한다. 수동 IME, clipboard, 시각 layout 또는 외부 Windows version gate를 면제하지
 않는다.
+
+## 2026-08-20: 코드 리뷰 후 후보 재검증
+
+이 로컬 실행은 최종 구현과 불필요 코드 검토 후의 정확한 후보를 검증한다.
+
+- 소스와 harness: `7fcfb29c30ba4aee614d6857bd100eca5ee92deb`
+- `wingman.exe` SHA-256:
+  `7754497CBDB027B57A6AAA9E3C1F8B4A2052F6CF18CDF7366153EE21A52BCD5A`
+- `wingman-runner.exe` SHA-256:
+  `79D21C1D13C858F371118E2F9CEFF81D8D690282F531A07949F85F42F22A359A`
+- NSIS 설치 파일 SHA-256:
+  `E721D88072D3CBEB997F5FA30FBA819B8479F3E9FB53DE1A78E26D9C2A9F5B0C`
+
+ignored가 아닌 모든 Rust·frontend test, formatting, warning을 오류로 처리한
+Clippy, TypeScript type check, production frontend build, Tauri/NSIS build,
+sidecar bundle 검사, release security 검사, CLI launch, 설치·재설치·제거,
+격리된 app-data profile 100회 실행이 모두 통과했다. 개발 산출물은
+의도적으로 서명되지 않았으며, 최종 Authenticode 서명은 배포 gate로
+남아 있다. 설치 용량은 13,297,259바이트, 격리 app-data profile은
+15,327,635바이트였다.
+
+| Shell | Warm startup 중앙값 / p95 / 최대 | Idle CPU 중앙값 / p95 | Idle private 최대 | 10만 줄 render | 입력 중앙값 / p95 / 최대 | 보존 중앙 / 최대 증가 | Scrollback |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 688.0 / 720.6 / 735.9 ms | 0.244 / 0.488% | 150.547 MiB | 4,144.6 ms | 26.9 / 34.4 / 35.2 ms | 40.463 / 42.266 MiB | 4,000 |
+| `cmd.exe` | 432.0 / 453.4 / 455.6 ms | 0.146 / 0.293% | 119.789 MiB | 3,836.5 ms | 27.2 / 34.4 / 35.1 ms | 40.514 / 44.754 MiB | 4,000 |
+
+PowerShell 인증 editor readiness는 632.6ms에 도착했다. 100,000줄 workload는
+UTF-8 11,900,000바이트였다. 동일 조건의 Windows Terminal 비교도 2배 목표와
+3배 배포 상한을 모두 통과했다.
+
+| Shell | Wingman 중앙값 | Windows Terminal 중앙값 | 비율 | 결과 |
+| --- | ---: | ---: | ---: | --- |
+| Windows PowerShell 5.1 | 4,205.803 ms | 2,987.049 ms | 1.408배 | 통과 |
+| `cmd.exe` | 3,997.196 ms | 3,086.401 ms | 1.295배 | 통과 |
+
+현재 후보의 최적화된 `tail -n 0 -f` release gate는 1초 CPU 표본 10개에서
+중앙값과 p95 모두 `0.000%`를 기록했고, 이후 exit `130`으로 취소됐다.
+짧은 endurance 회귀 smoke는 통과했다. 위의 30분 endurance 실행은
+소스 `161c7818...`의 증거이며, 이 정확한 후보에서 반복하지 않았다.
+
+사람이 확인해야 하는 한국어 IME, 실제 clipboard, resize/focus, 시각 검사는
+아직 남아 있다. controlled-restart cold startup, boot별 uncached runner,
+추가 Windows·hardware, multi-user·elevated 범위, 최종 서명 gate도 그대로다.
+이 항목들은 어느 것도 통과로 표시하지 않았다.

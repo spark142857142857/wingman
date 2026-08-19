@@ -1121,3 +1121,49 @@ These measurements replace the earlier local candidate values for performance
 comparisons, while preserving the earlier sections as historical evidence.
 They do not waive the manual IME, clipboard, visual-layout, or external
 Windows-version gates.
+
+## 2026-08-20: post-review candidate revalidation
+
+This local run validates the exact candidate after the final implementation
+and dead-code review.
+
+- Source and harness: `7fcfb29c30ba4aee614d6857bd100eca5ee92deb`
+- `wingman.exe` SHA-256:
+  `7754497CBDB027B57A6AAA9E3C1F8B4A2052F6CF18CDF7366153EE21A52BCD5A`
+- `wingman-runner.exe` SHA-256:
+  `79D21C1D13C858F371118E2F9CEFF81D8D690282F531A07949F85F42F22A359A`
+- NSIS installer SHA-256:
+  `E721D88072D3CBEB997F5FA30FBA819B8479F3E9FB53DE1A78E26D9C2A9F5B0C`
+
+The non-ignored Rust and frontend suites, formatting, Clippy with warnings
+denied, TypeScript type checking, production frontend build, Tauri/NSIS
+build, sidecar bundle check, release security check, CLI launch, installer,
+and 100-launch isolated app-data smoke all passed. The development artifacts
+are intentionally unsigned; final Authenticode signing remains a publication
+gate. The installed footprint was 13,297,259 bytes and the isolated app-data
+profile was 15,327,635 bytes.
+
+| Shell | Warm startup median / p95 / max | Idle CPU median / p95 | Idle private max | 100k-line render | Input median / p95 / max | Retained median / max growth | Scrollback |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 688.0 / 720.6 / 735.9 ms | 0.244 / 0.488% | 150.547 MiB | 4,144.6 ms | 26.9 / 34.4 / 35.2 ms | 40.463 / 42.266 MiB | 4,000 |
+| `cmd.exe` | 432.0 / 453.4 / 455.6 ms | 0.146 / 0.293% | 119.789 MiB | 3,836.5 ms | 27.2 / 34.4 / 35.1 ms | 40.514 / 44.754 MiB | 4,000 |
+
+PowerShell authenticated editor readiness arrived in 632.6 ms. The 100,000
+line workload contained 11,900,000 UTF-8 bytes. The matched Windows Terminal
+comparison also passed the 2x target and 3x release ceiling:
+
+| Shell | Wingman median | Windows Terminal median | Ratio | Result |
+| --- | ---: | ---: | ---: | --- |
+| Windows PowerShell 5.1 | 4,205.803 ms | 2,987.049 ms | 1.408x | Pass |
+| `cmd.exe` | 3,997.196 ms | 3,086.401 ms | 1.295x | Pass |
+
+The current candidate's optimized `tail -n 0 -f` release gate recorded ten
+one-second CPU samples at `0.000%` median and p95, then cancelled with exit
+`130`. A short endurance regression smoke passed. The 30-minute endurance run
+above remains evidence for source `161c7818...`; it was not repeated for this
+exact candidate.
+
+Human-only Korean IME, real clipboard, resize/focus and visual checks remain
+open, as do controlled-restart cold startup, unique-boot uncached runner,
+additional Windows/hardware, multi-user/elevated-scope, and final signing
+gates. None is represented here as a pass.
