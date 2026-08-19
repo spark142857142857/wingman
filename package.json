@@ -12,6 +12,7 @@
     "test:windows": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/layout_regression.tests.ps1",
     "test:packaging": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/sidecar_packaging.tests.ps1",
     "test:release-bundle": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/release_bundle_contract.tests.ps1",
+    "test:cli-launch": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File src-tauri/tests/cli_launch_e2e.tests.ps1",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "preview": "vite preview",
     "tauri": "tauri"
