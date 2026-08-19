@@ -84,11 +84,61 @@ if ($applicationText -notmatch '<consoleAllocationPolicy[^>]*>detached</consoleA
 
 $tauriConfig = Get-Content -Raw -LiteralPath (Join-Path $tauriRoot 'tauri.conf.json') |
   ConvertFrom-Json
+$bundleTargets = @($tauriConfig.bundle.targets)
+if ($bundleTargets.Count -ne 1 -or $bundleTargets[0] -ne 'nsis') {
+  throw 'Wingman must produce only the verified NSIS installer target'
+}
+if (
+  $tauriConfig.bundle.windows.nsis.installMode -ne 'currentUser' -or
+  $tauriConfig.bundle.windows.nsis.installerHooks -ne 'nsis/wingman-path.nsh'
+) {
+  throw 'NSIS must use the reviewed current-user PATH registration hook'
+}
 if ($tauriConfig.bundle.externalBin -contains 'binaries/wingman-runner') {
   throw 'Runner is a Cargo bin and must not also be declared as externalBin'
 }
 if ($tauriConfig.bundle.resources) {
   throw 'PowerShell transport must remain compiled into wingman.exe'
+}
+
+$pathHook = Join-Path $tauriRoot 'nsis\wingman-path.nsh'
+$pathHelper = Join-Path $tauriRoot 'nsis\wingman-path.ps1'
+if (
+  -not (Test-Path -LiteralPath $pathHook -PathType Leaf) -or
+  -not (Test-Path -LiteralPath $pathHelper -PathType Leaf)
+) {
+  throw 'NSIS PATH registration sources are missing'
+}
+$hookText = Get-Content -Raw -LiteralPath $pathHook
+if (
+  $hookText -notmatch 'NSIS_HOOK_POSTINSTALL' -or
+  $hookText -notmatch 'NSIS_HOOK_PREUNINSTALL' -or
+  $hookText -notmatch 'File /oname=\$PLUGINSDIR\\wingman-path\.ps1' -or
+  $hookText -match 'ExecutionPolicy\s+Bypass'
+) {
+  throw 'NSIS PATH hook does not use the fixed temporary helper boundary'
+}
+foreach ($loaderName in 'INSTALL', 'UNINSTALL') {
+  $loaderMatch = [regex]::Match(
+    $hookText,
+    "!define WINGMAN_PATH_${loaderName}_LOADER `"([A-Za-z0-9+/=]+)`""
+  )
+  if (-not $loaderMatch.Success) {
+    throw "NSIS PATH $loaderName loader is missing"
+  }
+  $loaderSource = [Text.Encoding]::Unicode.GetString(
+    [Convert]::FromBase64String($loaderMatch.Groups[1].Value)
+  )
+  [void] [ScriptBlock]::Create($loaderSource)
+  if ($loaderMatch.Groups[1].Value.Length -ge 768) {
+    throw "NSIS PATH $loaderName loader risks exceeding the 1024-character NSIS limit"
+  }
+}
+[void] [ScriptBlock]::Create((Get-Content -Raw -LiteralPath $pathHelper))
+
+$escapedHookPath = [regex]::Escape($pathHook)
+if (-not ($scriptLines | Where-Object { $_ -match "^!include `"$escapedHookPath`"$" })) {
+  throw 'Generated NSIS source does not include the reviewed PATH registration hook'
 }
 
 Write-Output "Release bundle contract passed: $($installer.FullName)"
