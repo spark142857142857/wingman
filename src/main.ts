@@ -138,6 +138,8 @@ async function startSession(shell: ShellKind) {
   const sessionId = ++activeSessionId;
   performanceProbe = null;
   compat = false;
+  elevated = null;
+  updateStatus();
   term.reset();
   const { cols, rows } = term;
   const session = await invoke<{
