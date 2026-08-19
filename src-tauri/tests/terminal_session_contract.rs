@@ -242,6 +242,131 @@ fn prepared_action_captures_a_middle_cursor_editor_snapshot() {
 }
 
 #[test]
+fn unicode_scalar_input_is_mirrored_without_utf16_or_display_width_drift() {
+    let mut session = ready_session(520);
+    let line = "echo 한글 한 e\u{301} 🚀 漢字";
+    let actions = session.handle_terminal_input(&format!("{line}\r"), false);
+
+    assert!(matches!(
+        actions.last(),
+        Some(TerminalInputActionV1::Prepared {
+            decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                decision: FrontendDecisionKindV1::PassThrough { raw_line },
+                ..
+            },
+            editor: EditorSnapshotV1 {
+                character_count,
+                cursor,
+            },
+        }) if raw_line == line
+            && *character_count == line.chars().count()
+            && *cursor == line.chars().count()
+    ));
+}
+
+#[test]
+fn known_cursor_delete_and_backspace_edits_reconstruct_the_exact_line() {
+    let mut session = ready_session(521);
+    let actions =
+        session.handle_terminal_input("pxwd\u{1b}[H\u{1b}[C\u{1b}[3~\u{1b}[Fz\u{7f}\r", false);
+
+    assert!(matches!(
+        actions.last(),
+        Some(TerminalInputActionV1::Prepared {
+            decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                decision: FrontendDecisionKindV1::PassThrough { raw_line },
+                ..
+            },
+            editor: EditorSnapshotV1 {
+                character_count: 3,
+                cursor: 3,
+            },
+        }) if raw_line == "pwd"
+    ));
+}
+
+#[test]
+fn unicode_backspace_and_middle_insertion_use_scalar_boundaries() {
+    let mut session = ready_session(522);
+    let actions = session.handle_terminal_input("echo 한글🚀\u{7f}\u{1b}[D!\r", false);
+
+    assert!(matches!(
+        actions.last(),
+        Some(TerminalInputActionV1::Prepared {
+            decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                decision: FrontendDecisionKindV1::PassThrough { raw_line },
+                ..
+            },
+            editor: EditorSnapshotV1 {
+                character_count: 8,
+                cursor: 7,
+            },
+        }) if raw_line == "echo 한!글"
+    ));
+}
+
+#[test]
+fn prediction_accepting_keys_at_the_line_end_force_native_fallback() {
+    for (session_id, sequence) in [(523, "\u{1b}[C"), (524, "\u{1b}[F"), (525, "\u{1b}[4~")] {
+        let mut session = ready_session(session_id);
+        let data = format!("pwd{sequence}\r");
+        assert_eq!(
+            session.handle_terminal_input(&data, true),
+            vec![TerminalInputActionV1::Forward { data }]
+        );
+    }
+}
+
+#[test]
+fn completion_history_search_and_unknown_keys_force_native_fallback() {
+    let uncertain_inputs = [
+        "\t",
+        "\u{12}",
+        "\u{1b}[A",
+        "\u{1b}[B",
+        "\u{1b}[18~",
+        "\u{1b}[19~",
+        "\u{1b}[20~",
+        "\u{1b}[Z",
+    ];
+    for (offset, uncertain) in uncertain_inputs.into_iter().enumerate() {
+        let mut session = ready_session(526 + offset as u64);
+        let data = format!("p{uncertain}wd\r");
+        assert_eq!(
+            session.handle_terminal_input(&data, true),
+            vec![TerminalInputActionV1::Forward { data }],
+            "uncertain input {uncertain:?} was prepared"
+        );
+    }
+}
+
+#[test]
+fn foreground_children_keep_all_following_input_native_until_parent_readiness() {
+    for (offset, child_line) in ["python", "vim", "cmd", "powershell"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut session = ready_session(534 + offset as u64);
+        assert!(matches!(
+            session.handle_terminal_input(&format!("{child_line}\r"), true).last(),
+            Some(TerminalInputActionV1::Prepared {
+                decision: wingman_lib::interpreter::FrontendDecisionV1 {
+                    decision: FrontendDecisionKindV1::PassThrough { raw_line },
+                    ..
+                },
+                ..
+            }) if raw_line == child_line
+        ));
+        assert_eq!(
+            session.handle_terminal_input("pwd\r", true),
+            vec![TerminalInputActionV1::Forward {
+                data: "pwd\r".to_string(),
+            }],
+        );
+    }
+}
+
+#[test]
 fn a_multi_submission_chunk_is_never_partially_prepared() {
     let mut session = TerminalSessionV1::new(510, ActiveShell::WindowsPowerShell);
     let marker = format!(
@@ -427,6 +552,13 @@ fn nested_powershell_depth_cannot_jump_or_start_above_root() {
 
 fn readiness(nonce: &str, sequence: u64) -> EditorReadinessFrameV1 {
     readiness_at_depth(nonce, sequence, 0)
+}
+
+fn ready_session(session_id: u64) -> TerminalSessionV1 {
+    let mut session = TerminalSessionV1::new(session_id, ActiveShell::WindowsPowerShell);
+    let nonce = session.integration_nonce().to_string();
+    assert!(session.apply_editor_readiness(&readiness(&nonce, 1)));
+    session
 }
 
 fn readiness_at_depth(nonce: &str, sequence: u64, shell_depth: u32) -> EditorReadinessFrameV1 {

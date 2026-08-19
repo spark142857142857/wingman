@@ -420,9 +420,25 @@ impl TerminalSessionV1 {
         }
         match sequence {
             "\u{1b}[D" => self.input_cursor = self.input_cursor.saturating_sub(1),
-            "\u{1b}[C" => self.input_cursor = (self.input_cursor + 1).min(self.input_buffer.len()),
+            "\u{1b}[C" => {
+                if self.input_cursor == self.input_buffer.len() {
+                    // PSReadLine may accept prediction text when ForwardChar is
+                    // invoked at the end of the visible buffer. That inserted
+                    // text never passed through this mirror, so the cycle is
+                    // no longer reliable.
+                    return false;
+                }
+                self.input_cursor += 1;
+            }
             "\u{1b}[H" | "\u{1b}[1~" => self.input_cursor = 0,
-            "\u{1b}[F" | "\u{1b}[4~" => self.input_cursor = self.input_buffer.len(),
+            "\u{1b}[F" | "\u{1b}[4~" => {
+                if self.input_cursor == self.input_buffer.len() {
+                    // EndOfLine can also accept an inline prediction at this
+                    // boundary, depending on the user's PSReadLine bindings.
+                    return false;
+                }
+                self.input_cursor = self.input_buffer.len();
+            }
             "\u{1b}[3~" => {
                 if self.input_cursor < self.input_buffer.len() {
                     let removed = self.input_buffer.remove(self.input_cursor);
