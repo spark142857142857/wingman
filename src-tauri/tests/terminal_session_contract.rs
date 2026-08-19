@@ -427,6 +427,39 @@ fn confirmed_line_breaking_paste_suspends_interception_until_a_fresh_marker() {
 }
 
 #[test]
+fn native_paste_newline_matrix_advances_exact_sequences_without_line_classification() {
+    for (offset, data, next_sequence, readiness_allowed) in [
+        (0, "one\ntwo", 2, false),
+        (1, "one\rtwo", 2, false),
+        (2, "one\r\ntwo", 2, false),
+        (3, "one\n", 2, true),
+        (4, "one\r", 2, true),
+        (5, "one\r\n", 2, true),
+        (6, "one\r\ntwo\n", 3, true),
+    ] {
+        let mut session = ready_session(542 + offset);
+        let nonce = session.integration_nonce().to_string();
+        session.suspend_for_native_paste(data);
+
+        assert!(!session.editor_ready());
+        assert_eq!(
+            session.apply_editor_readiness(&readiness(&nonce, next_sequence)),
+            readiness_allowed,
+            "unexpected readiness result for paste {data:?}",
+        );
+        if !readiness_allowed {
+            assert_eq!(
+                session.handle_terminal_input("pwd\r", true),
+                vec![TerminalInputActionV1::Forward {
+                    data: "pwd\r".to_string(),
+                }],
+                "paste tail was classified as a Wingman command for {data:?}",
+            );
+        }
+    }
+}
+
+#[test]
 fn readiness_arriving_after_any_forwarded_input_cannot_upgrade_that_editor_cycle() {
     let mut session = TerminalSessionV1::new(511, ActiveShell::WindowsPowerShell);
     let nonce = session.integration_nonce().to_string();

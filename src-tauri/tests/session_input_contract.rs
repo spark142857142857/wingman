@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use uuid::Uuid;
 use wingman_lib::interpreter::{ActiveShell, FamiliarControlEffectV1};
 use wingman_lib::session_runtime::{
@@ -138,6 +139,90 @@ fn familiar_state_changes_only_after_persistence_succeeds() {
         .expect("persist familiar state");
     assert!(!result);
     assert!(!enabled);
+}
+
+#[test]
+fn partial_prepared_write_suspends_without_retrying_the_original_line() {
+    let pipe_name = unique_pipe_name();
+    let broker = SessionBrokerV1::start(&pipe_name).expect("start broker");
+    let mut session = TerminalSessionV1::new(43, ActiveShell::WindowsPowerShell);
+    let marker = format!(
+        "\u{1b}]777;wingman-prompt;1;{};1;powershell;0;filesystem;psreadline-replace-v1\u{7}",
+        session.integration_nonce()
+    );
+    assert_eq!(session.ingest_pty_output(&marker), "");
+    let mut writer = FailingWriter::new(5);
+
+    let error = execute_terminal_input(
+        &mut session,
+        ActiveShell::WindowsPowerShell,
+        &broker,
+        &mut writer,
+        "pwd\r",
+        true,
+    )
+    .expect_err("partial prepared write must fail");
+
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(&writer.bytes[..3], b"pwd");
+    assert_eq!(
+        writer
+            .bytes
+            .windows(3)
+            .filter(|bytes| *bytes == b"pwd")
+            .count(),
+        1
+    );
+    assert!(!session.editor_ready());
+    assert_eq!(
+        session.handle_terminal_input("pwd\r", true),
+        vec![
+            wingman_lib::terminal_session::TerminalInputActionV1::Forward {
+                data: "pwd\r".to_string(),
+            }
+        ],
+    );
+    broker.stop().expect("stop broker");
+}
+
+struct FailingWriter {
+    bytes: Vec<u8>,
+    remaining: usize,
+}
+
+impl FailingWriter {
+    fn new(remaining: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            remaining,
+        }
+    }
+}
+
+impl Write for FailingWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.remaining == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "injected failure",
+            ));
+        }
+        let count = self.remaining.min(buffer.len());
+        self.bytes.extend_from_slice(&buffer[..count]);
+        self.remaining -= count;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.remaining == 0 {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "injected failure",
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 fn unique_pipe_name() -> String {
