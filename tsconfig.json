@@ -12,8 +12,8 @@
     "noEmit": true,
     "strict": true,
     "types": ["node"],
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src/**/*.ts", "vite.config.ts"]
