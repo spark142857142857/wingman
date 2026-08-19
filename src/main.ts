@@ -2,10 +2,10 @@
 import "./styles.css";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { classifyTerminalPaste } from "./terminal-paste";
+import { blockedTerminalLinkHandler } from "./terminal-security";
 import { isPasteShortcut } from "./terminal-shortcuts";
 import { PerformanceProbe } from "./performance-probes";
 import { TERMINAL_SCROLLBACK_ROWS } from "./terminal-config";
@@ -50,12 +50,12 @@ const term = new Terminal({
     magenta: "#d2a8ff",
     cyan: "#76e4f7",
     white: "#e8f2ff"
-  }
+  },
+  linkHandler: blockedTerminalLinkHandler,
 });
 
 const fitAddon = new FitAddon();
 term.loadAddon(fitAddon);
-term.loadAddon(new WebLinksAddon());
 term.open(termHost);
 fitAddon.fit();
 
