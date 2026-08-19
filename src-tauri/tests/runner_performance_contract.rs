@@ -29,6 +29,9 @@ const GREP_CACHED_TARGET_MS: f64 = 1_000.0;
 const FIND_CACHED_TARGET_MS: f64 = 535.0;
 const REDIRECTED_CAT_CACHED_TARGET_MS: f64 = 3_700.0;
 const REDIRECTED_SORT_CACHED_TARGET_MS: f64 = 790.0;
+const UNCACHED_FIXTURE_ENV: &str = "WINGMAN_UNCACHED_FIXTURE_ROOT";
+const UNCACHED_OPERATION_ENV: &str = "WINGMAN_UNCACHED_OPERATION";
+const UNCACHED_FIXTURE_MARKER: &str = ".wingman-uncached-fixture-v1";
 
 #[derive(Serialize)]
 struct CachedTimingReportV1 {
@@ -50,6 +53,17 @@ struct CachedTimingReportV1 {
     find_target_ms: f64,
     redirected_cat_target_ms: f64,
     redirected_sort_target_ms: f64,
+}
+
+#[derive(Serialize)]
+struct UncachedTimingSampleV1 {
+    cache_state: &'static str,
+    operation: String,
+    elapsed_ms: f64,
+    corpus_bytes: usize,
+    corpus_records: usize,
+    find_entries: usize,
+    sort_records: usize,
 }
 
 struct RunnerMeasurementV1 {
@@ -191,6 +205,139 @@ fn cached_runner_timing_baseline() {
     }
 }
 
+#[test]
+#[ignore = "release fixture preparation: persists a 100 MiB corpus and 20,000-entry tree"]
+fn prepare_uncached_runner_fixture() {
+    let root = required_fixture_root();
+    if root.exists() {
+        assert!(
+            root.join(UNCACHED_FIXTURE_MARKER).is_file(),
+            "refusing to reuse an unmarked fixture directory: {}",
+            root.display()
+        );
+        validate_uncached_fixture(&root);
+        eprintln!("WINGMAN_RUNNER_UNCACHED_FIXTURE_V1={}", root.display());
+        return;
+    }
+
+    fs::create_dir(&root).expect("create uncached fixture root");
+    let result = std::panic::catch_unwind(|| {
+        create_text_corpus(&root.join("text-100mib.txt"));
+        create_find_tree(&root.join("find-20000"));
+        create_sort_corpus(&root.join("sort-200000.txt"));
+        File::create(root.join(UNCACHED_FIXTURE_MARKER)).expect("create uncached fixture marker");
+        validate_uncached_fixture(&root);
+        eprintln!("WINGMAN_RUNNER_UNCACHED_FIXTURE_V1={}", root.display());
+    });
+    if let Err(payload) = result {
+        let _ = fs::remove_dir_all(&root);
+        std::panic::resume_unwind(payload);
+    }
+}
+
+#[test]
+#[ignore = "release uncached sample: run once per operation after a controlled Windows restart"]
+fn uncached_runner_timing_sample() {
+    let root = required_fixture_root();
+    validate_uncached_fixture(&root);
+    let operation = std::env::var(UNCACHED_OPERATION_ENV)
+        .expect("WINGMAN_UNCACHED_OPERATION must name grep, find, cat, or sort");
+    let text_corpus = root.join("text-100mib.txt");
+    let find_root = root.join("find-20000");
+    let sort_corpus = root.join("sort-200000.txt");
+    let output = root.join(format!(
+        ".wingman-uncached-output-{}-{}.txt",
+        operation,
+        Uuid::new_v4().as_simple()
+    ));
+
+    let measurement = match operation.as_str() {
+        "grep" => {
+            let measurement = run_runner(
+                &root,
+                execute_request(
+                    vec![StagePlanV1::SearchText {
+                        pattern: "WINGMAN_PERF_MATCH".to_string(),
+                        paths: vec![path_spec(&text_corpus)],
+                        ignore_case: false,
+                        line_numbers: false,
+                        invert_match: false,
+                        fixed_strings: true,
+                        recursive: false,
+                    }],
+                    None,
+                ),
+            );
+            validate_grep_output(&measurement);
+            measurement
+        }
+        "find" => {
+            let measurement = run_runner(
+                &root,
+                execute_request(
+                    vec![StagePlanV1::FindPaths {
+                        path: path_spec(&find_root),
+                        entry_type: None,
+                        name_pattern: None,
+                        ignore_case: false,
+                        min_depth: 1,
+                        max_depth: None,
+                    }],
+                    None,
+                ),
+            );
+            validate_find_output(&measurement);
+            measurement
+        }
+        "cat" => {
+            let measurement = run_runner(
+                &root,
+                execute_request(
+                    vec![StagePlanV1::ReadTextFiles {
+                        paths: vec![path_spec(&text_corpus)],
+                        number_lines: false,
+                    }],
+                    Some(&output),
+                ),
+            );
+            validate_cat_output(&measurement, &output);
+            measurement
+        }
+        "sort" => {
+            let measurement = run_runner(
+                &root,
+                execute_request(
+                    vec![StagePlanV1::SortLines {
+                        path: Some(path_spec(&sort_corpus)),
+                        reverse: false,
+                        numeric: false,
+                        unique: false,
+                    }],
+                    Some(&output),
+                ),
+            );
+            validate_sort_output(&measurement, &output);
+            measurement
+        }
+        _ => panic!("WINGMAN_UNCACHED_OPERATION must name grep, find, cat, or sort"),
+    };
+    let _ = fs::remove_file(&output);
+
+    let report = UncachedTimingSampleV1 {
+        cache_state: "fixture-first-read",
+        operation,
+        elapsed_ms: duration_ms(measurement.elapsed),
+        corpus_bytes: TEXT_CORPUS_BYTES,
+        corpus_records: TEXT_RECORD_COUNT,
+        find_entries: FIND_ENTRY_COUNT,
+        sort_records: SORT_RECORD_COUNT,
+    };
+    eprintln!(
+        "WINGMAN_RUNNER_UNCACHED_V1={}",
+        serde_json::to_string(&report).expect("serialize uncached timing sample")
+    );
+}
+
 fn create_text_corpus(path: &Path) {
     let mut writer = BufWriter::new(File::create(path).expect("create 100 MiB text corpus"));
     let mut record = [b'x'; TEXT_RECORD_BYTES];
@@ -276,6 +423,10 @@ fn run_runner(cwd: &Path, request: PreparedRequestV1) -> RunnerMeasurementV1 {
 }
 
 fn validate_grep(measurement: RunnerMeasurementV1) {
+    validate_grep_output(&measurement);
+}
+
+fn validate_grep_output(measurement: &RunnerMeasurementV1) {
     assert_success(&measurement.output, "grep");
     assert_eq!(
         measurement
@@ -290,6 +441,10 @@ fn validate_grep(measurement: RunnerMeasurementV1) {
 }
 
 fn validate_find(measurement: RunnerMeasurementV1) {
+    validate_find_output(&measurement);
+}
+
+fn validate_find_output(measurement: &RunnerMeasurementV1) {
     assert_success(&measurement.output, "find");
     assert_eq!(
         measurement
@@ -303,6 +458,10 @@ fn validate_find(measurement: RunnerMeasurementV1) {
 }
 
 fn validate_cat(measurement: RunnerMeasurementV1, output: &Path) {
+    validate_cat_output(&measurement, output);
+}
+
+fn validate_cat_output(measurement: &RunnerMeasurementV1, output: &Path) {
     assert_success(&measurement.output, "cat");
     assert!(measurement.output.stdout.is_empty());
     assert_eq!(
@@ -312,6 +471,10 @@ fn validate_cat(measurement: RunnerMeasurementV1, output: &Path) {
 }
 
 fn validate_sort(measurement: RunnerMeasurementV1, output: &Path) {
+    validate_sort_output(&measurement, output);
+}
+
+fn validate_sort_output(measurement: &RunnerMeasurementV1, output: &Path) {
     assert_success(&measurement.output, "sort");
     assert!(measurement.output.stdout.is_empty());
     let bytes = fs::read(output).expect("read sorted output");
@@ -361,4 +524,32 @@ fn sandbox() -> PathBuf {
         std::process::id(),
         Uuid::new_v4().as_simple()
     ))
+}
+
+fn required_fixture_root() -> PathBuf {
+    let value = std::env::var_os(UNCACHED_FIXTURE_ENV)
+        .expect("WINGMAN_UNCACHED_FIXTURE_ROOT must name an explicit fixture directory");
+    let root = PathBuf::from(value);
+    assert!(root.is_absolute(), "uncached fixture root must be absolute");
+    root
+}
+
+fn validate_uncached_fixture(root: &Path) {
+    assert!(
+        root.join(UNCACHED_FIXTURE_MARKER).is_file(),
+        "uncached fixture marker is missing"
+    );
+    assert_eq!(
+        fs::metadata(root.join("text-100mib.txt"))
+            .expect("stat uncached text corpus")
+            .len(),
+        TEXT_CORPUS_BYTES as u64
+    );
+    assert!(root.join("find-20000").is_dir());
+    assert_eq!(
+        fs::metadata(root.join("sort-200000.txt"))
+            .expect("stat uncached sort corpus")
+            .len(),
+        (SORT_RECORD_COUNT * SORT_RECORD_BYTES) as u64
+    );
 }
