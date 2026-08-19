@@ -1,6 +1,6 @@
-# 공통 해석기 구조 (초안)
+# 공통 해석기 구조
 
-상태: 합의된 구조 방향. 이 문서만으로 구현을 시작하지는 않는다.
+상태: 현재 P0 구조이며 릴리스 후보에 구현되어 있다.
 
 ## 원칙
 
@@ -44,9 +44,10 @@ parser는 Bash 문법을 구현하지 않는다. 명령 치환, 환경 변수 �
 ## 셸 경계
 
 Rust가 prompt·세션 tracker를 소유한다. 검증된 prompt와 allowlist에 든 mirrored
-편집 sequence가 함께 있을 때만 신뢰 가능한 제출 줄이 된다. 그 뒤 프론트엔드는
-네이티브 Enter와 준비 요청 ID 중 하나를 고른다. 명령이나 foreground program이
-실행 중이면 모든 터미널 입력을 통과시킨다. 정확한 상태와 fallback은
+편집 sequence가 함께 있을 때만 신뢰 가능한 제출 줄이 된다. 프론트엔드는 불투명한
+session-tagged 입력 byte만 전달하고, Rust가 네이티브 입력 또는 준비 요청 등록·호출
+쓰기를 원자적으로 선택한다. 명령이나 foreground program이 실행 중이면 모든 터미널
+입력을 통과시킨다. 정확한 상태와 fallback은
 [터미널 제출·세션 계약](TERMINAL_SESSION_CONTRACT.ko.md)을 따른다.
 
 Rust는 모든 거부, control 응답, 실행 계획을 세션 메모리에 보관하며 WebView에
@@ -60,25 +61,28 @@ Rust는 모든 거부, control 응답, 실행 계획을 세션 메모리에 보�
 
 ## 필수 일관성
 
-- 같은 유효 P0 입력은 PowerShell과 `cmd`에서 비슷한 화면 결과와 같은 종료 코드를 낸다.
+- 공통 계획과 runner 의미는 shell과 무관하다. P0에서는 검증된 Windows PowerShell
+  adapter만 Familiar 입력을 가로채며 `cmd`는 네이티브 pass-through로 P0 문법을
+  소유하지 않는다.
 - Wingman이 인식한 P0 명령의 미지원 문법은 명확히 실패한다. 부분 변환이나 추측은 하지 않는다.
 - 원래 네이티브 명령과 셸 상태 명령은 계속 쓸 수 있다.
 - P0는 프론트엔드 command history를 추가하지 않는다. 네이티브 history는 계속
   사용할 수 있고 내부 runner 호출을 포함할 수 있다.
 - 취소, 스트리밍 출력, 리다이렉션, 오류는 runner 경계 테스트로 검증한다.
 
-## 마이그레이션 목표
+## 구현 상태
 
-현재 초안에는 프론트엔드 `cmd` 변환과 PowerShell 호환 프로필이 따로 있다. 목표 구조에서는
-이들이 독립적으로 P0를 파싱·실행하지 않고, 하나의 카탈로그·parser·실행 계획 형식·runner를
-공유한다. 전환 중 셸별 shim은 전달 계층으로만 임시 허용한다.
+릴리스 후보는 하나의 Rust 카탈로그·parser·실행 계획 형식·runner를 사용한다.
+프론트엔드는 호환 문법을 파싱하지 않고 쓰기 가능한 과거 PowerShell profile도 로드하지
+않으며 `cmd` 호환 mapping은 제거됐다. Packaged PowerShell adapter는 editor readiness
+증명, editor buffer 제거, 고정된 불투명 요청 호출만 담당한다.
 
 판정·파싱·실행 계획·runner 요청의 경계는 [공통 해석기 데이터 구조](INTERPRETER_DATA_MODEL.ko.md)를 참고한다.
 파싱 이전의 소유권 판정은 [입력 판정 계약](INPUT_CLASSIFICATION.ko.md)을 참고한다.
 Prompt 증거, Unicode-safe 입력 mirror, completion fallback, paste, history, 셸 전환은
 [터미널 제출·세션 계약](TERMINAL_SESSION_CONTRACT.ko.md)을 따른다.
 [lexer 계약](LEXER_CONTRACT.ko.md)은 제한된 토큰 규칙을 정한다.
-구현은 [구현 시작 게이트](IMPLEMENTATION_GATE.ko.md)를 따른다.
+과거 구현 승인은 [구현 시작 게이트](IMPLEMENTATION_GATE.ko.md)에 기록한다.
 업데이트 검증과 지원 정책은 [호환성 유지보수 계약](COMPATIBILITY_MAINTENANCE.ko.md)에 정한다.
 runner의 I/O, 취소, 종료 동작은 [runner 실행 계약](RUNNER_EXECUTION_CONTRACT.ko.md)에 정한다.
 UTF-8 decoding, BOM·newline record, pipeline backpressure, short-circuit,
@@ -89,6 +93,6 @@ redirection sink, fatal 우선순위는
 [Windows 경로·파일 시스템 계약](WINDOWS_PATH_CONTRACT.ko.md)에 정한다.
 사용자가 느끼는 지연, 자원 상한, 비교 기준, renderer 교체 판단은
 [성능 예산](PERFORMANCE_BUDGET.ko.md)에 정한다.
-legacy에서 runner로 전환하는 순서는 [마이그레이션 계획](MIGRATION_PLAN.ko.md)에 정한다.
+완료한 legacy-to-runner 전환은 [마이그레이션 계획](MIGRATION_PLAN.ko.md)에 기록한다.
 변경 요청의 사전 검증, 순서, staging, commit, 부분 결과 규칙은
 [mutation 실행 계약](MUTATION_EXECUTION_CONTRACT.ko.md)에 정한다.

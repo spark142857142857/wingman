@@ -1,7 +1,6 @@
-# Windows Path and Filesystem Contract (Draft)
+# Windows Path and Filesystem Contract
 
-Status: accepted P0 design direction. This document closes consolidated-review
-item C2. It does not authorize implementation.
+Status: current P0 path/filesystem contract, implemented by the release candidate.
 
 Korean version: [WINDOWS_PATH_CONTRACT.ko.md](WINDOWS_PATH_CONTRACT.ko.md)
 

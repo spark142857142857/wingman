@@ -2,8 +2,8 @@
 
 [English](README.md)
 
-> **프로토타입 snapshot — 최종 P0 호환성 약속이 아닙니다.** 아래의 과거 기능과
-> mapping 절은 cutover 전 prototype을 설명하며 target 밖 동작도 포함합니다.
+> **과거 프로토타입 자료 — 현재 P0 호환성 약속이 아닙니다.** 아래에서 과거라고
+> 명시한 기능과 mapping 절은 cutover 전 prototype을 설명하며 target 밖 동작도 포함합니다.
 > [프로토타입·목표 경계](docs/PROTOTYPE_TARGET_BOUNDARY.ko.md)와
 > [목표 호환성 계약](docs/COMPATIBILITY_CONTRACT.ko.md)을 참고하세요.
 >

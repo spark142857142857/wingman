@@ -1,6 +1,6 @@
-# Lexer Contract (Draft)
+# Lexer Contract
 
-Status: accepted design direction for the constrained P0 parser.
+Status: current constrained P0 lexer contract, implemented by the release candidate.
 
 ## Tokens
 

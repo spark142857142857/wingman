@@ -1,7 +1,6 @@
-# Text Record and Stream Contract (Draft)
+# Text Record and Stream Contract
 
-Status: accepted design direction for closing consolidated finding C4. This
-document does not authorize implementation.
+Status: current P0 text-stream contract, implemented by the release candidate.
 
 Korean version: [TEXT_STREAM_MODEL.ko.md](TEXT_STREAM_MODEL.ko.md)
 

@@ -1,7 +1,6 @@
-# 텍스트 record·stream 계약 (초안)
+# 텍스트 record·stream 계약
 
-상태: 통합 발견 C4를 해결하기 위한 합의된 설계 방향. 이 문서는 구현을 허가하지
-않는다.
+상태: 현재 P0 text-stream 계약이며 릴리스 후보에 구현되어 있다.
 
 영문판: [TEXT_STREAM_MODEL.md](TEXT_STREAM_MODEL.md)
 

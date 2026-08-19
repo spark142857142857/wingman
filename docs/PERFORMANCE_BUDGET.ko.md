@@ -1,7 +1,7 @@
-# 성능 예산·측정 계약 (초안)
+# 성능 예산·측정 계약
 
-상태: P0 성능 계약 제안. 수치는 통합 구현 계획을 재검토하고 승인할 때부터
-구속력을 가진다. 이 문서는 구현을 허가하지 않는다.
+상태: 구속력 있는 P0 성능 계약이다. 현재 로컬 증거는 baseline 문서에 기록하며
+외부 릴리스 매트릭스 증거는 별도로 남는다.
 
 영문판: [PERFORMANCE_BUDGET.md](PERFORMANCE_BUDGET.md)
 
@@ -230,9 +230,9 @@ profiling에서 WebView2가 실제 병목이라고 확인되기 전에는 P0 구
 renderer 재작성을 검토한다. 재작성도 구현 게이트에 따른 사용자 승인이 필요하며,
 이 성능 계약 자체가 재작성을 허가하지는 않는다.
 
-## 측정 전 현재 초안의 공백
+## 현재 후보의 남은 증거 공백
 
-현재 초안에는 안정화된 Windows PowerShell idle 상태를 위한 release 전용 전체
+현재 릴리스 후보에는 안정화된 Windows PowerShell idle 상태를 위한 release 전용 전체
 process tree 계산, 인증된 editor-readiness marker, 환경 플래그로만 켜지는 정상 입력
 수락·렌더 startup 및 대용량 출력 중 입력 latency probe, 결정적 100,000줄/10MiB PTY
 완전성 probe, clear 후 release 전체 process-tree retained-memory 분포, 4,000줄 scrollback

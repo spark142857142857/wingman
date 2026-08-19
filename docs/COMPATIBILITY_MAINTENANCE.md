@@ -1,6 +1,6 @@
-# Compatibility Maintenance Contract (Draft)
+# Compatibility Maintenance Contract
 
-Status: accepted operations direction; exact supported releases are selected per
+Status: current operations contract; exact supported releases are selected per
 product release.
 
 ## Principle

@@ -1,7 +1,7 @@
-# Security and Trust Model (Draft)
+# Security and Trust Model
 
-Status: proposed security contract for the planned common interpreter. This
-document does not authorize implementation.
+Status: current P0 security contract, implemented and covered by the release
+security suites. Final signing and external privilege matrices remain release gates.
 
 Korean version: [SECURITY_MODEL.ko.md](SECURITY_MODEL.ko.md)
 
@@ -251,18 +251,20 @@ Before release, tests cover at least:
 9. Signed packaging, absolute runner selection, update signature failure, and
    compatibility-definition schema rejection.
 
-## Prototype gaps to remove before release
+## Closed migration security gaps
 
-The current prototype is behavioral evidence, not the release security
-baseline. Implementation review must explicitly replace or justify:
+The release candidate closes the prototype gaps that originally motivated this
+section:
 
-- the current null CSP;
-- any broad Tauri capability, including URL opening, without a required and
-  tested user-facing feature;
-- the writable temporary PowerShell profile and permissive bootstrap path;
-- frontend-owned compatibility parsing and shell command-string construction;
-- unbounded bridge inputs, terminal data, or request storage;
-- clickable-link and terminal escape behavior without an explicit threat test.
+- production uses the reviewed local-only CSP;
+- Tauri grants only event listen/unlisten to the main window and includes no
+  shell, opener, HTTP, clipboard, updater, log, or notification plugin;
+- the packaged PowerShell adapter and runner are resolved from protected files,
+  and no writable temporary compatibility profile is sourced;
+- Rust owns compatibility parsing and prepared request construction;
+- bridge input, terminal data, request registries, and readiness queues are
+  bounded; and
+- clickable links are absent from P0 and terminal control output is tested.
 
-These are migration requirements, not authorization to modify production code
-before the project implementation gate is approved.
+Final Authenticode signing and any elevated, cross-login-session, or multi-user
+behavior remain external release gates rather than locally claimed passes.

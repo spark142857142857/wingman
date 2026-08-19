@@ -1,6 +1,6 @@
-# Common Interpreter Architecture (Draft)
+# Common Interpreter Architecture
 
-Status: accepted architecture direction; implementation is not started by this document.
+Status: current P0 architecture, implemented by the release candidate.
 
 ## Principle
 
@@ -49,7 +49,8 @@ non-P0 constructs are outside it.
 
 Rust owns the prompt/session tracker. Only a validated prompt plus an
 allowlisted, mirrored edit sequence creates a reliable submitted line. The
-frontend then chooses between native Enter and a prepared-request ID; while a
+frontend forwards opaque, session-tagged input bytes; Rust atomically chooses
+native input or registers and writes a prepared-request invocation. While a
 command or foreground program is running, all terminal input passes through.
 The exact state and fallback rules are defined in the [terminal submission and
 session contract](TERMINAL_SESSION_CONTRACT.md).
@@ -66,8 +67,9 @@ versioned opaque request encoding.
 
 ## Required consistency
 
-- The same valid P0 input produces comparable visible output and the same exit
-  code in PowerShell and `cmd`.
+- The common plan and runner semantics are shell-independent. In P0, only the
+  validated Windows PowerShell adapter intercepts Familiar input; `cmd` remains
+  native pass-through and does not claim the P0 grammar.
 - A claimed P0 command with unsupported syntax fails clearly; it is not partly
   converted or silently guessed.
 - Raw native commands and native shell state commands remain available.
@@ -76,13 +78,13 @@ versioned opaque request encoding.
 - Cancellation, output streaming, redirection, and errors are validated by
   tests at the runner boundary.
 
-## Migration target
+## Implementation status
 
-The current prototype has separate frontend `cmd` mapping and a PowerShell
-compatibility profile. The target architecture replaces their independent P0
-parsing and behavior with one catalog, parser, execution-plan format, and
-runner. A temporary shell-specific shim is acceptable only as a transport
-layer during migration.
+The release candidate uses one Rust catalog, parser, execution-plan format, and
+runner. The frontend no longer owns compatibility parsing, the writable legacy
+PowerShell profile is not loaded, and `cmd` compatibility mappings are removed.
+The packaged PowerShell adapter only proves editor readiness, clears the editor
+buffer, and launches the fixed opaque request invocation.
 
 See [the common interpreter data model](INTERPRETER_DATA_MODEL.md) for the
 decision, parsing, execution-plan, and runner-request boundaries.
@@ -92,7 +94,8 @@ Prompt evidence, Unicode-safe input mirroring, completion fallback, paste,
 history, and shell transitions follow [the terminal submission and session
 contract](TERMINAL_SESSION_CONTRACT.md).
 See [the lexer contract](LEXER_CONTRACT.md) for the constrained token rules.
-Implementation is governed by [the implementation gate](IMPLEMENTATION_GATE.md).
+The historical implementation authorization is recorded in
+[the implementation gate](IMPLEMENTATION_GATE.md).
 Update verification and support policy are defined in [the compatibility
 maintenance contract](COMPATIBILITY_MAINTENANCE.md).
 Runner I/O, cancellation, and exit behavior are defined in [the runner
@@ -106,6 +109,7 @@ Accepted path forms, runner-side resolution, identity, and reparse behavior are
 defined in [the Windows path and filesystem contract](WINDOWS_PATH_CONTRACT.md).
 User-visible latency, resource ceilings, baselines, and the renderer replacement
 trigger are defined in [the performance budget](PERFORMANCE_BUDGET.md).
-The legacy-to-runner transition is defined in [the migration plan](MIGRATION_PLAN.md).
+The completed legacy-to-runner transition is recorded in
+[the migration plan](MIGRATION_PLAN.md).
 Mutating-request preflight, ordering, staging, commit, and partial-result rules
 are defined in [the mutation execution contract](MUTATION_EXECUTION_CONTRACT.md).

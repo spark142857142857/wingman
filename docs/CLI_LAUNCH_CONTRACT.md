@@ -1,6 +1,7 @@
-# Application CLI Launch Contract (Draft)
+# Application CLI Launch Contract
 
-Status: accepted product direction. This contract does not authorize implementation.
+Status: current P0 contract, implemented by the release candidate. Final release
+acceptance remains governed by the release matrix.
 
 ## Executable names
 

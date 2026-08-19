@@ -1,6 +1,6 @@
-# Runner Execution Contract (Draft)
+# Runner Execution Contract
 
-Status: accepted design direction for P0 execution; implementation remains gated.
+Status: current P0 execution contract, implemented by the packaged runner.
 
 ## Shell boundary and filesystem location
 

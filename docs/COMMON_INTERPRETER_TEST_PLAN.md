@@ -1,6 +1,7 @@
-# Common Interpreter Test Plan (Draft)
+# Common Interpreter Test Plan
 
-Status: accepted test direction. This document defines the target acceptance suite; it does not authorize implementation.
+Status: current P0 acceptance plan. Its automated suites are implemented; manual
+and external gates remain explicit in the release matrix.
 
 ## Test-case shape
 

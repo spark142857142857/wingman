@@ -1,6 +1,7 @@
 # Implementation Gate
 
-Status: binding project decision.
+Status: historical binding decision, satisfied after the user explicitly
+approved implementation. Retained as the authorization record.
 
 No implementation, migration, or production-code modification of the common
 interpreter begins merely because its planning documents are complete.
@@ -17,8 +18,10 @@ Before implementation starts, Wingman must:
 3. Present the consolidated implementation plan to the user.
 4. Receive the user's explicit approval to begin implementation.
 
-Until step 4, documentation and read-only research are allowed; implementation
-code, compatibility refactors, and behavior-changing tests are not.
+Until step 4, documentation and read-only research were allowed; implementation
+code, compatibility refactors, and behavior-changing tests were not. The user
+subsequently reviewed the plan and explicitly approved implementation, so this
+document is no longer a current prohibition.
 
 The current review result and required pre-implementation corrections are in
 [the consolidated plan review](CONSOLIDATED_PLAN_REVIEW.md).

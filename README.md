@@ -2,9 +2,9 @@
 
 [Korean](README.ko.md)
 
-> **Prototype snapshot — not the final P0 compatibility promise.** The historical
-> feature and mapping sections below describe the pre-cutover prototype and
-> include behavior outside the target.
+> **Historical prototype material — not the current P0 compatibility promise.**
+> The explicitly labelled feature and mapping sections below describe the
+> pre-cutover prototype and include behavior outside the target.
 > See the [prototype/target boundary](docs/PROTOTYPE_TARGET_BOUNDARY.md) and
 > [target compatibility contract](docs/COMPATIBILITY_CONTRACT.md).
 >

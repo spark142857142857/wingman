@@ -1,6 +1,6 @@
-# Input Classification Contract (Draft)
+# Input Classification Contract
 
-Status: accepted design direction for the common interpreter's ownership boundary.
+Status: current P0 ownership contract, implemented by the release candidate.
 
 ## Result
 

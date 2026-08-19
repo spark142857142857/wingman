@@ -1,7 +1,6 @@
-# Mutation·복수 operand 실행 계약 (초안)
+# Mutation·복수 operand 실행 계약
 
-상태: 통합 발견 C5를 해결하기 위한 합의된 설계 방향. 이 문서는 구현을 허가하지
-않는다.
+상태: 현재 P0 mutation 계약이며 릴리스 후보에 구현되어 있다.
 
 영문판: [MUTATION_EXECUTION_CONTRACT.md](MUTATION_EXECUTION_CONTRACT.md)
 

@@ -1,7 +1,6 @@
-# Mutation and Multi-Operand Execution Contract (Draft)
+# Mutation and Multi-Operand Execution Contract
 
-Status: accepted design direction for closing consolidated finding C5. This
-document does not authorize implementation.
+Status: current P0 mutation contract, implemented by the release candidate.
 
 Korean version: [MUTATION_EXECUTION_CONTRACT.ko.md](MUTATION_EXECUTION_CONTRACT.ko.md)
 

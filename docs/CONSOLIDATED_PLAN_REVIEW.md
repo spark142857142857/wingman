@@ -1,7 +1,7 @@
 # Consolidated Plan Review
 
-Status: completed top-to-bottom review with conditional approval of the design
-direction. Implementation is **not** authorized by this document.
+Status: historical top-to-bottom review. The user later approved implementation,
+and the P0 code cutover is now present in the release candidate.
 
 Korean version: [CONSOLIDATED_PLAN_REVIEW.ko.md](CONSOLIDATED_PLAN_REVIEW.ko.md)
 
@@ -13,14 +13,11 @@ core, structured execution plans, a dedicated runner, one-shot local transport,
 and native pass-through boundary form a viable P0 architecture.
 
 The review identified four contract blockers and six high-value corrections.
-All ten are now closed at the documentation level. This still does not authorize
-implementation: the user must re-review and explicitly approve the consolidated
-plan, and the boundary spikes remain the first implementation phase.
-
-The current prototype remains a useful migration baseline: its TypeScript,
-PowerShell, cmd, layout, and Rust tests all passed on 2026-08-05. Those tests
-prove the existing prototype is internally stable; they do not prove the new
-common-interpreter contract.
+All ten were closed at the documentation level, the user explicitly approved
+implementation afterward, and the boundary spikes and common runner were then
+implemented. The prototype test results below remain historical migration
+evidence; current acceptance is governed by the release matrix and contract
+suites rather than those prototype results.
 
 ## Decisions that remain accepted
 

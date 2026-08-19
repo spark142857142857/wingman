@@ -1,6 +1,6 @@
-# Windows 경로·파일 시스템 계약 (초안)
+# Windows 경로·파일 시스템 계약
 
-상태: 합의된 P0 설계 방향. 이 문서는 통합 재검토 C2를 해결하며 구현을 허가하지 않는다.
+상태: 현재 P0 경로·파일 시스템 계약이며 릴리스 후보에 구현되어 있다.
 
 영문판: [WINDOWS_PATH_CONTRACT.md](WINDOWS_PATH_CONTRACT.md)
 

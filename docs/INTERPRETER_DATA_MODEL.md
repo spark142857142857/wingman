@@ -1,7 +1,7 @@
-# Common Interpreter Data Model (Draft)
+# Common Interpreter Data Model
 
-Status: accepted design direction; names may change during implementation, but
-the ownership and data boundaries are intentional.
+Status: current P0 ownership and data boundary, implemented in the versioned
+Rust model. Future protocol changes require a reviewed version change.
 
 ## Semantic ownership decision
 

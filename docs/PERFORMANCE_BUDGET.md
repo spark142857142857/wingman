@@ -1,8 +1,7 @@
-# Performance Budget and Measurement Contract (Draft)
+# Performance Budget and Measurement Contract
 
-Status: proposed P0 performance contract. Its numbers become binding only when
-the consolidated implementation plan is reviewed and approved. This document
-does not authorize implementation.
+Status: binding P0 performance contract. Current local evidence is recorded in
+the baseline document; external release-matrix evidence remains separate.
 
 Korean version: [PERFORMANCE_BUDGET.ko.md](PERFORMANCE_BUDGET.ko.md)
 
@@ -255,9 +254,9 @@ release candidate more than 20% beyond a hard ceiling and ordinary optimization
 cannot close the gap. Such a rewrite still requires user approval under the
 implementation gate; the performance contract does not authorize it.
 
-## Prototype gaps before measurement
+## Current candidate evidence gaps
 
-The prototype now has release-only whole-process-tree accounting for the settled
+The release candidate has release-only whole-process-tree accounting for the settled
 Windows PowerShell idle case, an authenticated editor-readiness marker,
 environment-gated accepted-and-rendered normal-input and bulk input-latency
 probes, a deterministic 100,000-line/10-MiB PTY completeness probe, a release

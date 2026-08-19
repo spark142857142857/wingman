@@ -1,7 +1,6 @@
-# Terminal Submission and Session Contract (Draft)
+# Terminal Submission and Session Contract
 
-Status: accepted design direction for closing consolidated findings C3 and C7.
-This document does not authorize implementation.
+Status: current P0 terminal/session contract, implemented by the release candidate.
 
 Korean version: [TERMINAL_SESSION_CONTRACT.ko.md](TERMINAL_SESSION_CONTRACT.ko.md)
 

@@ -1,20 +1,20 @@
 # Prototype and Target Boundary
 
-Status: binding documentation and migration boundary. This document does not
-authorize implementation.
+Status: historical migration boundary. The code cutover is complete; final
+manual, external-matrix, signing, and user-acceptance gates remain open.
 
 Korean version: [PROTOTYPE_TARGET_BOUNDARY.ko.md](PROTOTYPE_TARGET_BOUNDARY.ko.md)
 
 ## Why this boundary exists
 
-The checked-in application is a prototype. The accumulated P0 contracts describe
-the intended common-interpreter target. They coexist during planning and migration,
-but a prototype behavior is not automatically a target promise and a target
-contract is not a claim that the current code already implements it.
+The checked-in application is now a P0 release candidate. Historical prototype
+behavior remains in explicitly labelled README and test snapshots, but it is
+not a current target promise. The implemented P0 contracts and current release
+matrix now govern the candidate.
 
 ## Source-of-truth order
 
-For the future common-interpreter release, conflicts are resolved in this order:
+For the current common-interpreter candidate, conflicts are resolved in this order:
 
 1. the [implementation gate](IMPLEMENTATION_GATE.md) and accepted consolidated
    review;
@@ -22,14 +22,14 @@ For the future common-interpreter release, conflicts are resolved in this order:
    runner transport/execution, security, performance, and CLI launch;
 3. P0 command contracts under `docs/commands/`;
 4. the common-interpreter acceptance test plan;
-5. README and release/support material after controlled cutover.
+5. current README and release/support material.
 
-The current `README.md`, `docs/TEST_MATRIX.md`, `docs/MANUAL_SMOKE_TEST.md`, and
-existing product tests are prototype evidence until cutover. They do not override
-the target contracts when they mention Windows 10, P1 commands such as `sed` or
+The historical sections of `README.md`, `docs/TEST_MATRIX.md`, and
+`docs/MANUAL_SMOKE_TEST.md` remain prototype evidence. They do not override the
+target contracts when they mention Windows 10, P1 commands such as `sed` or
 `xargs`, input redirection, shell-specific mappings, or other behavior outside P0.
 
-## Before implementation approval
+## Historical pre-implementation gate
 
 - Product code and behavior-changing tests remain untouched.
 - Planning may label and cross-link prototype and target documents.
@@ -40,9 +40,9 @@ the target contracts when they mention Windows 10, P1 commands such as `sed` or
 
 ## Migration test separation
 
-After explicit implementation approval, add a new `contract-v1` suite beside the
-legacy prototype suite. Do not rewrite legacy expectations in place to make new
-behavior appear green.
+After explicit implementation approval, the contract suites were added beside
+the legacy prototype evidence. Legacy expectations were not relabelled to make
+new behavior appear green.
 
 - Legacy tests answer: “Did migration unexpectedly break the old prototype before
   the planned cutover?”
@@ -70,13 +70,14 @@ Cutover occurs only when all are true:
 
 ```text
 [ ] contract-v1 automated, shell, application, security, and manual suites pass
-[ ] accepted performance ceilings pass on the recorded reference environment
-[ ] prototype-only mappings and writable temporary transport are removed
-[ ] README and support matrix describe only observed target behavior
-[ ] installer exposes the contracted wingman command and protected runner
-[ ] English and Korean user documentation agree
+[x] accepted performance ceilings pass on the recorded local reference environment
+[x] prototype-only mappings and writable temporary transport are removed
+[x] README and support matrix distinguish current behavior from historical evidence
+[x] installer exposes the contracted wingman command and protected runner
+[x] English and Korean current-contract documentation agree
 [ ] user explicitly approves final acceptance
 ```
 
-At cutover, README becomes the public target summary and links to the detailed
-contracts. Until then its prototype banner must remain visible.
+The code and documentation cutover is complete. The first item remains open only
+for the irreducible manual UI checks and external variants listed in the release
+matrix; final release acceptance has not been claimed.

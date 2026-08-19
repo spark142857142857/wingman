@@ -1,6 +1,7 @@
-# 보안·신뢰 모델 (초안)
+# 보안·신뢰 모델
 
-상태: 계획 중인 공통 해석기를 위한 보안 계약 제안. 이 문서는 구현을 허가하지 않는다.
+상태: 현재 P0 보안 계약이며 릴리스 후보와 release security suite에 구현되어 있다.
+최종 signing과 외부 권한 matrix는 계속 릴리스 gate로 남는다.
 
 영문판: [SECURITY_MODEL.md](SECURITY_MODEL.md)
 
@@ -226,17 +227,18 @@ streaming, UTF-8 실패, newline framing, backpressure, short-circuit, 부분 �
 8. 로그와 crash report에 원문 터미널 데이터와 요청 secret이 없는지 확인
 9. 서명된 패키징, runner 절대 경로 선택, 업데이트 서명 실패, 호환 정의 schema 거부
 
-## 배포 전에 제거할 현재 초안의 차이
+## 해결한 migration 보안 공백
 
-현재 초안은 동작 검증 자료이지 배포 보안 기준이 아니다. 구현 검토에서 다음을
-명시적으로 교체하거나 필요성을 입증해야 한다.
+릴리스 후보는 이 절을 만들게 했던 prototype 공백을 다음과 같이 닫았다.
 
-- 현재의 null CSP
-- 실제로 필요하고 테스트된 사용자 기능이 없는 URL 열기 권한 등 넓은 Tauri 권한
-- 쓰기 가능한 임시 PowerShell profile과 느슨한 bootstrap 경로
-- 프론트엔드가 소유한 호환 parsing과 셸 명령 문자열 조립
-- 크기 제한이 없는 bridge 입력, 터미널 데이터, 요청 저장소
-- 명시적인 위협 테스트가 없는 clickable link와 terminal escape 동작
+- 검토한 local-only CSP를 production에서 사용
+- Main window에는 event listen/unlisten만 허용하고 shell, opener, HTTP, clipboard,
+  updater, log, notification plugin은 포함하지 않음
+- 보호된 packaged 파일에서 PowerShell adapter와 runner를 고정하며 쓰기 가능한 임시
+  compatibility profile을 source하지 않음
+- Rust가 호환 parsing과 준비 요청 생성을 소유
+- Bridge 입력, terminal data, 요청 registry, readiness queue를 제한
+- P0 clickable link를 제외하고 terminal control 출력을 위협 test로 검증
 
-이 항목들은 마이그레이션 요구사항이며, 프로젝트 구현 게이트 승인 전에 제품
-코드를 수정해도 된다는 뜻은 아니다.
+최종 Authenticode signing과 elevated, 다른 login session, multi-user 동작은 로컬 통과로
+주장하지 않고 외부 release gate로 남긴다.

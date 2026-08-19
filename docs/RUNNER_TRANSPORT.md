@@ -1,6 +1,6 @@
-# Runner Transport Contract (Draft)
+# Runner Transport Contract
 
-Status: accepted design direction. This document does not authorize implementation.
+Status: current P0 transport contract, implemented by the release candidate.
 
 ## Decision
 

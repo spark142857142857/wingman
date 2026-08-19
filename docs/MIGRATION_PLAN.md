@@ -1,6 +1,7 @@
-# Common Interpreter Migration Plan (Draft)
+# Common Interpreter Migration Plan
 
-Status: accepted migration direction. This plan does not authorize implementation.
+Status: historical migration plan. Its P0 code cutover is implemented; the
+manual and external release gates remain open.
 
 ## Scope
 
