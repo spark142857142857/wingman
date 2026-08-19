@@ -92,10 +92,11 @@ The application binary is `wingman.exe`; the dedicated sidecar is
 `wingman-runner.exe`. Both are Cargo binary targets in the same package, so the
 Tauri bundler installs the runner beside the application binary. It must not
 also be declared in `bundle.externalBin`, which would duplicate the installed
-file. The PowerShell transport resource is explicitly mapped to the resource
-root used by the runtime lookup. Wingman exposes the installed runner's
-application-controlled absolute path to child shell sessions through a session
-environment variable.
+file. The fixed PowerShell transport is compiled into `wingman.exe` and passed
+as application-owned `-Command` source, so no writable `.ps1` support file or
+process-wide execution-policy bypass is installed. Wingman exposes the
+installed runner's application-controlled absolute path to child shell
+sessions through a session environment variable.
 
 ## Presentation and history
 

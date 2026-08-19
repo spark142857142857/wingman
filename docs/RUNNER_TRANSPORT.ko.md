@@ -82,9 +82,9 @@ cycle을 증명한다. `cmd`는 입증된 editor adapter가 생길 때까지 int
 
 앱 실행 파일은 `wingman.exe`, 전용 sidecar는 `wingman-runner.exe`다. 둘은 같은 Cargo 패키지의 binary
 target이므로 Tauri bundler가 runner를 앱 실행 파일 옆에 설치한다. `bundle.externalBin`에도 선언하면 같은
-설치 파일이 중복되므로 그렇게 하지 않는다. PowerShell transport resource는 runtime이 조회하는 resource
-root로 명시적으로 매핑한다. Wingman은 앱이 통제하는 설치 runner의 절대 경로를 세션 환경 변수로 자식 셸에
-전달한다.
+설치 파일이 중복되므로 그렇게 하지 않는다. 고정 PowerShell transport는 `wingman.exe`에 컴파일하고 앱 소유
+`-Command` source로 전달하므로 쓰기 가능한 `.ps1` 지원 파일이나 process 전체 execution-policy 우회를
+설치하지 않는다. Wingman은 앱이 통제하는 설치 runner의 절대 경로를 세션 환경 변수로 자식 셸에 전달한다.
 
 ## 화면과 히스토리
 
