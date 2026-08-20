@@ -1173,3 +1173,74 @@ Human-only Korean IME, real clipboard, resize/focus and visual checks remain
 open, as do controlled-restart cold startup, unique-boot uncached runner,
 additional Windows/hardware, multi-user/elevated-scope, and final signing
 gates. None is represented here as a pass.
+
+## 2026-08-20: `a7734d8` pre-manual automated release gates
+
+This run repeated every automated gate before manual smoke on the exact `main`
+candidate containing source-gate automation and documentation-authority cleanup.
+The product Rust and frontend runtime match the preceding candidate, but the
+exact-candidate rule required a fresh build and fresh local evidence.
+
+- Source and harness: `a7734d85e2d0e9218acea08a7453df08991eb50e`
+- OS: Microsoft Windows 11 Home `10.0.26200`, x64
+- CPU: AMD Ryzen 7 9700X, 8 cores / 16 logical processors
+- Memory: 66,126,708,736 bytes
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`, Node.js `v22.17.0`, npm `10.9.2`
+- GitHub `Source gate`: push run `32336197261`, 7m 44s, passed
+
+The rebuilt package artifacts are:
+
+- `wingman.exe` SHA-256:
+  `9DA5B27CCDEF77416ADDED5D8FBCBF99D38A832AF1E3AB40DAF8F6BC18469BC0`
+- `wingman-runner.exe` SHA-256:
+  `47EA85D2AE87D04EF794B019EF9AABA7BBDBABCB4A3009037C10682D527C1B82`
+- NSIS installer SHA-256:
+  `E0FE50C60C4937F31549BC64D835478BABCDDC5C46468164AADF868C6E8AEDBA`
+
+Bundle, local release security, CLI handoff, install/reinstall/uninstall, and
+100 isolated app-data launches all passed. The installed tree was 13,297,267
+bytes and the app-data profile was 15,298,807 bytes (14.59 MiB). The three
+development artifacts remain `NotSigned`; final Authenticode remains an
+external publication gate.
+
+Every isolated release runner component passed its contract ceiling.
+
+| Item | Main result | Ceiling/target | Result |
+| --- | ---: | ---: | --- |
+| Cached `grep` 100 MiB | median 826.413 ms | 1,000 ms | Pass |
+| Cached `find` 20,000 entries | median 418.722 ms | 535 ms | Pass |
+| Redirected `cat` | median 3,094.595 ms | 3,700 ms | Pass |
+| Redirected `sort` | median 663.072 ms | 790 ms | Pass |
+| Idle `tail -f` CPU | median/p95 0.000% | Contract ceiling | Pass |
+| 64 MiB `sort` | peak working/private 69.020/65.922 MiB | 96 MiB | Pass |
+| Traversal/listing | peak private 114.602 MiB | 144 MiB | Pass |
+| 100,000-entry mutation | peak working/private 53.023/58.355 MiB | 80 MiB | Pass |
+
+Both shell GUI matrices passed.
+
+| Shell | Warm startup median / p95 / max | Idle CPU median / p95 | Idle private max | 100k-line render | Input median / p95 / max | Retained median / max growth | Scrollback | Host ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 684.0 / 737.3 / 758.5 ms | 0.098 / 0.195% | 154.609 MiB | 5,236.7 ms | 26.6 / 35.0 / 35.5 ms | 41.963 / 43.354 MiB | 4,000 | 1.272x |
+| `cmd.exe` | 439.1 / 465.1 / 476.6 ms | 0.146 / 0.293% | 120.297 MiB | 4,377.9 ms | 32.1 / 34.8 / 36.0 ms | 40.225 / 41.896 MiB | 4,000 | 1.224x |
+
+Verified PowerShell editor readiness arrived in 654.6 ms. The exact candidate's
+30-minute endurance run completed 1,074 cycles and exited with code `0`.
+
+| Endurance item | Result | Release ceiling | Outcome |
+| --- | ---: | ---: | --- |
+| Baseline private working set | 149.566 MiB | N/A | Recorded |
+| Final private working set | 179.031 MiB | 350 MiB | Pass |
+| Growth | 29.465 MiB | 50 MiB | Pass |
+| Growth rate | 19.700% | 20% | Pass |
+| Remaining runner processes | 0 | 0 | Pass |
+
+The growth rate is close to the release ceiling and should be compared
+carefully after future runtime changes. The final process tree contained only
+Wingman, WebView2, PowerShell, and `conhost.exe`.
+
+The two real cross-volume `mv` acceptance cases were not run. This machine's
+second filesystem drive is a Google Drive virtual drive and was not used as a
+destructive fixture target. A suitable separate local volume must be supplied
+through `WINGMAN_TEST_SECOND_VOLUME`. Manual IME/clipboard/visual smoke, final
+signing, cold/uncached multi-boot evidence, additional Windows/hardware, and
+elevated/multi-user matrices remain open.

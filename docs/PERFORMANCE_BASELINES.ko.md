@@ -1101,3 +1101,71 @@ UTF-8 11,900,000바이트였다. 동일 조건의 Windows Terminal 비교도 2�
 아직 남아 있다. controlled-restart cold startup, boot별 uncached runner,
 추가 Windows·hardware, multi-user·elevated 범위, 최종 서명 gate도 그대로다.
 이 항목들은 어느 것도 통과로 표시하지 않았다.
+
+## 2026-08-20: `a7734d8` 수동 smoke 전 자동 릴리스 게이트
+
+이 실행은 source gate 자동화와 문서 권위 정리를 반영한 정확한 `main` 후보에서
+수동 smoke 전까지의 자동 릴리스 게이트를 다시 실행했다. 제품 Rust·frontend runtime은
+이전 후보와 같지만, exact-candidate 규칙에 따라 artifact를 다시 빌드하고 로컬 자동
+증거를 새로 수집했다.
+
+- Source와 harness: `a7734d85e2d0e9218acea08a7453df08991eb50e`
+- OS: Microsoft Windows 11 Home `10.0.26200`, x64
+- CPU: AMD Ryzen 7 9700X, 8 cores / 16 logical processors
+- Memory: 66,126,708,736 bytes
+- Toolchain: `rustc 1.96.1`, `cargo 1.96.1`, Node.js `v22.17.0`, npm `10.9.2`
+- GitHub `Source gate`: push run `32336197261`, 7분 44초, 통과
+
+새 package artifact는 다음과 같다.
+
+- `wingman.exe` SHA-256:
+  `9DA5B27CCDEF77416ADDED5D8FBCBF99D38A832AF1E3AB40DAF8F6BC18469BC0`
+- `wingman-runner.exe` SHA-256:
+  `47EA85D2AE87D04EF794B019EF9AABA7BBDBABCB4A3009037C10682D527C1B82`
+- NSIS installer SHA-256:
+  `E0FE50C60C4937F31549BC64D835478BABCDDC5C46468164AADF868C6E8AEDBA`
+
+Bundle, local release security, CLI handoff, 설치·재설치·제거, 격리 app-data
+100회 실행은 모두 통과했다. 설치 tree는 13,297,267바이트이고 app-data profile은
+15,298,807바이트(14.59 MiB)였다. 세 artifact는 개발 후보이므로 `NotSigned`이며
+최종 Authenticode는 외부 배포 gate로 남는다.
+
+격리한 release runner component 결과는 모두 계약 상한을 통과했다.
+
+| 항목 | 주요 결과 | 상한·목표 | 판정 |
+| --- | ---: | ---: | --- |
+| Cached `grep` 100 MiB | 중앙값 826.413 ms | 1,000 ms | 통과 |
+| Cached `find` 20,000 entries | 중앙값 418.722 ms | 535 ms | 통과 |
+| Redirect `cat` | 중앙값 3,094.595 ms | 3,700 ms | 통과 |
+| Redirect `sort` | 중앙값 663.072 ms | 790 ms | 통과 |
+| Idle `tail -f` CPU | 중앙값/p95 0.000% | 계약 상한 | 통과 |
+| 64 MiB `sort` | peak working/private 69.020/65.922 MiB | 96 MiB | 통과 |
+| Traversal/listing | peak private 114.602 MiB | 144 MiB | 통과 |
+| 100,000-entry mutation | peak working/private 53.023/58.355 MiB | 80 MiB | 통과 |
+
+두 shell GUI matrix도 모두 통과했다.
+
+| Shell | Warm startup 중앙값 / p95 / 최대 | Idle CPU 중앙값 / p95 | Idle private 최대 | 10만 줄 render | 입력 중앙값 / p95 / 최대 | 보존 중앙 / 최대 증가 | Scrollback | Host 비율 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows PowerShell 5.1 | 684.0 / 737.3 / 758.5 ms | 0.098 / 0.195% | 154.609 MiB | 5,236.7 ms | 26.6 / 35.0 / 35.5 ms | 41.963 / 43.354 MiB | 4,000 | 1.272배 |
+| `cmd.exe` | 439.1 / 465.1 / 476.6 ms | 0.146 / 0.293% | 120.297 MiB | 4,377.9 ms | 32.1 / 34.8 / 36.0 ms | 40.225 / 41.896 MiB | 4,000 | 1.224배 |
+
+PowerShell editor readiness는 654.6 ms에 도착했다. 정확한 후보의 30분 endurance는
+1,074 cycles를 완료했으며 exit code는 `0`이었다.
+
+| Endurance 항목 | 결과 | 배포 상한 | 판정 |
+| --- | ---: | ---: | --- |
+| 기준 private working set | 149.566 MiB | 해당 없음 | 기록 |
+| 최종 private working set | 179.031 MiB | 350 MiB | 통과 |
+| 증가량 | 29.465 MiB | 50 MiB | 통과 |
+| 증가율 | 19.700% | 20% | 통과 |
+| 남은 runner process | 0 | 0 | 통과 |
+
+증가율은 배포 상한에 가깝기 때문에 이후 runtime 변경 시 주의해서 비교한다. 최종
+process tree에는 Wingman, WebView2, PowerShell, `conhost.exe`만 남았다.
+
+실제 cross-volume `mv` acceptance 두 건은 실행하지 않았다. 이 machine의 두 번째
+filesystem drive는 Google Drive 가상 드라이브이므로 파괴적 fixture 대상으로 사용하지
+않았다. 적합한 별도 로컬 volume에서 `WINGMAN_TEST_SECOND_VOLUME`을 지정해야 한다.
+수동 IME·clipboard·시각 smoke, 최종 signing, cold·uncached multi-boot,
+추가 Windows·hardware와 elevated·multi-user matrix도 계속 열려 있다.
