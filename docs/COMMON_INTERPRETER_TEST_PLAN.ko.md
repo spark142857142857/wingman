@@ -96,21 +96,17 @@ search, 여러 줄 paste, foreground program 실행 중 입력이 `prepare_submi
 
 자동화에 적합하지 않은 UI·PTY 동작을 확인한다. 시작, 폰트, 포커스, 리사이즈, 편집, 원문 히스토리, 붙여넣기 신뢰성 fallback, `tail -f` 중 Ctrl+C, 셸 전환, 한국어 텍스트·경로, 리다이렉션 중 진단 표시, 세션 재시작 격리가 대상이다.
 
-## 승인 게이트
+## 현재 승인 상태
 
-아래가 모두 통과하기 전에는 P0가 완료된 것이 아니다.
+A-F의 구현과 비수동 source suite는 완료됐다. 현재 기준 진입점은
+`npm run verify`이며 packaged·성능 증거는
+[릴리스 테스트 매트릭스](RELEASE_TEST_MATRIX.ko.md)에서 관리한다.
 
-```text
-[ ] A-C 자동 스위트
-[ ] D cmd·PowerShell 매트릭스
-[ ] 지원 Windows 업데이트 카나리
-[ ] E 네이티브 보존 회귀
-[ ] F 터미널 제출·세션 matrix
-[ ] G 수동 smoke 스위트
-[ ] 성능 예산과 회귀 스위트
-[ ] 문서와 관찰된 동작 일치
-[ ] 구현 시작 게이트 재검토 완료
-[ ] 사용자 구현·최종 승인
-```
+- 완료: A-C 자동 suite, 네이티브 보존 회귀, 터미널 제출·세션 자동화,
+  구현 게이트 승인과 P0 코드 cutover.
+- 로컬 증거가 있지만 최종 후보마다 반복: packaged PowerShell·cmd matrix, 보안,
+  installer, 성능·자원 gate.
+- 열림: G 수동 smoke suite, 현재·직전 지원 Windows canary, cold·uncached
+  multi-boot 증거, 최종 signing과 사용자 최종 승인.
 
 Wingman 계약이 약속한 출력만 정확히 비교한다. 지역화된 진단이나 원문 통과한 네이티브 명령의 동작을 고정하지 않는다.

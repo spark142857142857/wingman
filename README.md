@@ -136,15 +136,12 @@ Build artifacts are generated under `src-tauri/target/release/`.
 ## Verify
 
 ```powershell
-npm run typecheck
-npm test
-npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+npm run verify
 ```
 
-`npm test` runs the frontend input/security checks, Windows layout and packaging
-checks, and the complete non-ignored Rust contract suite.
+`npm run verify` runs type checking, frontend input/security checks, Windows
+layout and packaging checks, the complete non-ignored Rust contract suite, the
+production frontend build, formatting, and warning-free Clippy.
 
 - Current release matrix: [docs/RELEASE_TEST_MATRIX.md](docs/RELEASE_TEST_MATRIX.md)
 - Current manual app gate: [docs/RELEASE_SMOKE_TEST.md](docs/RELEASE_SMOKE_TEST.md)

@@ -35,11 +35,7 @@ Repository root의 일반 비관리자 PowerShell에서 실행한다.
 
 ```powershell
 npm ci
-npm run typecheck
-npm test
-npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+npm run verify
 ```
 
 | 영역 | 기준 coverage |
@@ -52,6 +48,8 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -
 | Rust 위생 | `cargo fmt --check`와 warning 없는 Clippy |
 
 `npm ci`는 dependency를 깨끗하게 재구성하는 전제 조건이지 앱 동작 증거가 아니다.
+`npm run verify`는 위 여섯 source-gate 영역을 로컬과 CI에서 동일하게 실행하는 단일
+진입점이다.
 
 ## 2. 계약과 test 대응표
 

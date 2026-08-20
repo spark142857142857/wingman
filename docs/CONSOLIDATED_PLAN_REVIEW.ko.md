@@ -221,10 +221,10 @@ UI/PTY/security smoke test를 적용한다.
   중앙 경로 계약이 필요하다:
   [Microsoft Windows 파일·경로·namespace](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file).
 
-## 현재 게이트 상태
+## 과거 게이트 종료
 
-처음부터 끝까지 통합 재검토, C1-C10 수정, 마지막 문서 일관성 검토를 2026-08-06에
-끝냈다. 프로젝트 Markdown 58개의 local link, fence, trailing whitespace를 검사해
-문제가 없었고 모든 target 영문·한글 pair의 heading·fence 수도 일치했다. 이제
-사용자의 통합 계획 재검토만 남았다. 명시적 승인 전까지 제품 코드 구현, 호환성
-refactor, 경계 기술 검증 code, 동작을 바꾸는 test는 허가되지 않았다.
+처음부터 끝까지 통합 재검토, C1-C11 수정과 문서 일관성 검토를 2026년 8월에
+끝냈다. 이후 사용자가 구현을 승인했고 위에서 계획한 P0 코드 cutover도 완료됐다.
+위의 미체크 합격 snapshot은 구현 전 검토 기록이며 현재 release 상태가 아니다.
+현재 source, artifact, 성능, 수동·외부 수락 상태의 권위는
+[릴리스 테스트 매트릭스](RELEASE_TEST_MATRIX.ko.md)에만 둔다.

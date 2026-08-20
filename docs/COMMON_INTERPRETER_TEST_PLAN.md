@@ -102,21 +102,18 @@ program is active cannot reach `prepare_submission`.
 
 Manual checks cover UI and PTY behavior unsuitable for reliable automation: startup, fonts, focus, resize, editing, raw history, paste reliability fallback, Ctrl+C during `tail -f`, shell switching, Korean text and paths, diagnostic visibility under redirection, and session restart isolation.
 
-## Acceptance gate
+## Current acceptance status
 
-P0 is not complete until all of the following pass:
+The implementation and non-manual source suites in A-F are complete. Their
+authoritative current entry point is `npm run verify`; packaged and performance
+evidence is tracked in [the release test matrix](RELEASE_TEST_MATRIX.md).
 
-```text
-[ ] A-C automated suites
-[ ] D cmd and PowerShell matrix
-[ ] supported-Windows update canary
-[ ] E native preservation regression
-[ ] F terminal submission/session matrix
-[ ] G manual smoke suite
-[ ] performance budget and regression suite
-[ ] documentation matches observed behavior
-[ ] implementation-gate re-review is complete
-[ ] user approves implementation and final acceptance
-```
+- Complete: A-C automated suites, native-preservation regression, terminal
+  submission/session automation, implementation-gate approval, and P0 code
+  cutover.
+- Locally evidenced but repeated for every final candidate: packaged PowerShell
+  and cmd matrix, security, installer, and performance/resource gates.
+- Open: the G manual smoke suite, current/previous supported-Windows canary,
+  cold/uncached multi-boot evidence, final signing, and user final acceptance.
 
 Compare output exactly only where a Wingman contract promises it. Do not freeze locale-specific diagnostics or behavior of raw native pass-through commands.

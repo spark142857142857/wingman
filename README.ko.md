@@ -130,15 +130,12 @@ npm run tauri build
 ## 검증
 
 ```powershell
-npm run typecheck
-npm test
-npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+npm run verify
 ```
 
-`npm test`는 frontend 입력·보안, Windows layout·packaging과 ignored가 아닌 전체 Rust
-계약 suite를 실행한다.
+`npm run verify`는 type check, frontend 입력·보안, Windows layout·packaging,
+ignored가 아닌 전체 Rust 계약 suite, production frontend build, formatting과
+warning 없는 Clippy를 실행한다.
 
 - 현재 릴리스 matrix: [docs/RELEASE_TEST_MATRIX.ko.md](docs/RELEASE_TEST_MATRIX.ko.md)
 - 현재 수동 앱 게이트: [docs/RELEASE_SMOKE_TEST.ko.md](docs/RELEASE_SMOKE_TEST.ko.md)

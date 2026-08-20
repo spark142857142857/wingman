@@ -39,11 +39,7 @@ Run from the repository root in an ordinary, non-elevated PowerShell session:
 
 ```powershell
 npm ci
-npm run typecheck
-npm test
-npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+npm run verify
 ```
 
 | Area | Authoritative coverage |
@@ -56,7 +52,8 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -
 | Rust hygiene | `cargo fmt --check` and warning-free Clippy |
 
 `npm ci` is a clean dependency-reconstruction prerequisite, not proof that the
-application works.
+application works. `npm run verify` is the single local and CI entry point for
+the six source-gate areas above.
 
 ## 2. Contract-to-test map
 

@@ -242,12 +242,11 @@ P0 is ready only when all are true:
   and device namespace paths, supporting one centralized path contract rather
   than per-command string checks: [Microsoft Naming Files, Paths, and Namespaces](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file).
 
-## Gate status
+## Historical gate closure
 
-The top-to-bottom review, C1-C10 corrections, and final documentation consistency
-pass completed on 2026-08-06. The pass checked 58 project Markdown files with no
-broken local links, unmatched fences, or trailing whitespace and confirmed
-English/Korean heading and fence parity for every target pair. Only the user's
-consolidated-plan review remains. No production-code implementation,
-compatibility refactor, boundary-spike code, or behavior-changing test work is
-authorized until explicit approval.
+The top-to-bottom review, C1-C11 corrections, and documentation consistency pass
+completed in August 2026. The user subsequently approved implementation, and the
+P0 code cutover described above is complete. The unchecked acceptance snapshot
+above records the pre-implementation review; it is not the current release
+status. Current source, artifact, performance, manual, and external acceptance
+is authoritative only in [the release test matrix](RELEASE_TEST_MATRIX.md).
